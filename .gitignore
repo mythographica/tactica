@@ -59,3 +59,5 @@ typings/
 
 # next.js build output
 .next
+/code/mnemonica/tactica/test/.test-integration/
+/code/mnemonica/tactica/test/.test-mnemonica/
