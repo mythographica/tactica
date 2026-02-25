@@ -33,6 +33,11 @@
 	"contributors": [
 		"Roo AI <ai-assistant@example.com>"
 	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/mythographica/tactica.git"
+	},
+
 	"license": "MIT",
 	"peerDependencies": {
 		"mnemonica": "^0.9.0",
