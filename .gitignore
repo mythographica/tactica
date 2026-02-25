@@ -1,1 +1,8 @@
-/code/mnemonica/tactica/test/.test-mnemonica/
+node_modules/
+npm-debug.log
+.env
+coverage
+.nyc_output
+.idea
+test/index.js
+.npmrc
