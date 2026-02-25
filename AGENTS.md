@@ -17,6 +17,9 @@ npm run build
 # Run tests
 npm run test
 
+# Run tests with coverage
+npm run test:coverage
+
 # Watch mode for development
 npm run watch
 ```
@@ -99,11 +102,127 @@ Tests are in `test/` directory using Mocha + Chai:
 # Run all tests
 npm run test
 
-# Tests include:
-# - analyzer.test.ts - Unit tests for AST analyzer
-# - generator.test.ts - Unit tests for code generator
-# - writer.test.ts - Unit tests for file writer
-# - integration.test.ts - Integration tests for test-example.ts pattern
+# Run tests with coverage report
+npm run test:coverage
+```
+
+### Test Suites
+
+| File | Description |
+|------|-------------|
+| `analyzer.test.ts` | Unit tests for AST analyzer |
+| `generator.test.ts` | Unit tests for code generator |
+| `writer.test.ts` | Unit tests for file writer |
+| `integration.test.ts` | Integration tests for core/test-ts patterns |
+| `examples.test.ts` | Tests for tactica-test example files |
+| `typeomatica.test.ts` | Combined mnemonica + typeomatica patterns |
+
+## Supported Patterns
+
+### 1. define() Calls
+
+```typescript
+// Root type
+const UserType = define('UserType', function (this: any) {
+    this.name = '';
+});
+
+// Nested type (subtypes)
+const AdminType = UserType.define('AdminType', function (this: any) {
+    this.role = 'admin';
+});
+```
+
+### 2. @decorate() Decorator
+
+```typescript
+// Basic decorator
+@decorate()
+class User {
+    name: string = '';
+}
+
+// With parent class
+@decorate(ParentClass)
+class Child {
+    childProp: string = '';
+}
+
+// With options
+@decorate({
+    blockErrors: true,
+    strictChain: false,
+    exposeInstanceMethods: true
+})
+class Configurable {
+    value: string = '';
+}
+
+// Both parent and options
+@decorate(ParentClass, { strictChain: false })
+class ChildWithOptions {
+    prop: string = '';
+}
+```
+
+### 3. Object.assign Pattern
+
+```typescript
+const UserType = define('UserType', function (this: any, data: any) {
+    Object.assign(this, data);
+});
+```
+
+### 4. Typeomatica Integration
+
+Tactica works with Typeomatica patterns without breaking:
+
+```typescript
+import { Strict, BaseClass } from 'typeomatica';
+import { decorate } from 'mnemonica';
+
+// @Strict decorator alongside @decorate
+@decorate()
+@Strict({ someProp: 123 })
+class StrictEntity {
+    someProp!: number;
+}
+
+// BaseClass with Object.setPrototypeOf
+@decorate()
+class MyBase {
+    baseField = 555;
+}
+
+Object.setPrototypeOf(MyBase.prototype, new BaseClass({ strict: true }));
+```
+
+### 5. ConstructorFunction Pattern
+
+```typescript
+import { ConstructorFunction } from 'mnemonica';
+
+const MyFn = function (this: any) {
+    this.field = 123;
+} as ConstructorFunction<{ field: number }>;
+
+const MyFnType = define('MyFnType', MyFn);
+```
+
+### 6. Configuration Options
+
+```typescript
+// exposeInstanceMethods option
+const HiddenType = define('HiddenType', function (this: any) {
+    this.data = 'hidden';
+}, {
+    exposeInstanceMethods: false,
+});
+
+// Shorthand syntax (same as above)
+const HiddenShorthand = define('HiddenShorthand', function (this: any) {
+    this.data = 'shorthand';
+}, false);
 ```
 
 ## Common Patterns

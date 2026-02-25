@@ -10,6 +10,10 @@ export declare class TypesWriter {
      */
     write(generated: GeneratedTypes): string;
     /**
+     * Write types.ts file with complete interfaces
+     */
+    writeTypesFile(generated: GeneratedTypes): string;
+    /**
      * Write types with custom filename
      */
     writeTo(filename: string, content: string): string;

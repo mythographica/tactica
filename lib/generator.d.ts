@@ -7,21 +7,24 @@ export declare class TypesGenerator {
     private graph;
     constructor(graph: TypeGraphImpl);
     /**
-     * Generate the complete .d.ts file content
+     * Generate the complete .d.ts file content for module augmentation
+     * This adds nested constructors to mnemonica's instance types
      */
     generate(): GeneratedTypes;
     /**
-     * Generate a registry entry for a type node
+     * Generate a types.ts file with complete instance interfaces
+     * This includes all properties extracted from the constructors
      */
-    private generateRegistryEntry;
+    generateTypesFile(): GeneratedTypes;
     /**
      * Generate an instance interface for a type node
      */
     private generateInstanceInterface;
     /**
-     * Generate constructor augmentation
+     * Generate a complete instance interface with all properties
+     * This is for the types.ts file that users import from
      */
-    private generateConstructorAugmentation;
+    private generateCompleteInstanceInterface;
     /**
      * Generate a simple type declaration for a single type
      */

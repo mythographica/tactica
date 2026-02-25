@@ -1,0 +1,25 @@
+{
+	"extends": "@istanbuljs/nyc-config-typescript",
+	"all": true,
+	"check-coverage": false,
+	"reporter": [
+		"text",
+		"text-summary"
+	],
+	"include": [
+		"src/**/*.ts"
+	],
+	"exclude": [
+		"test/**/*.ts",
+		"lib/**/*.js",
+		"**/*.d.ts"
+	],
+	"extension": [
+		".ts"
+	],
+	"require": [
+		"ts-node/register"
+	],
+	"sourceMap": true,
+	"instrument": true
+}

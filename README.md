@@ -176,12 +176,87 @@ class Admin {
 }
 ```
 
+#### @decorate() with Options
+
+```typescript
+@decorate({
+    blockErrors: true,
+    strictChain: false,
+    exposeInstanceMethods: true
+})
+class ConfigurableClass {
+    value: string = '';
+}
+```
+
 ### 3. Object.assign Pattern
 
 ```typescript
 const UserType = define('UserType', function (this: any, data: any) {
     Object.assign(this, data);
 });
+```
+
+### 4. Typeomatica Integration
+
+Tactica works seamlessly with Typeomatica patterns:
+
+```typescript
+import { decorate } from 'mnemonica';
+import { Strict, BaseClass } from 'typeomatica';
+
+// @Strict decorator alongside @decorate
+@decorate()
+@Strict({ someProp: 123 })
+class StrictDecorated {
+    someProp!: number;
+}
+
+// BaseClass with Object.setPrototypeOf
+@decorate()
+class MyBaseClass {
+    base_field = 555;
+}
+
+Object.setPrototypeOf(MyBaseClass.prototype, new BaseClass({ strict: true }));
+```
+
+### 5. ConstructorFunction Pattern
+
+```typescript
+import { define, ConstructorFunction } from 'mnemonica';
+
+const MyFn = function (this: any) {
+    this.field = 123;
+} as ConstructorFunction<{ field: number }>;
+
+const MyFnType = define('MyFnType', MyFn);
+```
+
+## CLI Features
+
+### Tree Output
+
+The CLI displays type hierarchy as a tree:
+
+```bash
+$ npx tactica
+
+Type Hierarchy (Trie):
+└── UserTypeInstance
+    └── AdminTypeInstance
+        └── SuperAdminTypeInstance
+└── ProductTypeInstance
+    ├── DigitalProductTypeInstance
+    └── PhysicalProductTypeInstance
+```
+
+### Code Coverage
+
+Run tests with coverage:
+
+```bash
+npm run test:coverage
 ```
 
 ## Integration with Your Workflow
@@ -295,6 +370,27 @@ npx tactica --verbose 2>&1 | grep -i error
 
 - [mnemonica](https://github.com/wentout/mnemonica) - Instance inheritance system
 - [@mnemonica/topologica](https://github.com/mythographica/topologica) - Filesystem-based type discovery
+- [typeomatica](https://github.com/wentout/typeomatica) - Runtime type checking with `@Strict` decorator and `BaseClass`
+
+## Testing
+
+Tactica includes comprehensive test coverage:
+
+```bash
+# Run all tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+```
+
+Test suites include:
+- **Analyzer tests** - Core AST parsing functionality
+- **Generator tests** - TypeScript declaration generation
+- **Writer tests** - File I/O operations
+- **Integration tests** - End-to-end workflows
+- **Example tests** - Patterns from `tactica-test/` project
+- **Typeomatica tests** - Combined mnemonica + typeomatica patterns
 
 ## License
 

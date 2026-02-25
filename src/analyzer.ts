@@ -52,7 +52,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Visit a node in the AST
 	 */
-	private visitNode(node: ts.Node, sourceFile: ts.SourceFile): void {
+	private visitNode(node: ts.Node, sourceFile: ts.SourceFile, currentClass?: ts.ClassDeclaration): void {
 		// Check for define() calls
 		if (this.isDefineCall(node)) {
 			this.processDefineCall(node as ts.CallExpression, sourceFile);
@@ -60,11 +60,17 @@ export class MnemonicaAnalyzer {
 
 		// Check for decorate() decorator
 		if (this.isDecorateDecorator(node)) {
-			this.processDecorateDecorator(node as ts.Decorator, sourceFile);
+			this.processDecorateDecorator(node as ts.Decorator, sourceFile, currentClass);
 		}
 
-		// Recursively visit children
-		ts.forEachChild(node, child => this.visitNode(child, sourceFile));
+		// Track class declarations for decorator parent lookup
+		if (ts.isClassDeclaration(node)) {
+			// Visit children with this class as the current context
+			ts.forEachChild(node, child => this.visitNode(child, sourceFile, node));
+		} else {
+			// Recursively visit children
+			ts.forEachChild(node, child => this.visitNode(child, sourceFile, currentClass));
+		}
 	}
 
 	/**
@@ -84,7 +90,7 @@ export class MnemonicaAnalyzer {
 
 		// Check for method call: SomeType.define('SubType', ...)
 		if (ts.isPropertyAccessExpression(expression)) {
-			return expression.name.text === 'define';
+			return expression.name?.text === 'define';
 		}
 
 		return false;
@@ -122,7 +128,7 @@ export class MnemonicaAnalyzer {
 	private processDefineCall(call: ts.CallExpression, sourceFile: ts.SourceFile): void {
 		const { line, character } = ts.getLineAndCharacterOfPosition(
 			sourceFile,
-			call.getStart()
+			call.getStart(sourceFile)
 		);
 
 		// Get the type name from arguments
@@ -163,15 +169,15 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Process a @decorate() decorator
 	 */
-	private processDecorateDecorator(decorator: ts.Decorator, sourceFile: ts.SourceFile): void {
+	private processDecorateDecorator(decorator: ts.Decorator, sourceFile: ts.SourceFile, classDeclParam?: ts.ClassDeclaration): void {
 		const { line, character } = ts.getLineAndCharacterOfPosition(
 			sourceFile,
-			decorator.getStart()
+			decorator.getStart(sourceFile)
 		);
 
-		// Get the class declaration
-		const classDecl = decorator.parent as ts.ClassDeclaration;
-		if (!classDecl.name) {
+		// Get the class declaration - use the passed context if parent is not set
+		const classDecl = decorator.parent as ts.ClassDeclaration | undefined || classDeclParam;
+		if (!classDecl || !classDecl.name) {
 			this.errors.push({
 				message: 'Decorated class has no name',
 				file: sourceFile.fileName,
@@ -182,6 +188,15 @@ export class MnemonicaAnalyzer {
 		}
 
 		const typeName = classDecl.name.text;
+		if (!typeName) {
+			this.errors.push({
+				message: 'Decorated class has no name',
+				file: sourceFile.fileName,
+				line: line + 1,
+				column: character + 1,
+			});
+			return;
+		}
 
 		// Try to find parent type from decorator arguments
 		let parentNode: TypeNode | undefined;
@@ -189,7 +204,17 @@ export class MnemonicaAnalyzer {
 			const args = decorator.expression.arguments;
 			if (args.length > 0 && ts.isIdentifier(args[0])) {
 				const parentName = args[0].text;
+				// First try exact match
 				parentNode = this.graph.findType(parentName);
+				// Then search through all types for one with matching name
+				if (!parentNode) {
+					for (const type of this.graph.getAllTypes()) {
+						if (type.name === parentName) {
+							parentNode = type;
+							break;
+						}
+					}
+				}
 			}
 		}
 
@@ -262,8 +287,18 @@ export class MnemonicaAnalyzer {
 		const obj = expression.expression;
 
 		if (ts.isIdentifier(obj)) {
-			// Direct reference to parent type
-			return this.graph.findType(obj.text);
+			// Direct reference to parent type - search by simple name
+			const name = obj.text;
+			// First try exact match
+			const exact = this.graph.findType(name);
+			if (exact) return exact;
+			// Then search through all types for one with matching name
+			for (const type of this.graph.getAllTypes()) {
+				if (type.name === name) {
+					return type;
+				}
+			}
+			return undefined;
 		}
 
 		if (ts.isPropertyAccessExpression(obj)) {
@@ -285,7 +320,9 @@ export class MnemonicaAnalyzer {
 
 		let current: ts.Expression = expr;
 		while (ts.isPropertyAccessExpression(current)) {
-			chain.unshift(current.name.text);
+			if (current.name) {
+				chain.unshift(current.name.text);
+			}
 			current = current.expression;
 		}
 
@@ -353,14 +390,16 @@ export class MnemonicaAnalyzer {
 			const left = expr.left;
 
 			if (ts.isPropertyAccessExpression(left)) {
-				// Check if accessing 'this'
-				if (ts.isIdentifier(left.expression) && left.expression.text === 'this') {
-					const name = left.name.text;
-					properties.set(name, {
-						name,
-						type: 'unknown',
-						optional: false,
-					});
+				// Check if accessing 'this' (ThisKeyword)
+				if (left.expression.kind === ts.SyntaxKind.ThisKeyword) {
+					const name = left.name?.text;
+					if (name) {
+						properties.set(name, {
+							name,
+							type: this.inferTypeFromInitializer(expr.right),
+							optional: false,
+						});
+					}
 				}
 			}
 		}
@@ -369,11 +408,11 @@ export class MnemonicaAnalyzer {
 		if (ts.isCallExpression(expr)) {
 			const fn = expr.expression;
 			if (ts.isPropertyAccessExpression(fn) &&
-				fn.name.text === 'assign' &&
+				fn.name?.text === 'assign' &&
 				ts.isIdentifier(fn.expression) &&
 				fn.expression.text === 'Object') {
 				const args = expr.arguments;
-				if (args.length >= 2 && ts.isIdentifier(args[0]) && args[0].text === 'this') {
+				if (args.length >= 2 && args[0].kind === ts.SyntaxKind.ThisKeyword) {
 					// Extract properties from the second argument
 					const propsArg = args[1];
 					if (ts.isObjectLiteralExpression(propsArg)) {
@@ -470,6 +509,14 @@ export class MnemonicaAnalyzer {
 				return 'Array<unknown>';
 			case ts.SyntaxKind.ObjectLiteralExpression:
 				return 'object';
+			case ts.SyntaxKind.NewExpression: {
+				// Handle new Date(), new Map(), etc.
+				const newExpr = initializer as ts.NewExpression;
+				if (ts.isIdentifier(newExpr.expression)) {
+					return newExpr.expression.text;
+				}
+				return 'object';
+			}
 			default:
 				return 'unknown';
 		}

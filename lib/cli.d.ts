@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { TacticaConfig } from './types';
 /**
  * CLI entry point for Tactica

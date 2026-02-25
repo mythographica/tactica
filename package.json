@@ -4,15 +4,21 @@
 	"description": "TypeScript Language Service Plugin for Mnemonica - generates types for nested constructors",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
+	"bin": {
+		"tactica": "lib/cli.js"
+	},
 	"files": [
 		"lib/",
 		"README.md",
 		"LICENSE"
 	],
 	"scripts": {
-		"build": "rm -rf ./lib && npx tsc --pretty",
+		"build": "rm -rf ./lib && npx tsc --pretty && npm run fix-permissions",
+		"fix-permissions": "chmod +x lib/cli.js",
 		"watch": "npx tsc --pretty -w",
 		"test": "TS_NODE_PROJECT=./tsconfig.test.json mocha test/**/*.test.ts",
+		"test:coverage": "npx nyc npm test",
+		"test:coverage:html": "npx nyc --reporter=html npm test",
 		"lint": "npx eslint --fix ./src"
 	},
 	"keywords": [
@@ -24,18 +30,23 @@
 		"intellisense"
 	],
 	"author": "went.out@gmail.com",
+	"contributors": [
+		"Roo AI <ai-assistant@example.com>"
+	],
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "^0.9.0",
+		"mnemonica": "file:../core",
 		"typescript": "^5.0.0"
 	},
 	"devDependencies": {
+		"@istanbuljs/nyc-config-typescript": "^1.0.2",
 		"@types/chai": "^4.3.0",
 		"@types/mocha": "^10.0.0",
 		"@types/node": "^20.0.0",
 		"chai": "^4.3.10",
-		"mnemonica": "^0.9.0",
+		"mnemonica": "file:../core",
 		"mocha": "^10.2.0",
+		"nyc": "^17.1.0",
 		"ts-node": "^10.9.0",
 		"typescript": "^5.3.0"
 	},

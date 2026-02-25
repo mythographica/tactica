@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 'use strict';
 
 import * as fs from 'fs';
@@ -6,7 +7,8 @@ import * as ts from 'typescript';
 import { MnemonicaAnalyzer } from './analyzer';
 import { TypesGenerator } from './generator';
 import { TypesWriter } from './writer';
-import { TacticaConfig } from './types';
+import { TacticaConfig, TypeNode } from './types';
+import { TypeGraphImpl } from './graph';
 
 /**
  * CLI entry point for Tactica
@@ -146,6 +148,32 @@ function loadProgram(tsconfigPath: string): ts.Program {
 }
 
 /**
+ * Print type hierarchy as a tree
+ */
+function printTypeHierarchy(graph: TypeGraphImpl): void {
+	console.log('\nType Hierarchy (Trie):');
+	
+	function printNode(node: TypeNode, prefix = '', isLast = true): void {
+		const connector = isLast ? '└── ' : '├── ';
+		const instanceName = `${node.name}Instance`;
+		console.log(`${prefix}${connector}${instanceName}`);
+		
+		const children = Array.from(node.children.values());
+		const newPrefix = prefix + (isLast ? '    ' : '│   ');
+		
+		for (let i = 0; i < children.length; i++) {
+			printNode(children[i], newPrefix, i === children.length - 1);
+		}
+	}
+	
+	const roots = Array.from(graph.roots.values());
+	for (let i = 0; i < roots.length; i++) {
+		printNode(roots[i], '', i === roots.length - 1);
+	}
+	console.log(); // Empty line at end
+}
+
+/**
  * Run type generation
  */
 function run(options: CLIOptions): void {
@@ -166,9 +194,18 @@ function run(options: CLIOptions): void {
 	// Create analyzer
 	const analyzer = new MnemonicaAnalyzer(program);
 
+	// Determine output directory for exclusion
+	const outputDir = options.outputDir || '.mnemonica';
+	const outputDirPath = path.resolve(process.cwd(), outputDir);
+
 	// Analyze all source files
 	for (const sourceFile of program.getSourceFiles()) {
 		if (sourceFile.isDeclarationFile) {
+			continue;
+		}
+
+		// Always exclude the output directory to avoid analyzing generated files
+		if (sourceFile.fileName.startsWith(outputDirPath + path.sep)) {
 			continue;
 		}
 
@@ -192,26 +229,38 @@ function run(options: CLIOptions): void {
 			}
 		}
 
-		analyzer.analyzeFile(sourceFile);
+		if (options.verbose) {
+			console.log(`Analyzing: ${sourceFile.fileName}`);
+		}
+
+		try {
+			analyzer.analyzeFile(sourceFile);
+		} catch (err) {
+			console.error(`Error analyzing ${sourceFile.fileName}:`, err);
+			throw err;
+		}
 	}
 
 	// Generate types
 	const graph = analyzer.getGraph();
 	const generator = new TypesGenerator(graph);
-	const generated = generator.generate();
+
+	// Generate both module augmentation (.d.ts) and complete interfaces (types.ts)
+	const generatedDts = generator.generate();
+	const generatedTs = generator.generateTypesFile();
 
 	// Write types
 	const writer = new TypesWriter(options.outputDir);
-	const outputPath = writer.write(generated);
+	const dtsPath = writer.write(generatedDts);
+	const tsPath = writer.writeTypesFile(generatedTs);
 
 	if (options.verbose) {
-		console.log(`Generated types at: ${outputPath}`);
-		console.log(`Found ${generated.types.length} types:`);
-		for (const typeName of generated.types) {
-			console.log(`  - ${typeName}`);
-		}
+		console.log(`Generated types at: ${dtsPath}`);
+		console.log(`Generated complete interfaces at: ${tsPath}`);
+		console.log(`Found ${generatedDts.types.length} types:`);
+		printTypeHierarchy(graph);
 	} else {
-		console.log(`Generated ${generated.types.length} types at ${outputPath}`);
+		console.log(`Generated ${generatedDts.types.length} types at ${options.outputDir || '.mnemonica'}`);
 	}
 }
 

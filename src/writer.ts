@@ -33,6 +33,18 @@ export class TypesWriter {
 	}
 
 	/**
+	 * Write types.ts file with complete interfaces
+	 */
+	writeTypesFile(generated: GeneratedTypes): string {
+		this.ensureDirectory();
+
+		const outputPath = path.join(this.outputDir, 'types.ts');
+		fs.writeFileSync(outputPath, generated.content, 'utf-8');
+
+		return outputPath;
+	}
+
+	/**
 	 * Write types with custom filename
 	 */
 	writeTo(filename: string, content: string): string {
