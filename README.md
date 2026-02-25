@@ -100,13 +100,20 @@ for (const sourceFile of program.getSourceFiles()) {
 }
 
 const generator = new TypesGenerator(analyzer.getGraph());
-const generated = generator.generate();
 
+// Generate types.ts (exportable type aliases - default mode)
+const generatedTypes = generator.generateTypesFile();
 const writer = new TypesWriter('.tactica');
-writer.write(generated);
+writer.writeTypesFile(generatedTypes);
+
+// Or generate index.d.ts (global augmentation - legacy mode)
+const generatedGlobal = generator.generateGlobalAugmentation();
+writer.writeGlobalAugmentation(generatedGlobal);
 ```
 
 ## Configuration Options
+
+### Plugin Options (tsconfig.json)
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -114,6 +121,35 @@ writer.write(generated);
 | `include` | string[] | `['**/*.ts']` | File patterns to include |
 | `exclude` | string[] | `['**/*.d.ts']` | File patterns to exclude |
 | `verbose` | boolean | `false` | Enable verbose logging |
+
+### CLI Options
+
+| Option | Short | Description |
+|--------|-------|-------------|
+| `--watch` | `-w` | Watch mode - regenerate on file changes |
+| `--project` | `-p` | Path to tsconfig.json |
+| `--output` | `-o` | Output directory (default: `.tactica`) |
+| `--include` | `-i` | Include patterns (comma-separated) |
+| `--exclude` | `-e` | Exclude patterns (comma-separated) |
+| `--module-augmentation` | `-m` | Generate global augmentation (legacy mode) |
+| `--verbose` | `-v` | Enable verbose logging |
+| `--help` | `-h` | Show help message |
+
+**Examples:**
+
+```bash
+# Default mode - generates .tactica/types.ts
+npx tactica
+
+# Global augmentation mode - generates .tactica/index.d.ts
+npx tactica --module-augmentation
+
+# Watch mode with custom output directory
+npx tactica --watch --output ./custom-types
+
+# Exclude test files
+npx tactica --exclude "*.test.ts,*.spec.ts"
+```
 
 ## Generated Output
 
@@ -139,11 +175,17 @@ export type AdminTypeInstance = UserTypeInstance & {
 - Generates `.tactica/types.ts` - Exportable type aliases
 - Import types explicitly: `import type { UserTypeInstance } from './.tactica/types'`
 - Include in tsconfig.json: `"include": ["src/**/*.ts", ".tactica/types.ts"]`
+- **Recommended for new projects** - explicit imports, better tree-shaking
 
-**Legacy mode** (`npx tactica --module-augmentation`):
+**Global mode** (`npx tactica --module-augmentation`):
 - Generates `.tactica/index.d.ts` - Global type declarations
-- Types are available without imports (via global augmentation)
+- Types are available without imports (via `declare global`)
 - Add to tsconfig.json: `"typeRoots": ["./node_modules/@types", "./.tactica"]`
+- Use triple-slash reference: `/// <reference types="./.tactica/index" />`
+
+**Choosing a mode:**
+- Use **Default mode** for new projects - explicit imports are clearer and work better with tree-shaking
+- Use **Global mode** if you want types available without imports (legacy behavior)
 
 ## What Gets Analyzed
 

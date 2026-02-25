@@ -4,5 +4,4 @@ npm-debug.log
 coverage
 .nyc_output
 .idea
-test/index.js
 .npmrc

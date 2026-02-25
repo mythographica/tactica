@@ -77,12 +77,14 @@ Trie-based data structure representing type hierarchy.
 
 #### TypesGenerator
 Generates TypeScript declaration files from the type graph.
-- `generate()` - Generate complete .d.ts content
+- `generateTypesFile()` - Generate exportable type aliases (default mode, outputs `types.ts`)
+- `generateGlobalAugmentation()` - Generate global type declarations (legacy mode, outputs `index.d.ts`)
 - `generateSingleType(node)` - Generate single type
 
 #### TypesWriter
-Writes generated types to `.tactica/types.d.ts`.
-- `write(generated)` - Write to default location
+Writes generated types to `.tactica/` directory.
+- `writeTypesFile(generated)` - Write exportable types to `types.ts` (default mode)
+- `writeGlobalAugmentation(generated)` - Write global declarations to `index.d.ts` (module augmentation mode)
 - `writeTo(filename, content)` - Write custom file
 - `clean()` - Clear output directory
 
@@ -91,8 +93,43 @@ Writes generated types to `.tactica/types.d.ts`.
 1. **Parse**: TypeScript AST is parsed to find `define()` and `decorate()` calls
 2. **Analyze**: The analyzer extracts type names, properties, and hierarchy
 3. **Graph**: A Trie (tree) structure represents the type hierarchy
-4. **Generate**: TypeScript declarations are generated with module augmentations
+4. **Generate**: TypeScript declarations are generated
+   - Default mode: Exportable type aliases in `types.ts`
+   - Global mode: Global declarations in `index.d.ts`
 5. **Output**: Files are written to `.tactica/` directory
+
+### Triple-Slash References
+
+For global augmentation mode, use triple-slash reference directives:
+
+```typescript
+// At the top of your entry file (e.g., src/index.ts)
+/// <reference types="./.tactica/index" />
+
+// Or from project root
+/// <reference types="../.tactica/index" />
+```
+
+This makes global types available without explicit imports.
+
+### Type Casting for @decorate() Classes
+
+When using `@decorate()` on classes, TypeScript may not recognize the decorated class as a valid constructor. Use type casting:
+
+```typescript
+import { decorate, type ConstructorFunction } from 'mnemonica';
+
+@decorate()
+class MyClass {
+    name: string = '';
+}
+
+// Cast to ConstructorFunction for define()
+const MyType = define('MyType', MyClass as ConstructorFunction<{ name: string }>);
+
+// Or when creating instances
+const instance = new (MyClass as ConstructorFunction<{ name: string }>)();
+```
 
 ## Testing
 
@@ -268,10 +305,19 @@ for (const node of graph.bfs()) {
 
 ```typescript
 const generator = new TypesGenerator(graph);
-const generated = generator.generate();
 
-// generated.content - the .d.ts file content
-// generated.types - array of generated type names
+// Default mode: generate exportable type aliases (types.ts)
+const generatedTypes = generator.generateTypesFile();
+// generatedTypes.content - the types.ts file content
+// generatedTypes.types - array of generated type names
+
+// Global mode: generate global type declarations (index.d.ts)
+const generatedGlobal = generator.generateGlobalAugmentation();
+// generatedGlobal.content - the index.d.ts file content
+// generatedGlobal.types - array of generated type names
+
+// Generate single type
+const singleType = generator.generateSingleType(node);
 ```
 
 ## Configuration
@@ -297,12 +343,47 @@ const generated = generator.generate();
 
 ```bash
 npx tactica [options]
-  -w, --watch          Watch for file changes
-  -p, --project        Path to tsconfig.json
-  -o, --output         Output directory (default: .tactica)
-  -i, --include        File patterns to include
-  -e, --exclude        File patterns to exclude
-  -v, --verbose        Enable verbose logging
+  -w, --watch                 Watch for file changes
+  -p, --project               Path to tsconfig.json
+  -o, --output                Output directory (default: .tactica)
+  -i, --include               File patterns to include
+  -e, --exclude               File patterns to exclude
+  -m, --module-augmentation   Generate global augmentation (index.d.ts) instead of exportable types
+  -v, --verbose               Enable verbose logging
+  -h, --help                  Show help
+```
+
+**Output Modes:**
+
+- **Default mode** (no flags): Generates `.tactica/types.ts` with exportable type aliases
+  - Import types explicitly: `import type { UserTypeInstance } from './.tactica/types'`
+  - Recommended for new projects - explicit imports work better with tree-shaking
+
+- **Global mode** (`--module-augmentation`): Generates `.tactica/index.d.ts` with global declarations
+  - Types available without imports via global augmentation
+  - Use triple-slash reference: `/// <reference types="./.tactica/index" />`
+  - Legacy behavior, useful for gradual migration
+
+**Examples:**
+
+```bash
+# Default mode - generate types.ts
+npx tactica
+
+# Global mode - generate index.d.ts
+npx tactica --module-augmentation
+
+# Watch mode with default output
+npx tactica --watch
+
+# Watch mode with global augmentation
+npx tactica --watch --module-augmentation
+
+# Exclude test files
+npx tactica --exclude "**/*.test.ts" --exclude "**/*.spec.ts"
+
+# Custom project path
+npx tactica --project ./tsconfig.json
 ```
 
 ## Known Limitations
