@@ -5,7 +5,7 @@
  */
 
 export interface TacticaConfig {
-	/** Output directory for generated types */
+	/** Output directory for generated types (default: .tactica) */
 	outputDir?: string;
 	/** Files to include (glob patterns) */
 	include?: string[];
@@ -13,6 +13,8 @@ export interface TacticaConfig {
 	exclude?: string[];
 	/** Enable verbose logging */
 	verbose?: boolean;
+	/** Generate global augmentation instead of module augmentation (default: true) */
+	globalAugmentation?: boolean;
 }
 
 export interface PropertyInfo {

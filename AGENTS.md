@@ -55,7 +55,7 @@ src/
 ├── analyzer.ts       # AST analyzer for define()/decorate() calls
 ├── graph.ts          # Trie-based type hierarchy graph
 ├── generator.ts      # TypeScript .d.ts file generator
-├── writer.ts         # File writer for .mnemonica/ folder
+├── writer.ts         # File writer for .tactica/ folder
 ├── plugin.ts         # TypeScript Language Service Plugin entry
 └── cli.ts            # Standalone CLI tool
 ```
@@ -81,7 +81,7 @@ Generates TypeScript declaration files from the type graph.
 - `generateSingleType(node)` - Generate single type
 
 #### TypesWriter
-Writes generated types to `.mnemonica/types.d.ts`.
+Writes generated types to `.tactica/types.d.ts`.
 - `write(generated)` - Write to default location
 - `writeTo(filename, content)` - Write custom file
 - `clean()` - Clear output directory
@@ -92,7 +92,7 @@ Writes generated types to `.mnemonica/types.d.ts`.
 2. **Analyze**: The analyzer extracts type names, properties, and hierarchy
 3. **Graph**: A Trie (tree) structure represents the type hierarchy
 4. **Generate**: TypeScript declarations are generated with module augmentations
-5. **Output**: Files are written to `.mnemonica/` directory
+5. **Output**: Files are written to `.tactica/` directory
 
 ## Testing
 
@@ -284,7 +284,7 @@ const generated = generator.generate();
     "plugins": [
       {
         "name": "@mnemonica/tactica",
-        "outputDir": ".mnemonica",
+        "outputDir": ".tactica",
         "include": ["src/**/*.ts"],
         "exclude": ["**/*.test.ts"]
       }
@@ -299,7 +299,7 @@ const generated = generator.generate();
 npx tactica [options]
   -w, --watch          Watch for file changes
   -p, --project        Path to tsconfig.json
-  -o, --output         Output directory (default: .mnemonica)
+  -o, --output         Output directory (default: .tactica)
   -i, --include        File patterns to include
   -e, --exclude        File patterns to exclude
   -v, --verbose        Enable verbose logging

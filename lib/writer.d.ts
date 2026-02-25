@@ -14,15 +14,19 @@ export declare class TypesWriter {
      */
     writeTypesFile(generated: GeneratedTypes): string;
     /**
-     * Write types with custom filename
-     */
+         * Write global augmentation file
+         */
+    writeGlobalAugmentation(generated: GeneratedTypes): string;
+    /**
+        * Write types with custom filename
+        */
     writeTo(filename: string, content: string): string;
     /**
      * Ensure output directory exists
      */
     private ensureDirectory;
     /**
-     * Update .gitignore to exclude .mnemonica folder
+     * Update .gitignore to exclude .tactica folder
      */
     private updateGitignore;
     /**

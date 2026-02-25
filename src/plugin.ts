@@ -32,7 +32,7 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
 
 	function create(info: ts.server.PluginCreateInfo): ts.LanguageService {
 		const config: TacticaConfig = info.config || {};
-		config.outputDir = config.outputDir || '.mnemonica';
+		config.outputDir = config.outputDir || '.tactica';
 
 		// Store plugin info
 		pluginInfo = {
@@ -102,7 +102,7 @@ function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): 
 			return;
 		}
 
-		const config = pluginInfo?.config || { outputDir: '.mnemonica' };
+		const config = pluginInfo?.config || { outputDir: '.tactica' };
 		const include = config.include || ['**/*.ts'];
 		const exclude = config.exclude || ['**/*.d.ts', 'node_modules/**'];
 

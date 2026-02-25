@@ -52,6 +52,10 @@ function parseArgs(args: string[]): CLIOptions {
 			case '--exclude':
 				options.exclude = (options.exclude || []).concat(args[++i].split(','));
 				break;
+			case '-m':
+			case '--module-augmentation':
+				options.globalAugmentation = false;
+				break;
 			case '-v':
 			case '--verbose':
 				options.verbose = true;
@@ -76,17 +80,19 @@ Tactica - TypeScript Language Service Plugin for Mnemonica
 Usage: tactica [options]
 
 Options:
-  -w, --watch          Watch for file changes and regenerate types
-  -p, --project        Path to tsconfig.json (default: ./tsconfig.json)
-  -o, --output         Output directory for generated types (default: .mnemonica)
-  -i, --include        Comma-separated list of file patterns to include
-  -e, --exclude        Comma-separated list of file patterns to exclude
-  -v, --verbose        Enable verbose logging
-  -h, --help           Show this help message
+  -w, --watch               Watch for file changes and regenerate types
+  -p, --project             Path to tsconfig.json (default: ./tsconfig.json)
+  -o, --output              Output directory for generated types (default: .tactica)
+  -i, --include             Comma-separated list of file patterns to include
+  -e, --exclude             Comma-separated list of file patterns to exclude
+  -m, --module-augmentation Use module augmentation instead of global (legacy mode)
+  -v, --verbose             Enable verbose logging
+  -h, --help                Show this help message
 
 Examples:
-  tactica                              # Generate types once
+  tactica                              # Generate types with global augmentation (default)
   tactica --watch                      # Watch mode
+  tactica --module-augmentation        # Use legacy module augmentation mode
   tactica --project ./src/tsconfig.json # Custom tsconfig path
   tactica --output ./types/mnemonica   # Custom output directory
 `);
@@ -195,7 +201,7 @@ function run(options: CLIOptions): void {
 	const analyzer = new MnemonicaAnalyzer(program);
 
 	// Determine output directory for exclusion
-	const outputDir = options.outputDir || '.mnemonica';
+	const outputDir = options.outputDir || '.tactica';
 	const outputDirPath = path.resolve(process.cwd(), outputDir);
 
 	// Analyze all source files
@@ -245,22 +251,41 @@ function run(options: CLIOptions): void {
 	const graph = analyzer.getGraph();
 	const generator = new TypesGenerator(graph);
 
-	// Generate both module augmentation (.d.ts) and complete interfaces (types.ts)
-	const generatedDts = generator.generate();
-	const generatedTs = generator.generateTypesFile();
+	// Default to global augmentation unless --module-augmentation is specified
+	const useGlobalAugmentation = options.globalAugmentation !== false;
 
-	// Write types
+	// Generate types based on mode
+	let generatedDts: { content: string; types: string[] };
+	let outputPath: string;
+
 	const writer = new TypesWriter(options.outputDir);
-	const dtsPath = writer.write(generatedDts);
+
+		if (useGlobalAugmentation) {
+			// Generate global augmentation (default, seamless UX)
+			generatedDts = generator.generateGlobalAugmentation();
+			outputPath = writer.writeGlobalAugmentation(generatedDts);
+			// Don't generate legacy module augmentation to avoid conflicts
+		} else {
+			// Legacy mode: module augmentation only
+			generatedDts = generator.generate();
+			outputPath = writer.write(generatedDts);
+		}
+
+	// Always generate complete interfaces for manual imports
+	const generatedTs = generator.generateTypesFile();
 	const tsPath = writer.writeTypesFile(generatedTs);
 
 	if (options.verbose) {
-		console.log(`Generated types at: ${dtsPath}`);
+		console.log(`Generated types at: ${outputPath}`);
 		console.log(`Generated complete interfaces at: ${tsPath}`);
+		console.log(`Mode: ${useGlobalAugmentation ? 'global augmentation (seamless)' : 'module augmentation (legacy)'}`);
 		console.log(`Found ${generatedDts.types.length} types:`);
 		printTypeHierarchy(graph);
 	} else {
-		console.log(`Generated ${generatedDts.types.length} types at ${options.outputDir || '.mnemonica'}`);
+		console.log(`Generated ${generatedDts.types.length} types at ${options.outputDir || '.tactica'}`);
+		if (useGlobalAugmentation) {
+			console.log('Using global augmentation mode (use --module-augmentation for legacy mode)');
+		}
 	}
 }
 
@@ -284,7 +309,7 @@ function watch(options: CLIOptions): void {
 
 	const projectDir = path.dirname(tsconfigPath);
 	const watchPaths = options.include || ['**/*.ts'];
-	const ignorePaths = options.exclude || ['**/*.d.ts', 'node_modules/**', '.mnemonica/**'];
+	const ignorePaths = options.exclude || ['**/*.d.ts', 'node_modules/**', '.tactica/**'];
 
 	const watcher = chokidar.watch(watchPaths, {
 		cwd: projectDir,

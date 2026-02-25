@@ -442,9 +442,14 @@ export class MnemonicaAnalyzer {
 			if (ts.isPropertyDeclaration(member) && member.name) {
 				const name = ts.isIdentifier(member.name) ? member.name.text : '';
 				if (name) {
+					// If no explicit type but has initializer, infer from initializer
+					let type = this.inferType(member.type);
+					if (type === 'unknown' && member.initializer) {
+						type = this.inferTypeFromInitializer(member.initializer);
+					}
 					properties.set(name, {
 						name,
-						type: this.inferType(member.type),
+						type,
 						optional: !!member.questionToken,
 					});
 				}

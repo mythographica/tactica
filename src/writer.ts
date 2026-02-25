@@ -10,7 +10,7 @@ import { GeneratedTypes } from './types';
 export class TypesWriter {
 	private outputDir: string;
 
-	constructor(outputDir = '.mnemonica') {
+	constructor(outputDir = '.tactica') {
 		this.outputDir = outputDir;
 	}
 
@@ -45,8 +45,24 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Write types with custom filename
-	 */
+		 * Write global augmentation file
+		 */
+		writeGlobalAugmentation(generated: GeneratedTypes): string {
+			this.ensureDirectory();
+	
+			// Use index.d.ts so TypeScript picks it up automatically from typeRoots
+			const outputPath = path.join(this.outputDir, 'index.d.ts');
+			fs.writeFileSync(outputPath, generated.content, 'utf-8');
+	
+			// Update .gitignore if needed
+			this.updateGitignore();
+	
+			return outputPath;
+		}
+
+	/**
+		* Write types with custom filename
+		*/
 	writeTo(filename: string, content: string): string {
 		this.ensureDirectory();
 		const outputPath = path.join(this.outputDir, filename);
@@ -64,7 +80,7 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Update .gitignore to exclude .mnemonica folder
+	 * Update .gitignore to exclude .tactica folder
 	 */
 	private updateGitignore(): void {
 		const gitignorePath = path.join(process.cwd(), '.gitignore');
