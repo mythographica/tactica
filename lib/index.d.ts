@@ -9,7 +9,6 @@ export { MnemonicaAnalyzer } from './analyzer';
 export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
-export { define, decorate, create, InstanceType } from './define';
 export type { TacticaConfig, TypeNode, TypeGraph, PropertyInfo, AnalyzeResult, AnalyzeError, GeneratedTypes, } from './types';
 export { main, run, watch, parseArgs } from './cli';
 export { default } from './plugin';

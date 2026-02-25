@@ -13,8 +13,6 @@ export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
 
-// Tactica's enhanced define function
-export { define, decorate, create, InstanceType } from './define';
 
 export type {
 	TacticaConfig,

@@ -100,12 +100,12 @@ const SecondType = FirstType.define('SecondType', function (this: { second: stri
 
 		const graph = analyzer.getGraph();
 		const generator = new TypesGenerator(graph);
-		const generated = generator.generate();
+		const generated = generator.generateGlobalAugmentation();
 
 		// Should generate content
 		expect(generated.content).to.include('FirstTypeInstance');
 		expect(generated.content).to.include('SecondTypeInstance');
-		expect(generated.content).to.include('declare module "mnemonica"');
+		expect(generated.content).to.include('declare global');
 
 		// Should list the generated types
 		expect(generated.types).to.include('FirstTypeInstance');
@@ -128,10 +128,10 @@ const AdminType = UserType.define('AdminType', function (this: { role: string })
 
 		const graph = analyzer.getGraph();
 		const generator = new TypesGenerator(graph);
-		const generated = generator.generate();
+		const generated = generator.generateGlobalAugmentation();
 
 		const writer = new TypesWriter(testOutputDir);
-		const outputPath = writer.write(generated);
+		const outputPath = writer.writeGlobalAugmentation(generated);
 
 		// File should exist
 		expect(fs.existsSync(outputPath)).to.be.true;
@@ -176,7 +176,7 @@ const D = C.define('D', function (this: { d: string[] }) {
 		expect(allTypes.some(t => t.name === 'D')).to.be.true;
 
 		const generator = new TypesGenerator(graph);
-		const generated = generator.generate();
+		const generated = generator.generateGlobalAugmentation();
 
 		// Should include all instance interfaces
 		expect(generated.content).to.include('AInstance');

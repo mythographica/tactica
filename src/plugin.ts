@@ -138,11 +138,11 @@ function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): 
 		// Get the graph and generate types
 		typeGraph = analyzer.getGraph();
 		const generator = new TypesGenerator(typeGraph);
-		const generated = generator.generate();
+		const generated = generator.generateTypesFile();
 
 		// Write types to file
 		const writer = new TypesWriter(config.outputDir);
-		const outputPath = writer.write(generated);
+		const outputPath = writer.writeTypesFile(generated);
 
 		// Log success
 		if (config.verbose) {

@@ -251,40 +251,34 @@ function run(options: CLIOptions): void {
 	const graph = analyzer.getGraph();
 	const generator = new TypesGenerator(graph);
 
-	// Default to global augmentation unless --module-augmentation is specified
-	const useGlobalAugmentation = options.globalAugmentation !== false;
+	// Check if module augmentation mode is requested (legacy)
+	const useModuleAugmentation = options.globalAugmentation === false;
 
 	// Generate types based on mode
-	let generatedDts: { content: string; types: string[] };
+	let generatedTypes: { content: string; types: string[] };
 	let outputPath: string;
 
 	const writer = new TypesWriter(options.outputDir);
 
-		if (useGlobalAugmentation) {
-			// Generate global augmentation (default, seamless UX)
-			generatedDts = generator.generateGlobalAugmentation();
-			outputPath = writer.writeGlobalAugmentation(generatedDts);
-			// Don't generate legacy module augmentation to avoid conflicts
-		} else {
-			// Legacy mode: module augmentation only
-			generatedDts = generator.generate();
-			outputPath = writer.write(generatedDts);
-		}
-
-	// Always generate complete interfaces for manual imports
-	const generatedTs = generator.generateTypesFile();
-	const tsPath = writer.writeTypesFile(generatedTs);
+	if (useModuleAugmentation) {
+		// Legacy mode: generate global augmentation file (index.d.ts)
+		generatedTypes = generator.generateGlobalAugmentation();
+		outputPath = writer.writeGlobalAugmentation(generatedTypes);
+	} else {
+		// Default mode: generate only types.ts for manual imports
+		generatedTypes = generator.generateTypesFile();
+		outputPath = writer.writeTypesFile(generatedTypes);
+	}
 
 	if (options.verbose) {
 		console.log(`Generated types at: ${outputPath}`);
-		console.log(`Generated complete interfaces at: ${tsPath}`);
-		console.log(`Mode: ${useGlobalAugmentation ? 'global augmentation (seamless)' : 'module augmentation (legacy)'}`);
-		console.log(`Found ${generatedDts.types.length} types:`);
+		console.log(`Mode: ${useModuleAugmentation ? 'global augmentation (legacy)' : 'types file (default)'}`);
+		console.log(`Found ${generatedTypes.types.length} types:`);
 		printTypeHierarchy(graph);
 	} else {
-		console.log(`Generated ${generatedDts.types.length} types at ${options.outputDir || '.tactica'}`);
-		if (useGlobalAugmentation) {
-			console.log('Using global augmentation mode (use --module-augmentation for legacy mode)');
+		console.log(`Generated ${generatedTypes.types.length} types at ${options.outputDir || '.tactica'}`);
+		if (useModuleAugmentation) {
+			console.log('Using global augmentation mode (legacy, use default mode for types.ts only)');
 		}
 	}
 }
