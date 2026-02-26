@@ -344,6 +344,9 @@ export class MnemonicaAnalyzer {
 			return properties;
 		}
 
+		// Build type map from data parameter (for this.x = data.x patterns)
+		const dataTypeMap = this.buildDataTypeMap(handlerArg);
+
 		// Handle function expression
 		if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
 			const body = handlerArg.body;
@@ -352,7 +355,7 @@ export class MnemonicaAnalyzer {
 			if (ts.isBlock(body)) {
 				for (const stmt of body.statements) {
 					if (ts.isExpressionStatement(stmt)) {
-						this.extractPropertyFromStatement(stmt.expression, properties);
+						this.extractPropertyFromStatement(stmt.expression, properties, dataTypeMap);
 					}
 				}
 			}
@@ -378,11 +381,75 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Build a type map from all parameters with inline object type annotations
+	 * Returns a map of "paramName.propertyName" -> type
+	 */
+	private buildDataTypeMap(handlerArg: ts.Expression): Map<string, string> {
+		const typeMap = new Map<string, string>();
+
+		if (!ts.isFunctionExpression(handlerArg) && !ts.isArrowFunction(handlerArg)) {
+			return typeMap;
+		}
+
+		// Iterate over ALL parameters
+		for (const param of handlerArg.parameters) {
+			if (!param.name || !param.type) continue;
+
+			// Get parameter name
+			let paramName = '';
+			if (ts.isIdentifier(param.name)) {
+				paramName = param.name.text;
+			} else {
+				continue; // Skip destructured parameters for now
+			}
+
+			// Check if it's an inline object type literal
+			if (ts.isTypeLiteralNode(param.type)) {
+				for (const member of param.type.members) {
+					if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+						const propName = member.name.text;
+						const type = this.inferType(member.type);
+						typeMap.set(`${paramName}.${propName}`, type);
+					}
+				}
+			}
+		}
+
+		return typeMap;
+	}
+
+	/**
+	 * Extract property access chain (e.g., "dataRenamed.id" from dataRenamed.id)
+	 * Handles fallbacks like: data.permissions || []
+	 */
+	private getPropertyAccessChain(expr: ts.Expression): string | undefined {
+		// Handle identifier: data
+		if (ts.isIdentifier(expr)) {
+			return expr.text;
+		}
+		// Handle property access: data.permissions
+		if (ts.isPropertyAccessExpression(expr)) {
+			const base = this.getPropertyAccessChain(expr.expression);
+			if (base) {
+				return `${base}.${expr.name.text}`;
+			}
+		}
+		// Handle fallback pattern: data.permissions || []
+		if (ts.isBinaryExpression(expr) &&
+			expr.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+			// Return the left side of || operator
+			return this.getPropertyAccessChain(expr.left);
+		}
+		return undefined;
+	}
+
+	/**
 	 * Extract property assignment from statement
 	 */
 	private extractPropertyFromStatement(
 		expr: ts.Expression,
-		properties: Map<string, PropertyInfo>
+		properties: Map<string, PropertyInfo>,
+		dataTypeMap: Map<string, string> = new Map()
 	): void {
 		// Handle: this.property = value
 		if (ts.isBinaryExpression(expr) &&
@@ -394,9 +461,15 @@ export class MnemonicaAnalyzer {
 				if (left.expression.kind === ts.SyntaxKind.ThisKeyword) {
 					const name = left.name?.text;
 					if (name) {
+						// Try to get type from dataTypeMap using full access chain (e.g., "dataRenamed.id")
+						const accessChain = this.getPropertyAccessChain(expr.right);
+						let type = accessChain ? dataTypeMap.get(accessChain) : undefined;
+						if (!type) {
+							type = this.inferTypeFromInitializer(expr.right);
+						}
 						properties.set(name, {
 							name,
-							type: this.inferTypeFromInitializer(expr.right),
+							type,
 							optional: false,
 						});
 					}

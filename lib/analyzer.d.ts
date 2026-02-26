@@ -57,6 +57,16 @@ export declare class MnemonicaAnalyzer {
      */
     private extractProperties;
     /**
+     * Build a type map from all parameters with inline object type annotations
+     * Returns a map of "paramName.propertyName" -> type
+     */
+    private buildDataTypeMap;
+    /**
+     * Extract property access chain (e.g., "dataRenamed.id" from dataRenamed.id)
+     * Handles fallbacks like: data.permissions || []
+     */
+    private getPropertyAccessChain;
+    /**
      * Extract property assignment from statement
      */
     private extractPropertyFromStatement;

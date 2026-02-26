@@ -1,40 +1,36 @@
 import { GeneratedTypes } from './types';
 /**
- * File writer for generated types
+ * Writes generated types to file system
  */
 export declare class TypesWriter {
     private outputDir;
     constructor(outputDir?: string);
     /**
-     * Write generated types to file
+     * Legacy write method - delegates to writeTypesFile
      */
     write(generated: GeneratedTypes): string;
     /**
-     * Write types.ts file with complete interfaces
+     * Write types.ts file (exportable type aliases - default mode)
      */
     writeTypesFile(generated: GeneratedTypes): string;
     /**
-         * Write global augmentation file
-         */
+     * Write global augmentation file (index.d.ts - module augmentation mode)
+     */
     writeGlobalAugmentation(generated: GeneratedTypes): string;
     /**
-        * Write types with custom filename
-        */
+     * Write to a custom filename
+     */
     writeTo(filename: string, content: string): string;
     /**
      * Ensure output directory exists
      */
     private ensureDirectory;
     /**
-     * Update .gitignore to exclude .tactica folder
-     */
-    private updateGitignore;
-    /**
      * Clean the output directory
      */
     clean(): void;
     /**
-     * Get the output directory path
+     * Get output directory
      */
     getOutputDir(): string;
 }

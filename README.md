@@ -440,6 +440,73 @@ npx tactica --verbose
 npx tactica --verbose 2>&1 | grep -i error
 ```
 
+## Known Limitations
+
+### Rest/Spread Parameters with Tuple Types
+
+**TODO**: The analyzer currently cannot extract property types from rest parameters using tuple types:
+
+```typescript
+// ❌ NOT SUPPORTED - Property types will be `unknown`
+export const UserEntity = define('UserEntity', function (
+	this: UserEntityInstance,
+	...args: [{ id: string; email: string; name: string }, ...unknown[]]
+) {
+	const data = args[0];  // Analyzer cannot track this assignment
+	Object.assign(this, data);
+});
+```
+
+**Why**: This pattern requires sophisticated data flow analysis to track variable assignments from array/tuple indices, which the current static analyzer does not support.
+
+**Workaround**: Use direct parameter access with proper type annotations:
+
+```typescript
+// ✅ SUPPORTED - Use direct parameter instead of rest args
+export const UserEntity = define('UserEntity', function (
+	this: UserEntityInstance,
+	data: { id: string; email: string; name: string }
+) {
+	Object.assign(this, data);
+});
+```
+
+### Working Patterns
+
+The following patterns are fully supported:
+
+#### 1. Direct Single Parameter
+```typescript
+const MyType = define('MyType', function (this: MyTypeInstance, data: { name: string }) {
+	Object.assign(this, data);
+});
+```
+
+#### 2. Multiple Parameters
+```typescript
+const MyType = define('MyType', function (
+	this: MyTypeInstance,
+	data: { name: string },
+	config: { enabled: boolean }
+) {
+	Object.assign(this, data, config);
+});
+```
+
+#### 3. Renamed Parameters
+```typescript
+const MyType = define('MyType', function (this: MyTypeInstance, userData: { name: string }) {
+	Object.assign(this, userData);
+});
+```
+
+#### 4. Fallback Patterns
+```typescript
+const MyType = define('MyType', function (this: MyTypeInstance, data: { items?: string[] }) {
+	this.items = data.items || [];  // Fallback to empty array
+});
+```
+
 ## Related Projects
 
 - [mnemonica](https://github.com/wentout/mnemonica) - Instance inheritance system
