@@ -19,7 +19,9 @@
 		"test": "TS_NODE_PROJECT=./tsconfig.test.json mocha test/**/*.test.ts",
 		"test:coverage": "npx nyc npm test",
 		"test:coverage:html": "npx nyc --reporter=html npm test",
-		"lint": "npx eslint --fix ./src"
+		"lint": "npx eslint --fix ./src",
+		"use:public": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='latest';p.devDependencies.mnemonica='latest';p.devDependencies.typeomatica='latest';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to PUBLIC npm dependencies (latest)');\" && rm -rf node_modules package-lock.json && npm install",
+		"use:local": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='file:../core';p.devDependencies.mnemonica='file:../core';p.devDependencies.typeomatica='file:../typeomatica';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to LOCAL file: dependencies');\""
 	},
 	"keywords": [
 		"mnemonica",
@@ -37,10 +39,9 @@
 		"type": "git",
 		"url": "git+https://github.com/mythographica/tactica.git"
 	},
-
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "^0.9.0",
+		"mnemonica": "file:../core",
 		"typescript": "^5.0.0"
 	},
 	"devDependencies": {
@@ -49,11 +50,11 @@
 		"@types/mocha": "^10.0.0",
 		"@types/node": "^20.0.0",
 		"chai": "^4.3.10",
-		"mnemonica": "^0.9.99780",
+		"mnemonica": "file:../core",
 		"mocha": "^10.2.0",
 		"nyc": "^17.1.0",
 		"ts-node": "^10.9.0",
-		"typeomatica": "^0.3.57",
+		"typeomatica": "file:../typeomatica",
 		"typescript": "^5.3.0"
 	},
 	"dependencies": {

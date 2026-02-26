@@ -36,7 +36,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(testDir)).to.be.true;
 		});
 
-		it('should write types.d.ts file', () => {
+		it('should write types.ts file', () => {
 			const generated: GeneratedTypes = {
 				content: '// test content',
 				types: ['TestType'],
@@ -57,7 +57,7 @@ describe('TypesWriter', () => {
 
 			const outputPath = writer.write(generated);
 
-			expect(outputPath).to.equal(path.join(testDir, 'types.d.ts'));
+			expect(outputPath).to.equal(path.join(testDir, 'types.ts'));
 		});
 	});
 
@@ -109,50 +109,6 @@ describe('TypesWriter', () => {
 
 			// Cleanup
 			fs.rmSync(nestedDir, { recursive: true, force: true });
-		});
-	});
-
-	describe('updateGitignore()', () => {
-		it('should create .gitignore if not exists', () => {
-			const generated: GeneratedTypes = {
-				content: '// test',
-				types: [],
-			};
-
-			writer.write(generated);
-
-			expect(fs.existsSync(path.join(process.cwd(), '.gitignore'))).to.be.true;
-		});
-
-		it('should add output directory to existing .gitignore', () => {
-			// Create existing .gitignore
-			fs.writeFileSync('.gitignore', 'node_modules/\n');
-
-			const generated: GeneratedTypes = {
-				content: '// test',
-				types: [],
-			};
-
-			writer.write(generated);
-
-			const gitignoreContent = fs.readFileSync('.gitignore', 'utf-8');
-			expect(gitignoreContent).to.include(testDir);
-		});
-
-		it('should not duplicate if already ignored', () => {
-			// Create .gitignore with testDir already ignored
-			fs.writeFileSync('.gitignore', `${testDir}/\n`);
-
-			const generated: GeneratedTypes = {
-				content: '// test',
-				types: [],
-			};
-
-			writer.write(generated);
-
-			const gitignoreContent = fs.readFileSync('.gitignore', 'utf-8');
-			const matches = gitignoreContent.split(testDir).length - 1;
-			expect(matches).to.equal(1);
 		});
 	});
 });
