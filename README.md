@@ -444,7 +444,7 @@ npx tactica --verbose 2>&1 | grep -i error
 
 ### Rest/Spread Parameters with Tuple Types
 
-**TODO**: The analyzer currently cannot extract property types from rest parameters using tuple types:
+The analyzer currently cannot extract property types from rest parameters using tuple types:
 
 ```typescript
 // ❌ NOT SUPPORTED - Property types will be `unknown`
@@ -456,8 +456,6 @@ export const UserEntity = define('UserEntity', function (
 	Object.assign(this, data);
 });
 ```
-
-**Why**: This pattern requires sophisticated data flow analysis to track variable assignments from array/tuple indices, which the current static analyzer does not support.
 
 **Workaround**: Use direct parameter access with proper type annotations:
 
@@ -471,18 +469,36 @@ export const UserEntity = define('UserEntity', function (
 });
 ```
 
-### Working Patterns
+### Deep Nested Property Access
 
-The following patterns are fully supported:
+Property access through multiple levels returns `unknown`:
 
-#### 1. Direct Single Parameter
+```typescript
+// ⚠️ PARTIAL - nested access returns unknown
+const UserType = define('UserType', function (this: any, data: { profile: { name: string } }) {
+	this.name = data.profile.name;  // Type: unknown (not string)
+});
+```
+
+**Workaround**: Flatten your data structure or use direct parameter:
+
+```typescript
+// ✅ SUPPORTED - direct parameter or flat structure
+const UserType = define('UserType', function (this: any, profileName: string) {
+	this.name = profileName;  // Type: string
+});
+```
+
+## Supported Patterns
+
+### 1. Direct Single Parameter
 ```typescript
 const MyType = define('MyType', function (this: MyTypeInstance, data: { name: string }) {
 	Object.assign(this, data);
 });
 ```
 
-#### 2. Multiple Parameters
+### 2. Multiple Parameters
 ```typescript
 const MyType = define('MyType', function (
 	this: MyTypeInstance,
@@ -493,17 +509,61 @@ const MyType = define('MyType', function (
 });
 ```
 
-#### 3. Renamed Parameters
+### 3. Renamed Parameters
 ```typescript
 const MyType = define('MyType', function (this: MyTypeInstance, userData: { name: string }) {
 	Object.assign(this, userData);
 });
 ```
 
-#### 4. Fallback Patterns
+### 4. Fallback Patterns
 ```typescript
 const MyType = define('MyType', function (this: MyTypeInstance, data: { items?: string[] }) {
 	this.items = data.items || [];  // Fallback to empty array
+});
+```
+
+### 5. Arithmetic Operations
+```typescript
+const CalcType = define('CalcType', function (this: any, data: { x: number; y: number }) {
+	this.sum = data.x + data.y;      // number
+	this.diff = data.x - data.y;     // number
+	this.product = data.x * data.y;  // number
+});
+```
+
+### 6. Built-in Function Calls
+```typescript
+const TimeType = define('TimeType', function (this: any) {
+	this.timestamp = Date.now();     // number
+	this.parsed = parseInt('123');   // number
+	this.str = String(123);          // string
+	this.bool = Boolean(1);          // boolean
+});
+```
+
+### 7. Template Literals
+```typescript
+const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
+	this.fullName = `${data.first} ${data.last}`;  // string
+});
+```
+
+### 8. New Expressions
+```typescript
+const ContainerType = define('ContainerType', function (this: any) {
+	this.created = new Date();       // Date
+	this.items = new Array();        // Array
+	this.cache = new Map();          // Map
+});
+```
+
+### 9. Async Constructors
+```typescript
+const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+	this.value = data.value;
+	this.computed = data.value * 2;  // number
+	this.timestamp = Date.now();     // number
 });
 ```
 

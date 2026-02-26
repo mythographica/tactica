@@ -44,6 +44,17 @@ npm run watch
 - `noUnusedParameters: true` - unused parameters cause errors
 - `isolatedModules: true` - each file must be independently transpilable
 
+### Return Statement Pattern
+- **Always** use intermediate variable before return for debugging support:
+  ```typescript
+  // ✓ correct - allows setting breakpoint on the variable
+  const result = this.service.doSomething();
+  return result;
+  
+  // ✗ wrong - cannot set breakpoint on return value
+  return this.service.doSomething();
+  ```
+
 ## Architecture
 
 ### Core Components
@@ -154,6 +165,24 @@ npm run test:coverage
 | `examples.test.ts` | Tests for tactica-test example files |
 | `typeomatica.test.ts` | Combined mnemonica + typeomatica patterns |
 
+### After Modifying Tests
+
+**IMPORTANT**: After adding or modifying tests, you **MUST** compare the tested features with the documentation:
+
+1. **Review the tests** - What new capabilities are being tested?
+2. **Check README.md** - Is the "Known Limitations" section still accurate?
+3. **Check README.md** - Are the "Supported Patterns" documented?
+4. **Check AGENTS.md** - Do the "Supported Patterns" examples match?
+5. **Update documentation** if tests reveal new capabilities or changed behavior
+
+Example workflow:
+```
+Add new tests for feature X → Run tests → Verify they pass →
+Compare with README/AGENTS → Update documentation if needed
+```
+
+This ensures documentation stays in sync with actual analyzer capabilities.
+
 ## Supported Patterns
 
 ### 1. define() Calls
@@ -260,6 +289,59 @@ const HiddenType = define('HiddenType', function (this: any) {
 const HiddenShorthand = define('HiddenShorthand', function (this: any) {
     this.data = 'shorthand';
 }, false);
+```
+
+### 7. Type Inference from Expressions
+
+The analyzer infers types from various expression patterns:
+
+```typescript
+// Arithmetic operations → number
+const CalcType = define('CalcType', function (this: any, data: { x: number; y: number }) {
+    this.sum = data.x + data.y;      // number
+    this.diff = data.x - data.y;     // number
+    this.product = data.x * data.y;  // number
+    this.quotient = data.x / data.y; // number
+});
+
+// Built-in function calls
+const TimeType = define('TimeType', function (this: any) {
+    this.now = Date.now();           // number
+    this.parsed = parseInt('123');   // number
+    this.str = String(123);          // string
+    this.bool = Boolean(1);          // boolean
+});
+
+// Template literals → string
+const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
+    this.fullName = `${data.first} ${data.last}`; // string
+});
+
+// new Expressions
+const ContainerType = define('ContainerType', function (this: any) {
+    this.created = new Date();       // Date
+    this.items = new Array();        // Array
+    this.cache = new Map();          // Map
+});
+
+// Direct parameter assignment
+const DirectType = define('DirectType', function (this: any, name: string, count: number) {
+    this.name = name;    // string
+    this.count = count;  // number
+});
+
+// Data parameter property access
+const DataType = define('DataType', function (this: any, data: { id: string; items: string[] }) {
+    this.id = data.id;       // string
+    this.items = data.items; // Array<string>
+});
+
+// Async constructors
+const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+    this.value = data.value;
+    this.computed = data.value * 2;  // number
+    this.timestamp = Date.now();     // number
+});
 ```
 
 ## Common Patterns
@@ -390,9 +472,63 @@ npx tactica --project ./tsconfig.json
 
 1. **Single-pass analysis**: Without a full TypeScript program, parent-child relationships may not be fully resolved. Using `ts.Program` provides better binding.
 
-2. **Property extraction**: Currently supports `Object.assign(this, { ... })` and `this.prop = value` patterns. Complex property definitions may need manual type annotations.
+2. **Deep nested property access**: Property access like `data.nested.prop` returns `unknown` - only single-level access (`data.prop`) is fully supported.
 
-3. **Decorator support**: `@decorate()` is detected, but complex decorator patterns may need enhancement.
+3. **Complex property definitions**: While arithmetic operations, template literals, and common built-in functions are supported, complex expressions may fall back to `unknown`.
+
+4. **Decorator support**: `@decorate()` is detected, but complex decorator patterns may need enhancement.
+
+## Type Inference Capabilities
+
+The analyzer can infer property types from various expression patterns:
+
+### Supported Patterns
+
+```typescript
+// Arithmetic operations → number
+const CalcType = define('CalcType', function (this: any, data: { x: number; y: number }) {
+	this.sum = data.x + data.y;      // number
+	this.diff = data.x - data.y;     // number
+	this.product = data.x * data.y;  // number
+	this.quotient = data.x / data.y; // number
+});
+
+// Built-in function calls
+const TimeType = define('TimeType', function (this: any) {
+	this.now = Date.now();           // number
+	this.parsed = parseInt('123');   // number
+	this.str = String(123);          // string
+	this.bool = Boolean(1);          // boolean
+});
+
+// Template literals → string
+const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
+	this.fullName = `${data.first} ${data.last}`; // string
+});
+
+// new Expressions
+const ContainerType = define('ContainerType', function (this: any) {
+	this.created = new Date();       // Date
+	this.items = new Array();        // Array
+	this.cache = new Map();          // Map
+});
+
+// Direct parameter assignment
+const DirectType = define('DirectType', function (this: any, name: string, count: number) {
+	this.name = name;    // string
+	this.count = count;  // number
+});
+
+// Data parameter property access
+const DataType = define('DataType', function (this: any, data: { id: string; items: string[] }) {
+	this.id = data.id;       // string
+	this.items = data.items; // Array<string>
+});
+```
+
+### Fallback Behavior
+
+When type cannot be inferred, the analyzer falls back to `unknown`. This is safe and allows manual type annotation if needed.
 
 ## Related Projects
 
