@@ -6,6 +6,23 @@ This file provides guidance to agents when working with code in this repository.
 
 **@mnemonica/tactica** is a TypeScript Language Service Plugin that generates type definitions for Mnemonica's dynamic nested constructors. It enables TypeScript to understand runtime type hierarchies created through `define()` and `decorate()` calls.
 
+### Role in the Ecosystem
+
+Tactica serves three key purposes:
+
+1. **Type Generation**: Generates `.tactica/types.ts` with TypeScript interfaces for Mnemonica types
+2. **Hierarchy Tracking**: Provides type information for nested constructors that TypeScript can't infer
+3. **Location Data**: Tracks where `define()`/`decorate()` are called and where instances are created
+
+This location data feeds into **Mnemonica Graphica** for visualization and navigation.
+
+### AI Agent Context
+
+Tactica enables AI agents to:
+- Understand the complete type hierarchy without executing code
+- Navigate between type definitions and usage sites
+- Provide intelligent suggestions based on the inheritance graph
+
 ## Build/Test Commands
 
 All commands run from the `tactica/` directory:
