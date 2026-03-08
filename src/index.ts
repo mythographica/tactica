@@ -1,5 +1,7 @@
 'use strict';
 
+import * as pkg from '../package.json';
+
 /**
  * Tactica - TypeScript Language Service Plugin for Mnemonica
  *
@@ -9,6 +11,7 @@
  */
 
 export { MnemonicaAnalyzer } from './analyzer';
+export { TopologicaAnalyzer } from './topologica-analyzer';
 export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
@@ -30,5 +33,5 @@ export { main, run, watch, parseArgs } from './cli';
 // Plugin entry point (for TypeScript Language Service)
 export { default } from './plugin';
 
-// Version
-export const VERSION = '0.1.0';
+// Version from package.json
+export const VERSION = pkg.version;

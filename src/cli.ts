@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
 import { MnemonicaAnalyzer } from './analyzer';
+import { TopologicaAnalyzer } from './topologica-analyzer';
 import { TypesGenerator } from './generator';
 import { TypesWriter } from './writer';
 import { TacticaConfig, TypeNode } from './types';
@@ -180,6 +181,55 @@ function printTypeHierarchy(graph: TypeGraphImpl): void {
 }
 
 /**
+ * Merge topologica types into mnemonica graph
+ */
+function mergeTopologicaTypes(graph: TypeGraphImpl, topologicaTypes: Map<string, TypeNode>): void {
+	for (const [fullPath, typeNode] of topologicaTypes) {
+		// Skip if already exists in graph (prefer mnemonica's TypeScript analysis)
+		if (graph.allTypes.has(fullPath)) {
+			continue;
+		}
+
+		// Add to graph - parent relationship is already set in typeNode
+		if (typeNode.parent) {
+			// Add as child of parent
+			graph.addChild(typeNode.parent, typeNode);
+		} else {
+			// Add as root
+			graph.addRoot(typeNode);
+		}
+	}
+}
+
+/**
+ * Scan for topologica directory structures
+ */
+function scanTopologicaDirectories(projectDir: string): string[] {
+	const dirs: string[] = [];
+	const possibleDirs = ['ai-types', 'types', 'topologica-types'];
+
+	for (const dirName of possibleDirs) {
+		const dirPath = path.join(projectDir, dirName);
+		if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+			dirs.push(dirPath);
+		}
+	}
+
+	// Also scan src/ subdirectory
+	const srcPath = path.join(projectDir, 'src');
+	if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
+		for (const dirName of possibleDirs) {
+			const dirPath = path.join(srcPath, dirName);
+			if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+				dirs.push(dirPath);
+			}
+		}
+	}
+
+	return dirs;
+}
+
+/**
  * Run type generation
  */
 function run(options: CLIOptions): void {
@@ -247,8 +297,31 @@ function run(options: CLIOptions): void {
 		}
 	}
 
-	// Generate types
+	// Generate types from mnemonica analysis
 	const graph = analyzer.getGraph();
+
+	// Scan for topologica directory structures
+	const projectDir = path.dirname(tsconfigPath);
+	const topologicaDirs = scanTopologicaDirectories(projectDir);
+
+	if (topologicaDirs.length > 0 && options.verbose) {
+		console.log(`Found topologica directories: ${topologicaDirs.join(', ')}`);
+	}
+
+	// Analyze topologica directories and merge into graph
+	const topologicaAnalyzer = new TopologicaAnalyzer();
+	for (const dir of topologicaDirs) {
+		const result = topologicaAnalyzer.analyzeDirectory(dir);
+		if (result.types.size > 0) {
+			mergeTopologicaTypes(graph, result.types);
+			if (options.verbose) {
+				console.log(`Added ${result.types.size} types from ${dir}`);
+			}
+		}
+		if (result.errors.length > 0 && options.verbose) {
+			result.errors.forEach(err => console.warn(`[Topologica] ${err}`));
+		}
+	}
 	const generator = new TypesGenerator(graph);
 
 	// Check if module augmentation mode is requested (legacy)

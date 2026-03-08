@@ -6,10 +6,11 @@
  * define() and decorate() calls.
  */
 export { MnemonicaAnalyzer } from './analyzer';
+export { TopologicaAnalyzer } from './topologica-analyzer';
 export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
 export type { TacticaConfig, TypeNode, TypeGraph, PropertyInfo, AnalyzeResult, AnalyzeError, GeneratedTypes, } from './types';
 export { main, run, watch, parseArgs } from './cli';
 export { default } from './plugin';
-export declare const VERSION = "0.1.0";
+export declare const VERSION: string;

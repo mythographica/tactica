@@ -1,8 +1,11 @@
 'use strict';
 
+import * as fs from 'fs';
+import * as path from 'path';
 import * as ts from 'typescript';
-import { TacticaConfig } from './types';
+import { TacticaConfig, TypeNode } from './types';
 import { MnemonicaAnalyzer } from './analyzer';
+import { TopologicaAnalyzer } from './topologica-analyzer';
 import { TypeGraphImpl } from './graph';
 import { TypesGenerator } from './generator';
 import { TypesWriter } from './writer';
@@ -93,6 +96,55 @@ function setupFileWatcher(info: ts.server.PluginCreateInfo, _tsModule: typeof ts
 }
 
 /**
+ * Merge topologica types into mnemonica graph
+ */
+function mergeTopologicaTypes(graph: TypeGraphImpl, topologicaTypes: Map<string, TypeNode>): void {
+	for (const [fullPath, typeNode] of topologicaTypes) {
+		// Skip if already exists in graph (prefer mnemonica's TypeScript analysis)
+		if (graph.allTypes.has(fullPath)) {
+			continue;
+		}
+
+		// Add to graph - parent relationship is already set in typeNode
+		if (typeNode.parent) {
+			// Add as child of parent
+			graph.addChild(typeNode.parent, typeNode);
+		} else {
+			// Add as root
+			graph.addRoot(typeNode);
+		}
+	}
+}
+
+/**
+ * Scan for topologica directory structures
+ */
+function scanTopologicaDirectories(projectDir: string): string[] {
+	const dirs: string[] = [];
+	const possibleDirs = ['ai-types', 'types', 'topologica-types'];
+
+	for (const dirName of possibleDirs) {
+		const dirPath = path.join(projectDir, dirName);
+		if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+			dirs.push(dirPath);
+		}
+	}
+
+	// Also scan src/ subdirectory
+	const srcPath = path.join(projectDir, 'src');
+	if (fs.existsSync(srcPath) && fs.statSync(srcPath).isDirectory()) {
+		for (const dirName of possibleDirs) {
+			const dirPath = path.join(srcPath, dirName);
+			if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+				dirs.push(dirPath);
+			}
+		}
+	}
+
+	return dirs;
+}
+
+/**
  * Generate types from the project
  */
 function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): void {
@@ -135,8 +187,26 @@ function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): 
 			analyzer.analyzeFile(sourceFile);
 		}
 
-		// Get the graph and generate types
+		// Get the graph from mnemonica analysis
 		typeGraph = analyzer.getGraph();
+
+		// Scan for topologica directory structures
+		const projectDir = info.project.getCurrentDirectory();
+		const topologicaDirs = scanTopologicaDirectories(projectDir);
+
+		// Analyze topologica directories and merge into graph
+		const topologicaAnalyzer = new TopologicaAnalyzer();
+		for (const dir of topologicaDirs) {
+			const result = topologicaAnalyzer.analyzeDirectory(dir);
+			if (result.types.size > 0) {
+				mergeTopologicaTypes(typeGraph, result.types);
+				if (config.verbose) {
+					info.project.projectService.logger.info(
+						`[Tactica] Added ${result.types.size} types from topologica directory: ${dir}`
+					);
+				}
+			}
+		}
 		const generator = new TypesGenerator(typeGraph);
 		const generated = generator.generateTypesFile();
 
