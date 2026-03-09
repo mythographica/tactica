@@ -39,4 +39,13 @@ export declare class TypesGenerator {
      * Generate a simple type declaration for a single type
      */
     generateSingleType(node: TypeNode): string;
+    /**
+     * Generate TypeRegistry interface for type-safe lookupTyped() function
+     * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
+     */
+    generateTypeRegistry(): GeneratedTypes;
+    /**
+     * Get the full dotted path for a type node
+     */
+    private getFullPath;
 }

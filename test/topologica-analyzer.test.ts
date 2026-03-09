@@ -1,7 +1,7 @@
+
 /// <reference types="node" />
 /// <reference types="mocha" />
 /// <reference types="chai" />
-
 'use strict';
 
 import { expect } from 'chai';
