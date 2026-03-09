@@ -1,7 +1,7 @@
 'use strict';
 
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError } from './types';
+import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo } from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -10,6 +10,8 @@ import { TypeGraphImpl } from './graph';
 export class MnemonicaAnalyzer {
 	private errors: AnalyzeError[] = [];
 	private graph = new TypeGraphImpl();
+	private definitions = new Map<string, DefinitionInfo>();
+	private usages = new Map<string, UsageInfo[]>();
 
 	constructor(program?: ts.Program) {
 		// Store program for future use (currently unused but kept for extensibility)
@@ -50,6 +52,20 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Get collected definitions
+	 */
+	getDefinitions(): Map<string, DefinitionInfo> {
+		return this.definitions;
+	}
+
+	/**
+	 * Get collected usages
+	 */
+	getUsages(): Map<string, UsageInfo[]> {
+		return this.usages;
+	}
+
+	/**
 	 * Visit a node in the AST
 	 */
 	private visitNode(node: ts.Node, sourceFile: ts.SourceFile, currentClass?: ts.ClassDeclaration): void {
@@ -62,6 +78,9 @@ export class MnemonicaAnalyzer {
 		if (this.isDecorateDecorator(node)) {
 			this.processDecorateDecorator(node as ts.Decorator, sourceFile, currentClass);
 		}
+
+		// Check for type usages (new Type(), type annotations, etc.)
+		this.collectUsage(node, sourceFile);
 
 		// Track class declarations for decorator parent lookup
 		if (ts.isClassDeclaration(node)) {
@@ -97,8 +116,38 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Check if a node is a @decorate() decorator
-	 */
+		* Extract config options from define() call
+		*/
+	private extractConfig(call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
+		const config: { strictChain?: boolean; blockErrors?: boolean } = {};
+
+		// Config is the third argument: define('Name', handler, config)
+		const configArg = call.arguments[2];
+		if (!configArg || !ts.isObjectLiteralExpression(configArg)) {
+			return config;
+		}
+
+		for (const prop of configArg.properties) {
+			if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
+				const propName = prop.name.text;
+				if (propName === 'strictChain' && prop.initializer.kind === ts.SyntaxKind.TrueKeyword) {
+					config.strictChain = true;
+				} else if (propName === 'strictChain' && prop.initializer.kind === ts.SyntaxKind.FalseKeyword) {
+					config.strictChain = false;
+				} else if (propName === 'blockErrors' && prop.initializer.kind === ts.SyntaxKind.TrueKeyword) {
+					config.blockErrors = true;
+				} else if (propName === 'blockErrors' && prop.initializer.kind === ts.SyntaxKind.FalseKeyword) {
+					config.blockErrors = false;
+				}
+			}
+		}
+
+		return config;
+	}
+
+	/**
+		* Check if a node is a @decorate() decorator
+		*/
 	private isDecorateDecorator(node: ts.Node): node is ts.Decorator {
 		if (!ts.isDecorator(node)) {
 			return false;
@@ -145,6 +194,23 @@ export class MnemonicaAnalyzer {
 
 		// Determine parent type
 		const parentNode = this.findParentType(call);
+
+		// Build full path
+		const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
+
+		// Extract config options
+		const config = this.extractConfig(call);
+
+		// Create definition info
+		const definition: DefinitionInfo = {
+			name: typeName,
+			location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind: 'define',
+			parent: parentNode ? parentNode.fullPath : null,
+			strictChain: config.strictChain ?? true,
+			blockErrors: config.blockErrors ?? false,
+		};
+		this.definitions.set(fullPath, definition);
 
 		// Create type node
 		const node = TypeGraphImpl.createNode(
@@ -200,6 +266,7 @@ export class MnemonicaAnalyzer {
 
 		// Try to find parent type from decorator arguments
 		let parentNode: TypeNode | undefined;
+		let parentFullPath: string | null = null;
 		if (ts.isCallExpression(decorator.expression)) {
 			const args = decorator.expression.arguments;
 			if (args.length > 0 && ts.isIdentifier(args[0])) {
@@ -215,8 +282,25 @@ export class MnemonicaAnalyzer {
 						}
 					}
 				}
+				if (parentNode) {
+					parentFullPath = parentNode.fullPath;
+				}
 			}
 		}
+
+		// Build full path
+		const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
+
+		// Create definition info for decorate
+		const definition: DefinitionInfo = {
+			name: typeName,
+			location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind: 'decorate',
+			parent: parentFullPath,
+			strictChain: true, // decorate uses strict defaults
+			blockErrors: false,
+		};
+		this.definitions.set(fullPath, definition);
 
 		// Create type node
 		const node = TypeGraphImpl.createNode(
@@ -719,6 +803,103 @@ export class MnemonicaAnalyzer {
 			}
 			default:
 				return 'unknown';
+			}
+		}
+	
+		/**
+			* Collect usage information for type references
+			*/
+		private collectUsage(node: ts.Node, sourceFile: ts.SourceFile): void {
+			// Check for new Type() instantiation
+			if (ts.isNewExpression(node) && node.expression) {
+				const typeName = this.getTypeNameFromExpression(node.expression);
+				if (typeName) {
+					const { line, character } = ts.getLineAndCharacterOfPosition(
+						sourceFile,
+						node.getStart(sourceFile)
+					);
+					this.addUsage(typeName, {
+						location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+						kind: 'instantiation',
+						code: node.getText(sourceFile).slice(0, 100),
+					});
+				}
+			}
+	
+			// Check for property access on instances (user.AdminType)
+			if (ts.isPropertyAccessExpression(node)) {
+				const propName = node.name.text;
+				// Check if this looks like a type access pattern
+				if (propName && this.isLikelyTypeName(propName)) {
+					const { line, character } = ts.getLineAndCharacterOfPosition(
+						sourceFile,
+						node.getStart(sourceFile)
+					);
+					// Try to resolve full path
+					const fullPath = this.resolveTypePath(node);
+					if (fullPath) {
+						this.addUsage(fullPath, {
+							location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+							kind: 'propertyAccess',
+							code: node.getText(sourceFile).slice(0, 100),
+						});
+					}
+				}
+			}
+		}
+	
+		/**
+			* Add a usage to the collection
+			*/
+		private addUsage(typePath: string, usage: UsageInfo): void {
+			if (!this.usages.has(typePath)) {
+				this.usages.set(typePath, []);
+			}
+			this.usages.get(typePath)!.push(usage);
+		}
+	
+		/**
+			* Get type name from expression (identifier or property access)
+			*/
+		private getTypeNameFromExpression(expr: ts.Expression): string | undefined {
+			if (ts.isIdentifier(expr)) {
+				return expr.text;
+			}
+			if (ts.isPropertyAccessExpression(expr)) {
+				const chain = this.getPropertyChain(expr);
+				return chain.join('.');
+			}
+			return undefined;
+		}
+	
+		/**
+			* Resolve full type path from property access
+			*/
+		private resolveTypePath(expr: ts.PropertyAccessExpression): string | undefined {
+			const chain = this.getPropertyChain(expr);
+			if (chain.length === 0) return undefined;
+	
+			// Check if this chain matches a known type
+			const fullPath = chain.join('.');
+			if (this.definitions.has(fullPath)) {
+				return fullPath;
+			}
+	
+			// Try just the property name
+			const propName = chain[chain.length - 1];
+			for (const [path] of this.definitions) {
+				if (path.endsWith(`.${propName}`) || path === propName) {
+					return path;
+				}
+			}
+	
+			return fullPath;
+		}
+	
+		/**
+			* Check if a name looks like a type (starts with uppercase)
+			*/
+		private isLikelyTypeName(name: string): boolean {
+			return name[0] >= 'A' && name[0] <= 'Z';
 		}
 	}
-}

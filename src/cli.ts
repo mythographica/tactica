@@ -360,6 +360,15 @@ export * from './registry';
 		}
 	}
 
+	// Generate definitions.json and usages.json for code navigation
+	const definitionsPath = writer.writeDefinitionsFile(analyzer.getDefinitions());
+	const usagesPath = writer.writeUsagesFile(analyzer.getUsages());
+
+	if (options.verbose) {
+		console.log(`Generated definitions.json at: ${definitionsPath}`);
+		console.log(`Generated usages.json at: ${usagesPath}`);
+	}
+
 	if (options.verbose) {
 		console.log(`Generated types at: ${outputPath}`);
 		console.log(`Mode: ${useModuleAugmentation ? 'global augmentation (legacy)' : 'types file (default)'}`);

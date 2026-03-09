@@ -1,4 +1,4 @@
-import { GeneratedTypes } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
 /**
  * Writes generated types to file system
  */
@@ -33,4 +33,12 @@ export declare class TypesWriter {
      * Get output directory
      */
     getOutputDir(): string;
+    /**
+     * Write definitions.json file
+     */
+    writeDefinitionsFile(definitions: Map<string, DefinitionInfo>): string;
+    /**
+     * Write usages.json file
+     */
+    writeUsagesFile(usages: Map<string, UsageInfo[]>): string;
 }

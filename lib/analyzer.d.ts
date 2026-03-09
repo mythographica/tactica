@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo } from './types';
 import { TypeGraphImpl } from './graph';
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -7,6 +7,8 @@ import { TypeGraphImpl } from './graph';
 export declare class MnemonicaAnalyzer {
     private errors;
     private graph;
+    private definitions;
+    private usages;
     constructor(program?: ts.Program);
     /**
      * Analyze a source file for Mnemonica type definitions
@@ -21,6 +23,14 @@ export declare class MnemonicaAnalyzer {
      */
     getGraph(): TypeGraphImpl;
     /**
+     * Get collected definitions
+     */
+    getDefinitions(): Map<string, DefinitionInfo>;
+    /**
+     * Get collected usages
+     */
+    getUsages(): Map<string, UsageInfo[]>;
+    /**
      * Visit a node in the AST
      */
     private visitNode;
@@ -29,8 +39,12 @@ export declare class MnemonicaAnalyzer {
      */
     private isDefineCall;
     /**
-     * Check if a node is a @decorate() decorator
-     */
+        * Extract config options from define() call
+        */
+    private extractConfig;
+    /**
+        * Check if a node is a @decorate() decorator
+        */
     private isDecorateDecorator;
     /**
      * Process a define() call
@@ -82,4 +96,24 @@ export declare class MnemonicaAnalyzer {
      * Infer type from initializer
      */
     private inferTypeFromInitializer;
+    /**
+        * Collect usage information for type references
+        */
+    private collectUsage;
+    /**
+        * Add a usage to the collection
+        */
+    private addUsage;
+    /**
+        * Get type name from expression (identifier or property access)
+        */
+    private getTypeNameFromExpression;
+    /**
+        * Resolve full type path from property access
+        */
+    private resolveTypePath;
+    /**
+        * Check if a name looks like a type (starts with uppercase)
+        */
+    private isLikelyTypeName;
 }

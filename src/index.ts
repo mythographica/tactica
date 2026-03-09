@@ -25,6 +25,10 @@ export type {
 	AnalyzeResult,
 	AnalyzeError,
 	GeneratedTypes,
+	DefinitionInfo,
+	UsageInfo,
+	DefinitionsJson,
+	UsagesJson,
 } from './types';
 
 // CLI entry point

@@ -79,3 +79,51 @@ export interface GeneratedTypes {
 	/** Types that were generated */
 	types: string[];
 }
+
+/**
+ * Definition info for code navigation
+ */
+export interface DefinitionInfo {
+	/** Type name (e.g., "AdminType") */
+	name: string;
+	/** Location in source: file.ts:Line:Col */
+	location: string;
+	/** How type was created: 'define' or 'decorate' */
+	kind: 'define' | 'decorate';
+	/** Parent type full path, null if root */
+	parent: string | null;
+	/** strictChain config option */
+	strictChain: boolean;
+	/** blockErrors config option */
+	blockErrors: boolean;
+}
+
+/**
+ * Usage info for code navigation
+ */
+export interface UsageInfo {
+	/** Location in source: file.ts:Line:Col */
+	location: string;
+	/** Kind of usage: instantiation, typeAnnotation, propertyAccess */
+	kind: 'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'reference';
+	/** Code snippet */
+	code: string;
+}
+
+/**
+ * JSON output for definitions.json
+ */
+export interface DefinitionsJson {
+	version: string;
+	generatedAt: string;
+	definitions: Record<string, DefinitionInfo>;
+}
+
+/**
+ * JSON output for usages.json
+ */
+export interface UsagesJson {
+	version: string;
+	generatedAt: string;
+	usages: Record<string, UsageInfo[]>;
+}

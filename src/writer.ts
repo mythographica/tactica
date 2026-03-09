@@ -2,7 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratedTypes } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
 
 /**
  * Writes generated types to file system
@@ -77,5 +77,51 @@ export class TypesWriter {
 	 */
 	getOutputDir (): string {
 		return this.outputDir;
+	}
+
+	/**
+	 * Write definitions.json file
+	 */
+	writeDefinitionsFile (definitions: Map<string, DefinitionInfo>): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'definitions.json');
+
+		// Convert Map to plain object
+		const definitionsObj: Record<string, DefinitionInfo> = {};
+		for (const [key, value] of definitions) {
+			definitionsObj[key] = value;
+		}
+
+		const json = {
+			version: '1.0',
+			generatedAt: new Date().toISOString(),
+			definitions: definitionsObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write usages.json file
+	 */
+	writeUsagesFile (usages: Map<string, UsageInfo[]>): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'usages.json');
+
+		// Convert Map to plain object
+		const usagesObj: Record<string, UsageInfo[]> = {};
+		for (const [key, value] of usages) {
+			usagesObj[key] = value;
+		}
+
+		const json = {
+			version: '1.0',
+			generatedAt: new Date().toISOString(),
+			usages: usagesObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
 	}
 }
