@@ -21,6 +21,8 @@ export interface PropertyInfo {
 	name: string;
 	type: string;
 	optional: boolean;
+	/** True if this is a getter property (readonly) */
+	readonly?: boolean;
 }
 
 export interface TypeNode {

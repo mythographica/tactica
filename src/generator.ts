@@ -96,7 +96,8 @@ export class TypesGenerator {
 		// Add instance properties
 		for (const [propName, propInfo] of node.properties.entries()) {
 			const optional = propInfo.optional ? '?' : '';
-			lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
+			const readonly = propInfo.readonly ? 'readonly ' : '';
+			lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
 		}
 
 		// Add nested constructor properties (only for root types)
@@ -148,7 +149,8 @@ export class TypesGenerator {
 			// Add all instance properties (for type merging)
 			for (const [propName, propInfo] of node.properties.entries()) {
 				const optional = propInfo.optional ? '?' : '';
-				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
+				const readonly = propInfo.readonly ? 'readonly ' : '';
+				lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
 			}
 
 			// Add subtype constructors (non-optional so they're accessible) - only for root types
@@ -224,7 +226,8 @@ export class TypesGenerator {
 		// Add instance properties extracted from the constructor
 		for (const [propName, propInfo] of node.properties.entries()) {
 			const optional = propInfo.optional ? '?' : '';
-			lines.push(`\t${propName}${optional}: ${propInfo.type};`);
+			const readonly = propInfo.readonly ? 'readonly ' : '';
+			lines.push(`\t${readonly}${propName}${optional}: ${propInfo.type};`);
 		}
 
 		// Add nested constructor properties (only for root types)

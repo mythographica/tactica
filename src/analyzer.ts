@@ -520,11 +520,16 @@ export class MnemonicaAnalyzer {
 					}
 
 					const name = member.name.text;
-					const type = this.inferType(member.type);
+					// First try explicit type annotation, then infer from getter body
+					let type = this.inferType(member.type);
+					if (type === 'unknown' && member.body) {
+						type = this.inferReturnTypeFromBody(member.body);
+					}
 					properties.set(name, {
 						name,
 						type,
 						optional: false,
+						readonly: true,
 					});
 				}
 			}
@@ -739,11 +744,16 @@ export class MnemonicaAnalyzer {
 				}
 
 				const name = member.name.text;
-				const type = this.inferType(member.type);
+				// First try explicit type annotation, then infer from getter body
+				let type = this.inferType(member.type);
+				if (type === 'unknown' && member.body) {
+					type = this.inferReturnTypeFromBody(member.body);
+				}
 				properties.set(name, {
 					name,
 					type,
 					optional: false,
+					readonly: true,
 				});
 			}
 		}
@@ -1095,6 +1105,24 @@ export class MnemonicaAnalyzer {
 						if (type) {
 							return type;
 						}
+					}
+				}
+				// Handle this.map.size pattern (Map.size returns number)
+				const propAccess = initializer as ts.PropertyAccessExpression;
+				if (ts.isPropertyAccessExpression(propAccess.expression)) {
+					const outerProp = propAccess.expression;
+					// Check for this.map pattern
+					let innerName = '';
+					if (outerProp.expression.kind === ts.SyntaxKind.ThisKeyword) {
+						innerName = 'this';
+					} else if (ts.isIdentifier(outerProp.expression)) {
+						innerName = outerProp.expression.text;
+					}
+					const mapProp = outerProp.name.text;
+					const finalProp = propAccess.name.text;
+					// this.map.size -> number
+					if (innerName === 'this' && mapProp === 'map' && finalProp === 'size') {
+						return 'number';
 					}
 				}
 				return 'unknown';
