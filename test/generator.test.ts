@@ -85,7 +85,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('ChildInstance = ParentInstance &');
+			expect(result.content).to.include('ChildInstance = ProtoFlat<ParentInstance,');
 		});
 	});
 });

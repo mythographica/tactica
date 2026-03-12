@@ -852,6 +852,10 @@ export class MnemonicaAnalyzer {
 			* Add a usage to the collection
 			*/
 		private addUsage(typePath: string, usage: UsageInfo): void {
+		// Only track usages of mnemonica-defined types
+		if (!this.definitions.has(typePath)) {
+			return;
+		}
 			if (!this.usages.has(typePath)) {
 				this.usages.set(typePath, []);
 			}

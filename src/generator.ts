@@ -29,6 +29,10 @@ export class TypesGenerator {
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
 		lines.push('');
 
+		// Import ProtoFlat from mnemonica
+		lines.push("import type { ProtoFlat } from 'mnemonica';");
+		lines.push('');
+
 		// Make this a module so we can use declare global
 		lines.push('export {};');
 		lines.push('');
@@ -75,36 +79,56 @@ export class TypesGenerator {
 
 	/**
 		 * Generate instance type alias (describes what the instance IS)
-		 * Uses intersection types for inheritance (types can't extend)
+		 * Uses ProtoFlat for proper inheritance (excludes overridden parent props)
 		 */
 		private generateInstanceType(node: TypeNode, lines: string[], indent: number): void {
 			const indentStr = '\t'.repeat(indent);
 			const instanceName = `${node.name}Instance`;
-	
-			// Build intersection with parent instance
-			const parentType = node.parent ? `${node.parent.name}Instance & ` : '';
-	
-			// Instance is a type describing the data structure
-			lines.push(`${indentStr}type ${instanceName} = ${parentType}{`);
-	
+
+			if (node.parent) {
+				// Nested type: Use ProtoFlat to properly exclude overridden properties
+				lines.push(`${indentStr}type ${instanceName} = ProtoFlat<${node.parent.name}Instance, {`);
+			} else {
+				// Root type: just the properties object
+				lines.push(`${indentStr}type ${instanceName} = {`);
+			}
+
 			// Add instance properties
 			for (const [propName, propInfo] of node.properties.entries()) {
 				const optional = propInfo.optional ? '?' : '';
 				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
 			}
-	
+
 			// Add nested constructor properties (mnemonica subtypes)
 			for (const child of node.children.values()) {
 				const childInstanceType = `${child.name}Instance`;
 				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
-	
-			lines.push(`${indentStr}}`);
-	
+
+			// For nested types, add undefined for ALL constructors from parent
+			// This includes: 1) the constructor that created this type, 2) sibling constructors
+			if (node.parent) {
+				// Add undefined for the constructor that created this type (e.g., Link: undefined inside LinkInstance)
+				lines.push(`${indentStr}\t${node.name}: undefined;`);
+				// Add undefined for sibling constructors from parent
+				for (const sibling of node.parent.children.values()) {
+					if (sibling.name !== node.name) {
+						lines.push(`${indentStr}\t${sibling.name}: undefined;`);
+					}
+				}
+			}
+
+			// Close the type properly - ProtoFlat uses }>; for nested, }; for root
+			if (node.parent) {
+				lines.push(`${indentStr}}>;`);
+			} else {
+				lines.push(`${indentStr}};`);
+			}
+
 			// Add empty line after each type
 			lines.push('');
 		}
-	
+
 		/**
 		 * Generate class interface for TypeScript declaration merging
 		 * This merges with the actual class to provide proper typing
@@ -117,11 +141,11 @@ export class TypesGenerator {
 			if (node.parent) {
 				extendsTypes.push(node.parent.name);
 			}
-	
+
 			const extendsClause = extendsTypes.length > 0
 				? ` extends ${extendsTypes.join(', ')}`
 				: '';
-	
+
 			// Interface with same name as class - TypeScript merges these
 			lines.push(`${indentStr}interface ${node.name}${extendsClause} {`);
 			
@@ -130,13 +154,13 @@ export class TypesGenerator {
 				const optional = propInfo.optional ? '?' : '';
 				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
 			}
-	
+
 			// Add subtype constructors (non-optional so they're accessible)
 			for (const child of node.children.values()) {
 				const childInstanceType = `${child.name}Instance`;
 				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
-	
+
 			lines.push(`${indentStr}}`);
 			lines.push('');
 		}
@@ -155,6 +179,10 @@ export class TypesGenerator {
 		lines.push('');
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-object-type */');
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
+		lines.push('');
+
+		// Import ProtoFlat from mnemonica
+		lines.push("import type { ProtoFlat } from 'mnemonica';");
 		lines.push('');
 
 		// Define a helper type for nested constructors (since IDefinitorInstance is internal)
@@ -181,17 +209,19 @@ export class TypesGenerator {
 	}
 
 	/**
-	 * Generate a complete instance type alias with all properties
-	 * This is for the types.ts file that users import from
-	 */
+		 * Generate a complete instance type alias with all properties
+		 * This is for the types.ts file that users import from
+		 */
 	private generateCompleteInstanceInterface(node: TypeNode, lines: string[]): void {
 		const typeName = `${node.name}Instance`;
 
-		// Build intersection with parent type
-		const parentType = node.parent ? `${node.parent.name}Instance & ` : '';
-
-		// Export the type alias
-		lines.push(`export type ${typeName} = ${parentType}{`);
+		if (node.parent) {
+			// Nested type: Use ProtoFlat to properly exclude overridden properties
+			lines.push(`export type ${typeName} = ProtoFlat<${node.parent.name}Instance, {`);
+		} else {
+			// Root type: just the properties object
+			lines.push(`export type ${typeName} = {`);
+		}
 
 		// Add instance properties extracted from the constructor
 		for (const [propName, propInfo] of node.properties.entries()) {
@@ -205,13 +235,31 @@ export class TypesGenerator {
 			lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 		}
 
-		lines.push('}');
+		// For nested types, add undefined for ALL constructors from parent
+		// This includes: 1) the constructor that created this type, 2) sibling constructors
+		if (node.parent) {
+			// Add undefined for the constructor that created this type (e.g., Link: undefined inside LinkInstance)
+			lines.push(`\t${node.name}: undefined;`);
+			// Add undefined for sibling constructors from parent
+			for (const sibling of node.parent.children.values()) {
+				if (sibling.name !== node.name) {
+					lines.push(`\t${sibling.name}: undefined;`);
+				}
+			}
+		}
+
+		// Close the type properly - ProtoFlat uses }>; for nested, }; for root
+		if (node.parent) {
+			lines.push('}>;');
+		} else {
+			lines.push('};');
+		}
 		lines.push('');
 	}
 
 	/**
-	 * Generate a simple type declaration for a single type
-	 */
+		 * Generate a simple type declaration for a single type
+		 */
 	generateSingleType(node: TypeNode): string {
 		const lines: string[] = [];
 		this.generateCompleteInstanceInterface(node, lines);
@@ -219,9 +267,9 @@ export class TypesGenerator {
 	}
 
 	/**
-	 * Generate TypeRegistry interface for type-safe lookupTyped() function
-	 * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
-	 */
+		 * Generate TypeRegistry interface for type-safe lookupTyped() function
+		 * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
+		 */
 	generateTypeRegistry(): GeneratedTypes {
 		const lines: string[] = [];
 		const generatedTypes: string[] = [];
@@ -231,11 +279,11 @@ export class TypesGenerator {
 		lines.push('// Import this interface and use with lookupTyped from mnemonica');
 		lines.push('//');
 		lines.push('// Usage:');
-		lines.push('//   import { lookupTyped } from \'mnemonica\';');
-		lines.push('//   import { TypeRegistry } from \'./.tactica/registry\';');
-		lines.push('//   const Sentience = lookupTyped<TypeRegistry>(\'Sentience\');');
+		lines.push("//   import { lookupTyped } from 'mnemonica';");
+		lines.push("//   import { TypeRegistry } from './.tactica/registry';");
+		lines.push("//   const Sentience = lookupTyped<TypeRegistry>('Sentience');");
 		lines.push('//   // TypeScript knows: Sentience is a constructor for SentienceInstance');
-		lines.push('//   const instance = new Sentience({ purpose: \'AI\' });');
+		lines.push("//   const instance = new Sentience({ purpose: 'AI' });");
 		lines.push('//   // instance has full intellisense for Consciousness, Memory, etc.');
 		lines.push('');
 
@@ -284,8 +332,8 @@ export class TypesGenerator {
 	}
 
 	/**
-	 * Get the full dotted path for a type node
-	 */
+		 * Get the full dotted path for a type node
+		 */
 	private getFullPath(node: TypeNode): string {
 		if (!node.parent) {
 			return node.name;

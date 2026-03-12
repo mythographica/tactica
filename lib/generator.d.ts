@@ -17,7 +17,7 @@ export declare class TypesGenerator {
     generateGlobalAugmentation(): GeneratedTypes;
     /**
          * Generate instance type alias (describes what the instance IS)
-         * Uses intersection types for inheritance (types can't extend)
+         * Uses ProtoFlat for proper inheritance (excludes overridden parent props)
          */
     private generateInstanceType;
     /**
@@ -31,21 +31,21 @@ export declare class TypesGenerator {
 */
     generateTypesFile(): GeneratedTypes;
     /**
-     * Generate a complete instance type alias with all properties
-     * This is for the types.ts file that users import from
-     */
+         * Generate a complete instance type alias with all properties
+         * This is for the types.ts file that users import from
+         */
     private generateCompleteInstanceInterface;
     /**
-     * Generate a simple type declaration for a single type
-     */
+         * Generate a simple type declaration for a single type
+         */
     generateSingleType(node: TypeNode): string;
     /**
-     * Generate TypeRegistry interface for type-safe lookupTyped() function
-     * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
-     */
+         * Generate TypeRegistry interface for type-safe lookupTyped() function
+         * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
+         */
     generateTypeRegistry(): GeneratedTypes;
     /**
-     * Get the full dotted path for a type node
-     */
+         * Get the full dotted path for a type node
+         */
     private getFullPath;
 }
