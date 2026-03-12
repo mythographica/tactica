@@ -29,8 +29,8 @@ export class TypesGenerator {
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
 		lines.push('');
 
-		// Import ProtoFlat from mnemonica
-		lines.push("import type { ProtoFlat } from 'mnemonica';");
+		// Import ProtoFlat and TypeConstructor from mnemonica
+		lines.push("import type { ProtoFlat, TypeConstructor } from 'mnemonica';");
 		lines.push('');
 
 		// Make this a module so we can use declare global
@@ -41,13 +41,6 @@ export class TypesGenerator {
 		lines.push('declare global {');
 		lines.push('');
 
-		// Helper type - in global scope
-		lines.push('	// Helper type for nested type constructors');
-		lines.push('	type TypeConstructor<T> = {');
-		lines.push('		new (...args: unknown[]): T;');
-		lines.push('		(...args: unknown[]): T;');
-		lines.push('	};');
-		lines.push('');
 
 		// Generate instance types for all types - in global scope
 		for (const root of this.graph.roots.values()) {
@@ -181,16 +174,8 @@ export class TypesGenerator {
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
 		lines.push('');
 
-		// Import ProtoFlat from mnemonica
-		lines.push("import type { ProtoFlat } from 'mnemonica';");
-		lines.push('');
-
-		// Define a helper type for nested constructors (since IDefinitorInstance is internal)
-		lines.push('// Helper type for nested type constructors');
-		lines.push('type TypeConstructor<T> = {');
-		lines.push('\tnew (...args: unknown[]): T;');
-		lines.push('\t(...args: unknown[]): T;');
-		lines.push('};');
+		// Import ProtoFlat and TypeConstructor from mnemonica
+		lines.push("import type { ProtoFlat, TypeConstructor } from 'mnemonica';");
 		lines.push('');
 
 		// Generate complete instance interfaces
