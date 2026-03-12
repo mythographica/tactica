@@ -92,7 +92,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const typesContent = generateAndWrite(graph);
 		
 		// Verify ProtoFlat is imported
-		expect(typesContent).to.include("import type { ProtoFlat } from 'mnemonica'");
+		expect(typesContent).to.include("import type { ProtoFlat, TypeConstructor } from 'mnemonica'");
 		
 		// DefinitionInstance (root type) should have Link constructor property
 		expect(typesContent).to.include('export type DefinitionInstance = {');
