@@ -460,6 +460,9 @@ export class MnemonicaAnalyzer {
 
 		// Handle class expression
 		if (ts.isClassExpression(handlerArg)) {
+			// First pass: collect all property types for method inference
+			const classPropertyTypes = this.extractClassPropertyTypes(handlerArg);
+
 			for (const member of handlerArg.members) {
 				// Handle property declarations
 				if (ts.isPropertyDeclaration(member) && member.name) {
@@ -498,7 +501,7 @@ export class MnemonicaAnalyzer {
 					}
 
 					const name = member.name.text;
-					const type = this.inferMethodType(member);
+					const type = this.inferMethodType(member, classPropertyTypes);
 					properties.set(name, {
 						name,
 						type,
@@ -523,7 +526,7 @@ export class MnemonicaAnalyzer {
 					// First try explicit type annotation, then infer from getter body
 					let type = this.inferType(member.type);
 					if (type === 'unknown' && member.body) {
-						type = this.inferReturnTypeFromBody(member.body);
+						type = this.inferReturnTypeFromBody(member.body, classPropertyTypes);
 					}
 					properties.set(name, {
 						name,
@@ -762,16 +765,38 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Extract class property types for method return type inference
+	 * Maps property names to their TypeScript type strings
+	 * Note: Includes private/protected properties for method inference
+	 */
+	private extractClassPropertyTypes(classDecl: ts.ClassExpression): Map<string, string> {
+		const propertyTypes = new Map<string, string>();
+
+		for (const member of classDecl.members) {
+			if (ts.isPropertyDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
+				// Include ALL properties (even private) for method return type inference
+				// The visibility check is done when adding to output properties
+				const name = member.name.text;
+				if (member.type) {
+					propertyTypes.set(name, this.inferType(member.type));
+				}
+			}
+		}
+
+		return propertyTypes;
+	}
+
+	/**
 	 * Infer method type from method declaration
 	 */
-	private inferMethodType(method: ts.MethodDeclaration): string {
+	private inferMethodType(method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
 		const params = method.parameters.map(param => {
 			const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
 			const paramType = this.inferType(param.type);
 			return `${paramName}: ${paramType}`;
 		}).join(', ');
 
-		const returnType = this.inferReturnType(method);
+		const returnType = this.inferReturnType(method, classPropertyTypes);
 
 		if (params) {
 			return `(${params}) => ${returnType}`;
@@ -982,7 +1007,7 @@ export class MnemonicaAnalyzer {
 		* Infer return type from a method declaration
 		* Uses explicit return type annotation or infers from return statements
 		*/
-	private inferReturnType(method: ts.MethodDeclaration): string {
+	private inferReturnType(method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
 		// If method has explicit return type annotation, use it
 		if (method.type) {
 			return this.inferType(method.type);
@@ -990,7 +1015,7 @@ export class MnemonicaAnalyzer {
 
 		// Otherwise, try to infer from return statements in the method body
 		if (method.body) {
-			return this.inferReturnTypeFromBody(method.body);
+			return this.inferReturnTypeFromBody(method.body, classPropertyTypes);
 		}
 
 		return 'unknown';
@@ -999,12 +1024,12 @@ export class MnemonicaAnalyzer {
 	/**
 		* Infer return type by analyzing return statements in the method body
 		*/
-	private inferReturnTypeFromBody(body: ts.Block): string {
+	private inferReturnTypeFromBody(body: ts.Block, classPropertyTypes?: Map<string, string>): string {
 		const returnTypes = new Set<string>();
 
 		const visit = (node: ts.Node): void => {
 			if (ts.isReturnStatement(node) && node.expression) {
-				const type = this.inferTypeFromInitializer(node.expression);
+				const type = this.inferTypeFromInitializer(node.expression, undefined, classPropertyTypes);
 				if (type !== 'unknown') {
 					returnTypes.add(type);
 				}
@@ -1042,7 +1067,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Infer type from initializer
 	 */
-	private inferTypeFromInitializer(initializer: ts.Expression, dataTypeMap?: Map<string, string>): string {
+	private inferTypeFromInitializer(initializer: ts.Expression, dataTypeMap?: Map<string, string>, classPropertyTypes?: Map<string, string>): string {
 		switch (initializer.kind) {
 			case ts.SyntaxKind.StringLiteral:
 				return 'string';
@@ -1070,8 +1095,8 @@ export class MnemonicaAnalyzer {
 			case ts.SyntaxKind.BinaryExpression: {
 				// Handle arithmetic operations: a * b, a + b, a - b, a / b
 				const binaryExpr = initializer as ts.BinaryExpression;
-				const leftType = this.inferTypeFromInitializer(binaryExpr.left, dataTypeMap);
-				const rightType = this.inferTypeFromInitializer(binaryExpr.right, dataTypeMap);
+				const leftType = this.inferTypeFromInitializer(binaryExpr.left, dataTypeMap, classPropertyTypes);
+				const rightType = this.inferTypeFromInitializer(binaryExpr.right, dataTypeMap, classPropertyTypes);
 				
 				// Check if it's an arithmetic operator
 				const operator = binaryExpr.operatorToken.kind;
@@ -1168,14 +1193,26 @@ export class MnemonicaAnalyzer {
 						const mapProp = outerProp.name.text;
 						// this.map.X() patterns
 						if (innerName === 'this' && mapProp === 'map') {
+							// Try to get the Map's value type from class properties
+							let mapValueType = 'unknown';
+							if (classPropertyTypes) {
+								const mapType = classPropertyTypes.get('map');
+								if (mapType && mapType.startsWith('Map<')) {
+									// Parse Map<K, V> to get V
+									const match = mapType.match(/Map<[^,]+,\s*(.+)>$/);
+									if (match) {
+										mapValueType = match[1];
+									}
+								}
+							}
 							if (methodName === 'has') return 'boolean';
 							if (methodName === 'set') return 'this';
-							if (methodName === 'get') return 'unknown';
+							if (methodName === 'get') return mapValueType;
 							if (methodName === 'delete') return 'boolean';
 							if (methodName === 'clear') return 'void';
-							if (methodName === 'values') return 'IterableIterator<unknown>';
+							if (methodName === 'values') return `IterableIterator<${mapValueType}>`;
 							if (methodName === 'keys') return 'IterableIterator<string>';
-							if (methodName === 'entries') return 'IterableIterator<[string, unknown]>';
+							if (methodName === 'entries') return `IterableIterator<[string, ${mapValueType}]>`;
 						}
 					}
 					// Direct map.X() calls

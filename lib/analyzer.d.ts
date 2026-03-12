@@ -90,6 +90,12 @@ export declare class MnemonicaAnalyzer {
      */
     private extractClassProperties;
     /**
+     * Extract class property types for method return type inference
+     * Maps property names to their TypeScript type strings
+     * Note: Includes private/protected properties for method inference
+     */
+    private extractClassPropertyTypes;
+    /**
      * Infer method type from method declaration
      */
     private inferMethodType;
