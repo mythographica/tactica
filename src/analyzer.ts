@@ -463,6 +463,7 @@ export class MnemonicaAnalyzer {
 		// Handle class expression
 		if (ts.isClassExpression(handlerArg)) {
 			for (const member of handlerArg.members) {
+				// Handle property declarations
 				if (ts.isPropertyDeclaration(member) && member.name) {
 					// Skip private and protected properties
 					if (member.modifiers) {
@@ -483,6 +484,50 @@ export class MnemonicaAnalyzer {
 							optional: !!member.questionToken,
 						});
 					}
+				}
+
+				// Handle method declarations
+				if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
+					// Skip private and protected methods
+					if (member.modifiers) {
+						const hasPrivateOrProtected = member.modifiers.some(
+							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+							     m.kind === ts.SyntaxKind.ProtectedKeyword
+						);
+						if (hasPrivateOrProtected) {
+							continue;
+						}
+					}
+
+					const name = member.name.text;
+					const type = this.inferMethodType(member);
+					properties.set(name, {
+						name,
+						type,
+						optional: false,
+					});
+				}
+
+				// Handle getter declarations
+				if (ts.isGetAccessor(member) && member.name && ts.isIdentifier(member.name)) {
+					// Skip private and protected getters
+					if (member.modifiers) {
+						const hasPrivateOrProtected = member.modifiers.some(
+							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+							     m.kind === ts.SyntaxKind.ProtectedKeyword
+						);
+						if (hasPrivateOrProtected) {
+							continue;
+						}
+					}
+
+					const name = member.name.text;
+					const type = this.inferType(member.type);
+					properties.set(name, {
+						name,
+						type,
+						optional: false,
+					});
 				}
 			}
 		}
@@ -626,12 +671,13 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Extract properties from class declaration
+	 * Extract properties from class declaration (including methods and getters)
 	 */
 	private extractClassProperties(classDecl: ts.ClassDeclaration): Map<string, PropertyInfo> {
 		const properties = new Map<string, PropertyInfo>();
 
 		for (const member of classDecl.members) {
+			// Handle property declarations
 			if (ts.isPropertyDeclaration(member) && member.name) {
 				// Skip private and protected properties
 				if (member.modifiers) {
@@ -658,9 +704,71 @@ export class MnemonicaAnalyzer {
 					});
 				}
 			}
+
+			// Handle method declarations
+			if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
+				// Skip private and protected methods
+				if (member.modifiers) {
+					const hasPrivateOrProtected = member.modifiers.some(
+						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword
+					);
+					if (hasPrivateOrProtected) {
+						continue;
+					}
+				}
+
+				const name = member.name.text;
+				const type = this.inferMethodType(member);
+				properties.set(name, {
+					name,
+					type,
+					optional: false,
+				});
+			}
+
+			// Handle getter declarations
+			if (ts.isGetAccessor(member) && member.name && ts.isIdentifier(member.name)) {
+				// Skip private and protected getters
+				if (member.modifiers) {
+					const hasPrivateOrProtected = member.modifiers.some(
+						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword
+					);
+					if (hasPrivateOrProtected) {
+						continue;
+					}
+				}
+
+				const name = member.name.text;
+				const type = this.inferType(member.type);
+				properties.set(name, {
+					name,
+					type,
+					optional: false,
+				});
+			}
 		}
 
 		return properties;
+	}
+
+	/**
+	 * Infer method type from method declaration
+	 */
+	private inferMethodType(method: ts.MethodDeclaration): string {
+		const params = method.parameters.map(param => {
+			const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
+			const paramType = this.inferType(param.type);
+			return `${paramName}: ${paramType}`;
+		}).join('; ');
+
+		const returnType = this.inferType(method.type);
+
+		if (params) {
+			return `(${params}) => ${returnType}`;
+		}
+		return `() => ${returnType}`;
 	}
 
 	/**

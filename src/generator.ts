@@ -81,43 +81,49 @@ export class TypesGenerator {
 		 * Generate instance type alias (describes what the instance IS)
 		 * Uses ProtoFlat for proper inheritance (excludes overridden parent props)
 		 */
-		private generateInstanceType(node: TypeNode, lines: string[], indent: number): void {
-			const indentStr = '\t'.repeat(indent);
-			const instanceName = `${node.name}Instance`;
+	private generateInstanceType(node: TypeNode, lines: string[], indent: number): void {
+		const indentStr = '\t'.repeat(indent);
+		const instanceName = `${node.name}Instance`;
 
-			if (node.parent) {
-				// Nested type: Use ProtoFlat to properly exclude overridden properties
-				lines.push(`${indentStr}type ${instanceName} = ProtoFlat<${node.parent.name}Instance, {`);
-			} else {
-				// Root type: just the properties object
-				lines.push(`${indentStr}type ${instanceName} = {`);
-			}
-
-			// Add instance properties
-			for (const [propName, propInfo] of node.properties.entries()) {
-				const optional = propInfo.optional ? '?' : '';
-				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
-			}
-
-			// Add nested constructor properties (only for root types)
-			// Nested type constructors are accessible via parent, not directly on instances
-			if (!node.parent) {
-				for (const child of node.children.values()) {
-					const childInstanceType = `${child.name}Instance`;
-					lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
-				}
-			}
-	
-			// Close the type properly - ProtoFlat uses }>; for nested, }; for root
-			if (node.parent) {
-				lines.push(`${indentStr}}>;`);
-			} else {
-				lines.push(`${indentStr}};`);
-			}
-
-			// Add empty line after each type
-			lines.push('');
+		if (node.parent) {
+			// Nested type: Use ProtoFlat to properly exclude overridden properties
+			lines.push(`${indentStr}type ${instanceName} = ProtoFlat<${node.parent.name}Instance, {`);
+		} else {
+			// Root type: just the properties object
+			lines.push(`${indentStr}type ${instanceName} = {`);
 		}
+
+		// Add instance properties
+		for (const [propName, propInfo] of node.properties.entries()) {
+			const optional = propInfo.optional ? '?' : '';
+			lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
+		}
+
+		// Add nested constructor properties (only for root types)
+		// Nested type constructors are accessible via parent, not directly on instances
+		if (!node.parent) {
+			for (const child of node.children.values()) {
+				const childInstanceType = `${child.name}Instance`;
+				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
+			}
+		}
+
+		// For nested types, add Subtype: undefined to indicate no further subtypes
+		// This is needed for strict chain behavior
+		if (node.parent) {
+			lines.push(`${indentStr}\t${node.name}: undefined;`);
+		}
+
+		// Close the type properly - ProtoFlat uses }>; for nested, }; for root
+		if (node.parent) {
+			lines.push(`${indentStr}}>;`);
+		} else {
+			lines.push(`${indentStr}};`);
+		}
+
+		// Add empty line after each type
+		lines.push('');
+	}
 
 		/**
 		 * Generate class interface for TypeScript declaration merging
@@ -228,6 +234,12 @@ export class TypesGenerator {
 				const childInstanceType = `${child.name}Instance`;
 				lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
+		}
+
+		// For nested types, add Subtype: undefined to indicate no further subtypes
+		// This is needed for strict chain behavior
+		if (node.parent) {
+			lines.push(`\t${node.name}: undefined;`);
 		}
 
 		// Close the type properly - ProtoFlat uses }>; for nested, }; for root

@@ -35,11 +35,15 @@ describe('Class Property Extraction', () => {
 			
 			const usageType = result.types[0];
 			expect(usageType.name).to.equal('Usages');
-			expect(usageType.properties.size).to.equal(1);
+			// Now includes both createdAt property and has method
+			expect(usageType.properties.size).to.equal(2);
 			
 			// Check createdAt property (public)
 			expect(usageType.properties.has('createdAt')).to.be.true;
 			expect(usageType.properties.get('createdAt')?.type).to.equal('number');
+			
+			// Check has method is extracted
+			expect(usageType.properties.has('has')).to.be.true;
 			
 			// Check map property is NOT present (it's private)
 			expect(usageType.properties.has('map')).to.be.false;

@@ -86,9 +86,13 @@ export declare class MnemonicaAnalyzer {
      */
     private extractPropertyFromStatement;
     /**
-     * Extract properties from class declaration
+     * Extract properties from class declaration (including methods and getters)
      */
     private extractClassProperties;
+    /**
+     * Infer method type from method declaration
+     */
+    private inferMethodType;
     /**
         * Extract properties from `this` parameter type annotation
         * Handles patterns like: function(this: SomeType, data: SomeType) { }
