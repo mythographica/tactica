@@ -106,8 +106,17 @@ export declare class MnemonicaAnalyzer {
      */
     private inferType;
     /**
-     * Get full text from a qualified name (e.g., Namespace.Type)
-     */
+        * Infer return type from a method declaration
+        * Uses explicit return type annotation or infers from return statements
+        */
+    private inferReturnType;
+    /**
+        * Infer return type by analyzing return statements in the method body
+        */
+    private inferReturnTypeFromBody;
+    /**
+        * Get full text from a qualified name (e.g., Namespace.Type)
+        */
     private getQualifiedNameText;
     /**
      * Infer type from initializer
