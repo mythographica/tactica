@@ -99,25 +99,15 @@ export class TypesGenerator {
 				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
 			}
 
-			// Add nested constructor properties (mnemonica subtypes)
-			for (const child of node.children.values()) {
-				const childInstanceType = `${child.name}Instance`;
-				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
-			}
-
-			// For nested types, add undefined for ALL constructors from parent
-			// This includes: 1) the constructor that created this type, 2) sibling constructors
-			if (node.parent) {
-				// Add undefined for the constructor that created this type (e.g., Link: undefined inside LinkInstance)
-				lines.push(`${indentStr}\t${node.name}: undefined;`);
-				// Add undefined for sibling constructors from parent
-				for (const sibling of node.parent.children.values()) {
-					if (sibling.name !== node.name) {
-						lines.push(`${indentStr}\t${sibling.name}: undefined;`);
-					}
+			// Add nested constructor properties (only for root types)
+			// Nested type constructors are accessible via parent, not directly on instances
+			if (!node.parent) {
+				for (const child of node.children.values()) {
+					const childInstanceType = `${child.name}Instance`;
+					lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 				}
 			}
-
+	
 			// Close the type properly - ProtoFlat uses }>; for nested, }; for root
 			if (node.parent) {
 				lines.push(`${indentStr}}>;`);
@@ -155,13 +145,15 @@ export class TypesGenerator {
 				lines.push(`${indentStr}\t${propName}${optional}: ${propInfo.type};`);
 			}
 
-			// Add subtype constructors (non-optional so they're accessible)
-			for (const child of node.children.values()) {
-				const childInstanceType = `${child.name}Instance`;
-				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
-			}
-
-			lines.push(`${indentStr}}`);
+			// Add subtype constructors (non-optional so they're accessible) - only for root types
+				if (!node.parent) {
+					for (const child of node.children.values()) {
+						const childInstanceType = `${child.name}Instance`;
+						lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
+					}
+				}
+	
+				lines.push(`${indentStr}}`);
 			lines.push('');
 		}
 		
@@ -229,22 +221,12 @@ export class TypesGenerator {
 			lines.push(`\t${propName}${optional}: ${propInfo.type};`);
 		}
 
-		// Add nested constructor properties
-		for (const child of node.children.values()) {
-			const childInstanceType = `${child.name}Instance`;
-			lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
-		}
-
-		// For nested types, add undefined for ALL constructors from parent
-		// This includes: 1) the constructor that created this type, 2) sibling constructors
-		if (node.parent) {
-			// Add undefined for the constructor that created this type (e.g., Link: undefined inside LinkInstance)
-			lines.push(`\t${node.name}: undefined;`);
-			// Add undefined for sibling constructors from parent
-			for (const sibling of node.parent.children.values()) {
-				if (sibling.name !== node.name) {
-					lines.push(`\t${sibling.name}: undefined;`);
-				}
+		// Add nested constructor properties (only for root types)
+		// Nested type constructors are accessible via parent, not directly on instances
+		if (!node.parent) {
+			for (const child of node.children.values()) {
+				const childInstanceType = `${child.name}Instance`;
+				lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
 		}
 

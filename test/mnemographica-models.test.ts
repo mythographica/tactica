@@ -22,7 +22,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 	afterEach(() => {
 		// Clean up test output after each test
 		if (fs.existsSync(outputDir)) {
-			// fs.rmSync(outputDir, { recursive: true });
+			fs.rmSync(outputDir, { recursive: true });
 		}
 	});
 
@@ -84,12 +84,12 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		// Verify ProtoFlat is imported
 		expect(typesContent).to.include("import type { ProtoFlat } from 'mnemonica'");
 		
-		// Verify LinkInstance has Link: undefined
-		expect(typesContent).to.include('Link: undefined');
-		
-		// Verify the pattern: LinkInstance = ProtoFlat<DefinitionInstance, { ... Link: undefined; }>
-		const linkInstanceMatch = typesContent.match(/export type LinkInstance = ProtoFlat<DefinitionInstance, \{[\s\S]*?Link: undefined;[\s\S]*?\}>;/);
-		expect(linkInstanceMatch).to.not.be.null;
+		// LinkInstance should NOT have Link: undefined - subtype constructors are accessible via parent only
+		// The type only contains the properties defined in the constructor
+		expect(typesContent).to.include('export type LinkInstance = ProtoFlat<DefinitionInstance, {');
+		// Verify LinkInstance does NOT contain "Link: undefined" (this was a bug)
+		const linkInstanceMatch = typesContent.match(/export type LinkInstance = ProtoFlat<DefinitionInstance, \{[^}]*Link: undefined;/);
+		expect(linkInstanceMatch).to.be.null;
 	});
 
 	it('should generate correct types for Scene2D/Camera2D/GraphNode2D pattern with sibling undefineds', () => {
@@ -144,12 +144,18 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const typesPath = path.join(outputDir, 'types.ts');
 		const typesContent = fs.readFileSync(typesPath, 'utf-8');
 		
-		// Camera2DInstance should have Camera2D: undefined and GraphNode2D: undefined
-		expect(typesContent).to.include('Camera2D: undefined');
-		expect(typesContent).to.include('GraphNode2D: undefined');
-		
-		// GraphNode2DInstance should have Camera2D: undefined
-		const graphNode2dMatch = typesContent.match(/export type GraphNode2DInstance = ProtoFlat<Scene2DInstance, \{[\s\S]*?Camera2D: undefined;[\s\S]*?\}>;/);
-		expect(graphNode2dMatch).to.not.be.null;
+		// Camera2DInstance should NOT have Camera2D: undefined or GraphNode2D: undefined
+		// These subtype constructors are accessible via parent only
+		expect(typesContent).to.include('export type Camera2DInstance = ProtoFlat<Scene2DInstance, {');
+		// Verify Camera2DInstance does NOT contain "Camera2D: undefined" (this was a bug)
+		const camera2dMatch = typesContent.match(/export type Camera2DInstance = ProtoFlat<Scene2DInstance, \{[^}]*Camera2D: undefined;/);
+		expect(camera2dMatch).to.be.null;
+
+		// GraphNode2DInstance should NOT have Camera2D: undefined either
+		const graphNode2dMatch = typesContent.match(/export type GraphNode2DInstance = ProtoFlat<Scene2DInstance, \{[^}]*Camera2D: undefined;/);
+		expect(graphNode2dMatch).to.be.null;
 	});
+
+	// Note: Full Usages/UsageEntry test requires type alias resolution
+	// which needs additional implementation to collect and resolve type aliases
 });

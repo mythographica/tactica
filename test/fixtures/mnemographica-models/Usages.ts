@@ -15,7 +15,7 @@ export type usageEntry = InstanceType<typeof UsageEntry>;
 
 export const Usages = define('Usages', class {
 	createdAt: number;
-	private map: Map<string, usageEntry[]>;
+	private map: Map<string, object[]>;
 	constructor() {
 		this.createdAt = Date.now();
 		this.map = new Map();

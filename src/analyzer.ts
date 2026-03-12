@@ -12,6 +12,7 @@ export class MnemonicaAnalyzer {
 	private graph = new TypeGraphImpl();
 	private definitions = new Map<string, DefinitionInfo>();
 	private usages = new Map<string, UsageInfo[]>();
+	private typeAliases = new Map<string, ts.TypeLiteralNode>();
 
 	constructor(program?: ts.Program) {
 		// Store program for future use (currently unused but kept for extensibility)
@@ -81,6 +82,13 @@ export class MnemonicaAnalyzer {
 
 		// Check for type usages (new Type(), type annotations, etc.)
 		this.collectUsage(node, sourceFile);
+
+		// Collect type aliases for resolving type references
+		if (ts.isTypeAliasDeclaration(node)) {
+			if (ts.isTypeLiteralNode(node.type) && ts.isIdentifier(node.name)) {
+				this.typeAliases.set(node.name.text, node.type);
+			}
+		}
 
 		// Track class declarations for decorator parent lookup
 		if (ts.isClassDeclaration(node)) {
@@ -435,6 +443,13 @@ export class MnemonicaAnalyzer {
 		if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
 			const body = handlerArg.body;
 
+			// First, extract properties from `this` parameter type annotation
+			// This handles patterns like: function(this: SomeType, data: SomeType) { }
+			const thisParamProperties = this.extractThisParamProperties(handlerArg);
+			for (const [name, propInfo] of thisParamProperties) {
+				properties.set(name, propInfo);
+			}
+
 			// Function body with statements
 			if (ts.isBlock(body)) {
 				for (const stmt of body.statements) {
@@ -627,6 +642,63 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+		* Extract properties from `this` parameter type annotation
+		* Handles patterns like: function(this: SomeType, data: SomeType) { }
+		*/
+	private extractThisParamProperties (handlerArg: ts.FunctionExpression | ts.ArrowFunction): Map<string, PropertyInfo> {
+		const properties = new Map<string, PropertyInfo>();
+
+		// Find the `this` parameter (if any)
+		for (const param of handlerArg.parameters) {
+			if (param.name && ts.isIdentifier(param.name) && param.name.text === 'this' && param.type) {
+				// Check if it's a type reference (e.g., `this: usage`)
+				if (ts.isTypeReferenceNode(param.type)) {
+					const typeName = ts.isIdentifier(param.type.typeName)
+						? param.type.typeName.text
+						: '';
+
+					// Look up the type alias in our collected type aliases
+					const typeLiteral = this.typeAliases.get(typeName);
+					if (typeLiteral) {
+						// Extract properties from the type literal
+						for (const member of typeLiteral.members) {
+							if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+								const propName = member.name.text;
+								const type = this.inferType(member.type);
+								properties.set(propName, {
+									name: propName,
+									type,
+									optional: !!member.questionToken,
+								});
+							}
+						}
+					}
+				}
+				// Check if it's directly an inline type literal (e.g., `this: { id: string }`)
+				else if (ts.isTypeLiteralNode(param.type)) {
+					for (const member of param.type.members) {
+						if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+							const propName = member.name.text;
+							const type = this.inferType(member.type);
+							properties.set(propName, {
+								name: propName,
+								type,
+								optional: !!member.questionToken,
+							});
+						}
+					}
+				}
+				break; // Found the `this` parameter, no need to continue
+			}
+		}
+
+		return properties;
+	}
+
+	/**
+		* Infer TypeScript type from type node
+		*/
+	/**
 	 * Infer TypeScript type from type node
 	 */
 	private inferType(typeNode?: ts.TypeNode): string {
@@ -673,10 +745,88 @@ export class MnemonicaAnalyzer {
 				}
 				return 'unknown';
 			}
+			case ts.SyntaxKind.TypeReference: {
+				// Handle type references like Map<string, number>, PropertyInfo, etc.
+				const typeRef = typeNode as ts.TypeReferenceNode;
+				const typeName = ts.isIdentifier(typeRef.typeName)
+					? typeRef.typeName.text
+					: ts.isQualifiedName(typeRef.typeName)
+						? this.getQualifiedNameText(typeRef.typeName)
+						: 'unknown';
+
+				if (!typeRef.typeArguments || typeRef.typeArguments.length === 0) {
+					return typeName;
+				}
+
+				// Build generic type arguments
+				const args = typeRef.typeArguments.map(arg => this.inferType(arg));
+				return `${typeName}<${args.join(', ')}>`;
+			}
+			case ts.SyntaxKind.UnionType: {
+				// Handle union types like 'a' | 'b' | 'c'
+				const unionType = typeNode as ts.UnionTypeNode;
+				const types = unionType.types.map(t => this.inferType(t));
+				return types.join(' | ');
+			}
+			case ts.SyntaxKind.IntersectionType: {
+				// Handle intersection types like TypeA & TypeB
+				const intersectionType = typeNode as ts.IntersectionTypeNode;
+				const types = intersectionType.types.map(t => this.inferType(t));
+				return types.join(' & ');
+			}
+			case ts.SyntaxKind.TupleType: {
+				// Handle tuple types like [string, number]
+				const tupleType = typeNode as ts.TupleTypeNode;
+				const elements = tupleType.elements.map(elem => this.inferType(elem as ts.TypeNode));
+				return `[${elements.join(', ')}]`;
+			}
+			case ts.SyntaxKind.OptionalType: {
+				// Handle optional element in tuple: string?
+				const optionalType = typeNode as ts.OptionalTypeNode;
+				return this.inferType(optionalType.type) + '?';
+			}
+			case ts.SyntaxKind.RestType: {
+				// Handle rest element: ...T
+				const restType = typeNode as ts.RestTypeNode;
+				return '...' + this.inferType(restType.type);
+			}
+			case ts.SyntaxKind.ParenthesizedType: {
+				// Handle parenthesized types: (A | B)
+				return this.inferType((typeNode as ts.ParenthesizedTypeNode).type);
+			}
+			case ts.SyntaxKind.IndexedAccessType: {
+				// Handle indexed access: T[K]
+				const indexed = typeNode as ts.IndexedAccessTypeNode;
+				const objectType = this.inferType(indexed.objectType);
+				const indexType = this.inferType(indexed.indexType);
+				return `${objectType}[${indexType}]`;
+			}
+			case ts.SyntaxKind.TypeOperator: {
+				// Handle keyof, readonly, unique operators
+				const typeOp = typeNode as ts.TypeOperatorNode;
+				const operator = ts.SyntaxKind[typeOp.operator];
+				return `${operator} ${this.inferType(typeOp.type)}`;
+			}
 			default:
 				// For complex types, return the text representation
 				return 'unknown';
 		}
+	}
+
+	/**
+	 * Get full text from a qualified name (e.g., Namespace.Type)
+	 */
+	private getQualifiedNameText(qualifiedName: ts.QualifiedName): string {
+		const parts: string[] = [];
+		let current: ts.QualifiedName | ts.Identifier = qualifiedName;
+
+		while (ts.isQualifiedName(current)) {
+			parts.unshift(current.right.text);
+			current = current.left;
+		}
+		parts.unshift(current.text);
+
+		return parts.join('.');
 	}
 
 	/**

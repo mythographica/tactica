@@ -622,8 +622,8 @@ describe('MnemonicaAnalyzer', () => {
 	
 					expect(result.types).to.have.length(1);
 					const type = result.types[0];
-					// Note: Union types in dataTypeMap return 'unknown' - full type checking needed
-					expect(type.properties.get('role')?.type).to.equal('unknown');
+					// Fixed: Union types are now properly parsed
+					expect(type.properties.get('role')?.type).to.equal("'admin' | 'user' | 'guest'");
 				});
 			});
 	

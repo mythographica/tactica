@@ -9,6 +9,7 @@ export declare class MnemonicaAnalyzer {
     private graph;
     private definitions;
     private usages;
+    private typeAliases;
     constructor(program?: ts.Program);
     /**
      * Analyze a source file for Mnemonica type definitions
@@ -89,9 +90,21 @@ export declare class MnemonicaAnalyzer {
      */
     private extractClassProperties;
     /**
+        * Extract properties from `this` parameter type annotation
+        * Handles patterns like: function(this: SomeType, data: SomeType) { }
+        */
+    private extractThisParamProperties;
+    /**
+        * Infer TypeScript type from type node
+        */
+    /**
      * Infer TypeScript type from type node
      */
     private inferType;
+    /**
+     * Get full text from a qualified name (e.g., Namespace.Type)
+     */
+    private getQualifiedNameText;
     /**
      * Infer type from initializer
      */
