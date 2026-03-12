@@ -22,7 +22,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 	afterEach(() => {
 		// Clean up test output after each test
 		if (fs.existsSync(outputDir)) {
-			fs.rmSync(outputDir, { recursive: true });
+			// fs.rmSync(outputDir, { recursive: true });
 		}
 	});
 

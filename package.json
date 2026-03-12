@@ -54,7 +54,8 @@
 		"nyc": "^17.1.0",
 		"ts-node": "^10.9.0",
 		"typeomatica": "file:../typeomatica",
-		"typescript": "^5.3.0"
+		"typescript": "^5.3.0",
+		"mnemonica": "file:../core"
 	},
 	"dependencies": {
 		"@types/chokidar": "^2.1.0",
