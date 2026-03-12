@@ -35,15 +35,14 @@ describe('Class Property Extraction', () => {
 			
 			const usageType = result.types[0];
 			expect(usageType.name).to.equal('Usages');
-			expect(usageType.properties.size).to.be.at.least(2);
+			expect(usageType.properties.size).to.equal(1);
 			
-			// Check createdAt property
+			// Check createdAt property (public)
 			expect(usageType.properties.has('createdAt')).to.be.true;
 			expect(usageType.properties.get('createdAt')?.type).to.equal('number');
 			
-			// Check map property
-			expect(usageType.properties.has('map')).to.be.true;
-			expect(usageType.properties.get('map')?.type).to.equal('Map<string, Array<unknown>>');
+			// Check map property is NOT present (it's private)
+			expect(usageType.properties.has('map')).to.be.false;
 		});
 
 		it('should extract class with property initializers', () => {

@@ -464,6 +464,17 @@ export class MnemonicaAnalyzer {
 		if (ts.isClassExpression(handlerArg)) {
 			for (const member of handlerArg.members) {
 				if (ts.isPropertyDeclaration(member) && member.name) {
+					// Skip private and protected properties
+					if (member.modifiers) {
+						const hasPrivateOrProtected = member.modifiers.some(
+							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+							     m.kind === ts.SyntaxKind.ProtectedKeyword
+						);
+						if (hasPrivateOrProtected) {
+							continue;
+						}
+					}
+
 					const name = ts.isIdentifier(member.name) ? member.name.text : '';
 					if (name) {
 						properties.set(name, {
@@ -622,6 +633,17 @@ export class MnemonicaAnalyzer {
 
 		for (const member of classDecl.members) {
 			if (ts.isPropertyDeclaration(member) && member.name) {
+				// Skip private and protected properties
+				if (member.modifiers) {
+					const hasPrivateOrProtected = member.modifiers.some(
+						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword
+					);
+					if (hasPrivateOrProtected) {
+						continue;
+					}
+				}
+
 				const name = ts.isIdentifier(member.name) ? member.name.text : '';
 				if (name) {
 					// If no explicit type but has initializer, infer from initializer
