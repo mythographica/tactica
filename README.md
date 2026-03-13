@@ -122,6 +122,44 @@ writer.writeGlobalAugmentation(generatedGlobal);
 | `exclude` | string[] | `['**/*.d.ts']` | File patterns to exclude |
 | `verbose` | boolean | `false` | Enable verbose logging |
 
+### JavaScript Support
+
+Tactica can analyze JavaScript files in addition to TypeScript by leveraging TypeScript's `allowJs` compiler option. This enables type generation for projects using Mnemonica in JavaScript.
+
+**Enabling JavaScript Support in tsconfig.json:**
+
+```json
+{
+  "compilerOptions": {
+    "allowJs": true
+  },
+  "tactica": {
+    "include": ["**/*.ts", "**/*.js"]
+  }
+}
+```
+
+**Enabling via CLI --include flag:**
+
+```bash
+# Analyze both TypeScript and JavaScript files
+npx tactica --include "**/*.ts,**/*.js"
+
+# Analyze only JavaScript files
+npx tactica --include "**/*.js"
+```
+
+**How It Works:**
+
+Tactica uses TypeScript's [`ts.createProgram()`](tactica/src/analyzer.ts) API to parse source files. When `allowJs: true` is configured in your tsconfig.json, TypeScript can parse JavaScript files and provide AST information that Tactica uses to detect `define()` and `decorate()` calls.
+
+**Limitations:**
+
+- **No type annotations**: JavaScript lacks TypeScript's type annotations, so inferred property types may be less precise
+- **Harder property inference**: Without explicit type annotations, property types are inferred from assignments, which may result in `any` or broader types
+- **JSDoc support**: TypeScript's `allowJs` does support JSDoc type annotations, so adding JSDoc comments to your JavaScript can improve type inference
+- **ESM/CJS detection**: Ensure your tsconfig.json `module` setting matches your JavaScript module format
+
 ### CLI Options
 
 | Option | Short | Description |

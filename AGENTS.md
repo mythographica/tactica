@@ -91,10 +91,12 @@ src/
 ### Key Classes
 
 #### MnemonicaAnalyzer
-Parses TypeScript source files to find Mnemonica type definitions.
-- `analyzeFile(sourceFile)` - Analyze a TS source file
+Parses TypeScript and JavaScript source files to find Mnemonica type definitions.
+- `analyzeFile(sourceFile)` - Analyze a TS/JS source file
 - `analyzeSource(sourceCode)` - Analyze source code string
 - `getGraph()` - Get the type graph
+
+**JavaScript Support Note:** The analyzer uses [`ts.createProgram()`](tactica/src/analyzer.ts) which can parse JavaScript files when `allowJs: true` is configured in tsconfig.json. This enables analyzing projects that use Mnemonica in JavaScript rather than TypeScript. See the JavaScript Support section in README.md for details.
 
 #### TypeGraphImpl
 Trie-based data structure representing type hierarchy.

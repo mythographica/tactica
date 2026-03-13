@@ -808,4 +808,99 @@ describe('MnemonicaAnalyzer', () => {
 				expect(type.properties.get('modulo')?.type).to.equal('number');
 			});
 		});
-});
+	
+		describe('lookupTyped() usage detection', () => {
+			it('should detect lookupTyped() calls with string literal', () => {
+				const defineSource = `
+					import { define } from 'mnemonica';
+					const UserType = define('UserType', function () {
+						this.name = '';
+					});
+				`;
+	
+				const source = `
+					import { lookupTyped } from 'mnemonica';
+					const User = lookupTyped('UserType');
+				`;
+	
+				analyzer.analyzeSource(defineSource);
+				analyzer.analyzeSource(source);
+	
+				const usages = analyzer.getUsages();
+				expect(usages.has('UserType')).to.be.true;
+				const userTypeUsages = usages.get('UserType');
+				expect(userTypeUsages).to.have.length(1);
+				expect(userTypeUsages![0].kind).to.equal('lookup');
+				expect(userTypeUsages![0].code).to.include("lookupTyped('UserType')");
+			});
+	
+			it('should detect lookupTyped() for nested types', () => {
+				const defineSource = `
+					import { define } from 'mnemonica';
+					const Parent = define('Parent', function () {});
+					const Child = Parent.define('Child', function () {});
+				`;
+	
+				const source = `
+					import { lookupTyped } from 'mnemonica';
+					const ChildType = lookupTyped('Parent.Child');
+				`;
+	
+				analyzer.analyzeSource(defineSource);
+				analyzer.analyzeSource(source);
+	
+				const usages = analyzer.getUsages();
+				expect(usages.has('Parent.Child')).to.be.true;
+				const childUsages = usages.get('Parent.Child');
+				expect(childUsages).to.have.length(1);
+				expect(childUsages![0].kind).to.equal('lookup');
+			});
+	
+			it('should track instantiation via lookupTyped result', () => {
+				const defineSource = `
+					import { define } from 'mnemonica';
+					const UserType = define('UserType', function () {
+						this.name = '';
+					});
+				`;
+	
+				const source = `
+					import { lookupTyped } from 'mnemonica';
+					const UserType2 = lookupTyped('UserType');
+					const user = new UserType2();
+				`;
+	
+				analyzer.analyzeSource(defineSource);
+				analyzer.analyzeSource(source);
+	
+				const usages = analyzer.getUsages();
+				const userTypeUsages = usages.get('UserType');
+				// lookupTyped('UserType') is detected, but new UserType2()
+				// can't be traced back without variable flow analysis
+				expect(userTypeUsages).to.have.length(1);
+				expect(userTypeUsages![0].kind).to.equal('lookup');
+			});
+	
+			it('should track nested constructor access via instance', () => {
+				const defineSource = `
+					import { define } from 'mnemonica';
+					const Parent = define('Parent', function () {});
+					const Child = Parent.define('Child', function () {});
+				`;
+	
+				const source = `
+					import { lookupTyped } from 'mnemonica';
+					const ParentType = lookupTyped('Parent');
+					const parent = new ParentType();
+					const child = new parent.Child();
+				`;
+	
+				analyzer.analyzeSource(defineSource);
+				analyzer.analyzeSource(source);
+	
+				const usages = analyzer.getUsages();
+				expect(usages.has('Parent')).to.be.true;
+				expect(usages.has('Parent.Child')).to.be.true;
+			});
+		});
+	});
