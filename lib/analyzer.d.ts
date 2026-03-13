@@ -149,7 +149,12 @@ export declare class MnemonicaAnalyzer {
         */
     private resolveTypePath;
     /**
-        * Check if a name looks like a type (starts with uppercase)
-        */
+         * Check if a name looks like a type (starts with uppercase)
+         */
     private isLikelyTypeName;
+    /**
+         * Extract constructor parameters from define() call
+         * This is used for TypeRegistry constructor signatures
+         */
+    private extractConstructorParams;
 }

@@ -230,6 +230,9 @@ export class MnemonicaAnalyzer {
 		// Extract properties from constructor function
 		node.properties = this.extractProperties(call);
 
+		// Extract constructor parameters for TypeRegistry signature
+		node.constructorParams = this.extractConstructorParams(call);
+
 		// Add to graph
 		if (parentNode) {
 			this.graph.addChild(parentNode, node);
@@ -1383,9 +1386,119 @@ export class MnemonicaAnalyzer {
 		}
 	
 		/**
-			* Check if a name looks like a type (starts with uppercase)
-			*/
+			 * Check if a name looks like a type (starts with uppercase)
+			 */
 		private isLikelyTypeName(name: string): boolean {
 			return name[0] >= 'A' && name[0] <= 'Z';
 		}
+	
+		/**
+			 * Extract constructor parameters from define() call
+			 * This is used for TypeRegistry constructor signatures
+			 */
+		private extractConstructorParams(call: ts.CallExpression): Map<string, PropertyInfo> {
+			const params = new Map<string, PropertyInfo>();
+	
+			const handlerArg = call.arguments[1];
+			if (!handlerArg) return params;
+	
+			// Helper to resolve type alias and extract properties
+			const resolveTypeAndExtract = (typeNode: ts.TypeNode | undefined): PropertyInfo[] | undefined => {
+				if (!typeNode) return undefined;
+	
+				// Direct inline type literal: { prop: type }
+				if (ts.isTypeLiteralNode(typeNode)) {
+					const props: PropertyInfo[] = [];
+					for (const member of typeNode.members) {
+						if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+							const propName = member.name.text;
+							const type = this.inferType(member.type);
+							props.push({
+								name: propName,
+								type,
+								optional: !!member.questionToken
+							});
+						}
+					}
+					return props;
+				}
+	
+				// Type reference: usage, UserData, etc.
+				if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+					const typeName = typeNode.typeName.text;
+					const aliasedType = this.typeAliases.get(typeName);
+					if (aliasedType) {
+						return resolveTypeAndExtract(aliasedType);
+					}
+				}
+	
+				return undefined;
+			};
+	
+			// Handle function expression or arrow function
+			if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
+				// Look for constructor parameters (second param after `this`)
+				// Patterns: function(this: Type, data: { ... }) or (this: Type, data: { ... }) =>
+				for (let i = 0; i < handlerArg.parameters.length; i++) {
+					const param = handlerArg.parameters[i];
+					if (!param.type) continue;
+	
+					// Skip `this` parameter (first param)
+					if (i === 0 && param.name.kind === ts.SyntaxKind.Identifier && (param.name as ts.Identifier).text === 'this') {
+						continue;
+					}
+	
+					// For non-this parameters, try to resolve and extract properties
+					const props = resolveTypeAndExtract(param.type);
+					if (props) {
+						for (const prop of props) {
+							params.set(prop.name, prop);
+						}
+					} else if (i > 0) {
+						// Non-this parameter with simple type (not a resolved object type)
+						const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
+						const type = this.inferType(param.type);
+						params.set(paramName, {
+							name: paramName,
+							type,
+							optional: !!param.questionToken || !!param.initializer
+						});
+					}
+				}
+			}
+	
+		// Handle class expression - check constructor method
+		if (ts.isClassExpression(handlerArg)) {
+			for (const member of handlerArg.members) {
+				if (ts.isConstructorDeclaration(member)) {
+					for (const param of member.parameters) {
+						if (!param.name || !ts.isIdentifier(param.name)) continue;
+
+						if (param.type) {
+							// Try to resolve and extract properties from the type
+							const props = resolveTypeAndExtract(param.type);
+							if (props) {
+								for (const prop of props) {
+									params.set(prop.name, prop);
+								}
+							} else {
+								// Simple type parameter
+								const paramName = param.name.text;
+								const optional = !!param.questionToken || !!param.initializer;
+								const type = this.inferType(param.type);
+								params.set(paramName, {
+									name: paramName,
+									type,
+									optional
+								});
+							}
+						}
+					}
+					break; // Only process first constructor
+				}
+			}
+		}
+
+		return params;
+	}
 	}

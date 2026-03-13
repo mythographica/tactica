@@ -45,6 +45,11 @@ export declare class TypesGenerator {
          */
     generateTypeRegistry(): GeneratedTypes;
     /**
+         * Generate constructor signature for a type node
+         * Uses constructorParams for TypeRegistry signature (not instance properties)
+         */
+    private generateConstructorSignature;
+    /**
          * Get the full dotted path for a type node
          */
     private getFullPath;

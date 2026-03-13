@@ -32,6 +32,8 @@ export interface TypeNode {
 	fullPath: string;
 	/** Properties defined in this type's constructor */
 	properties: Map<string, PropertyInfo>;
+	/** Constructor parameters (for TypeRegistry constructor signature) */
+	constructorParams?: Map<string, PropertyInfo>;
 	/** Parent type node */
 	parent?: TypeNode;
 	/** Child types */

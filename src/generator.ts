@@ -304,7 +304,9 @@ export class TypesGenerator {
 			for (const node of this.graph.dfs(root)) {
 				const fullPath = this.getFullPath(node);
 				const instanceType = `${node.name}Instance`;
-				lines.push(`\t\t'${fullPath}': new (...args: unknown[]) => ${instanceType};`);
+				// Generate typed constructor signature for nested types with properties
+				const constructorSig = this.generateConstructorSignature(node);
+				lines.push(`\t\t'${fullPath}': ${constructorSig} => ${instanceType};`);
 			}
 		}
 
@@ -320,6 +322,29 @@ export class TypesGenerator {
 			content: lines.join('\n'),
 			types: generatedTypes,
 		};
+	}
+
+	/**
+		 * Generate constructor signature for a type node
+		 * Uses constructorParams for TypeRegistry signature (not instance properties)
+		 */
+	private generateConstructorSignature(node: TypeNode): string {
+		// Use constructorParams if available, otherwise fall back to empty signature
+		const params = node.constructorParams;
+
+		if (!params || params.size === 0) {
+			return 'new (...args: unknown[])';
+		}
+
+		// Build typed constructor signature from constructor parameters
+		const props: string[] = [];
+		for (const [propName, propInfo] of params) {
+			const optional = propInfo.optional ? '?' : '';
+			props.push(`${propName}${optional}: ${propInfo.type}`);
+		}
+
+		// Return constructor signature with data parameter
+		return `new (data: { ${props.join('; ')} })`;
 	}
 
 	/**
