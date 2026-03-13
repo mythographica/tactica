@@ -133,6 +133,10 @@ export declare class MnemonicaAnalyzer {
         */
     private collectUsage;
     /**
+        * Get function name from expression (identifier or property access)
+        */
+    private getFunctionName;
+    /**
         * Add a usage to the collection
         */
     private addUsage;

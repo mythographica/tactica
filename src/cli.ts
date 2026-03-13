@@ -254,7 +254,8 @@ function run(options: CLIOptions): void {
 	const outputDir = options.outputDir || '.tactica';
 	const outputDirPath = path.resolve(process.cwd(), outputDir);
 
-	// Analyze all source files
+	// Collect source files to analyze
+	const sourceFiles: ts.SourceFile[] = [];
 	for (const sourceFile of program.getSourceFiles()) {
 		if (sourceFile.isDeclarationFile) {
 			continue;
@@ -285,8 +286,27 @@ function run(options: CLIOptions): void {
 			}
 		}
 
+		sourceFiles.push(sourceFile);
+	}
+
+	// First pass: collect all definitions
+	for (const sourceFile of sourceFiles) {
 		if (options.verbose) {
-			console.log(`Analyzing: ${sourceFile.fileName}`);
+			console.log(`Analyzing (definitions): ${sourceFile.fileName}`);
+		}
+
+		try {
+			analyzer.analyzeFile(sourceFile);
+		} catch (err) {
+			console.error(`Error analyzing ${sourceFile.fileName}:`, err);
+			throw err;
+		}
+	}
+
+	// Second pass: collect usages (now all definitions are known)
+	for (const sourceFile of sourceFiles) {
+		if (options.verbose) {
+			console.log(`Analyzing (usages): ${sourceFile.fileName}`);
 		}
 
 		try {

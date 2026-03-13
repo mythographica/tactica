@@ -1295,6 +1295,39 @@ export class MnemonicaAnalyzer {
 					}
 				}
 			}
+	
+			// Check for lookupTyped('TypeName') calls
+			if (ts.isCallExpression(node) && node.expression) {
+				const funcName = this.getFunctionName(node.expression);
+				if (funcName === 'lookupTyped' && node.arguments.length > 0) {
+					const firstArg = node.arguments[0];
+					if (ts.isStringLiteral(firstArg) || ts.isNoSubstitutionTemplateLiteral(firstArg)) {
+						const typePath = firstArg.text;
+						const { line, character } = ts.getLineAndCharacterOfPosition(
+							sourceFile,
+							node.getStart(sourceFile)
+						);
+						this.addUsage(typePath, {
+							location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+							kind: 'lookup',
+							code: node.getText(sourceFile).slice(0, 100),
+						});
+					}
+				}
+			}
+		}
+	
+		/**
+			* Get function name from expression (identifier or property access)
+			*/
+		private getFunctionName(expr: ts.Expression): string | undefined {
+			if (ts.isIdentifier(expr)) {
+				return expr.text;
+			}
+			if (ts.isPropertyAccessExpression(expr)) {
+				return expr.name.text;
+			}
+			return undefined;
 		}
 	
 		/**

@@ -106,8 +106,8 @@ export interface DefinitionInfo {
 export interface UsageInfo {
 	/** Location in source: file.ts:Line:Col */
 	location: string;
-	/** Kind of usage: instantiation, typeAnnotation, propertyAccess */
-	kind: 'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'reference';
+	/** Kind of usage: instantiation, typeAnnotation, propertyAccess, lookup, reference */
+	kind: 'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'lookup' | 'reference';
 	/** Code snippet */
 	code: string;
 }
