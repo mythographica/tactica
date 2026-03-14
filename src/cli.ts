@@ -162,7 +162,8 @@ function printTypeHierarchy(graph: TypeGraphImpl): void {
 	
 	function printNode(node: TypeNode, prefix = '', isLast = true): void {
 		const connector = isLast ? '└── ' : '├── ';
-		const instanceName = `${node.name}Instance`;
+		// Use node.fullPath directly and convert dots to underscores
+		const instanceName = node.fullPath.replace(/\./g, '_');
 		console.log(`${prefix}${connector}${instanceName}`);
 		
 		const children = Array.from(node.children.values());

@@ -8,6 +8,10 @@ export declare class TypeGraphImpl implements TypeGraph {
     addRoot(node: TypeNode): void;
     addChild(parent: TypeNode, child: TypeNode): void;
     findType(fullPath: string): TypeNode | undefined;
+    /**
+     * Find a type by name (search through all types, return first match)
+     */
+    findTypeByName(name: string): TypeNode | undefined;
     getAllTypes(): TypeNode[];
     clear(): void;
     /**

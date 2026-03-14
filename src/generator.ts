@@ -45,7 +45,7 @@ export class TypesGenerator {
 		// Generate instance types for all types - in global scope
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
-				const instanceName = `${node.name}Instance`;
+				const instanceName = this.getInstanceTypeName(node);
 				generatedTypes.push(instanceName);
 				this.generateInstanceType(node, lines, 1);
 			}
@@ -76,11 +76,11 @@ export class TypesGenerator {
 		 */
 	private generateInstanceType(node: TypeNode, lines: string[], indent: number): void {
 		const indentStr = '\t'.repeat(indent);
-		const instanceName = `${node.name}Instance`;
+		const instanceName = this.getInstanceTypeName(node);
 
 		if (node.parent) {
 			// Nested type: Use ProtoFlat to properly exclude overridden properties
-			lines.push(`${indentStr}type ${instanceName} = ProtoFlat<${node.parent.name}Instance, {`);
+			lines.push(`${indentStr}type ${instanceName} = ProtoFlat<${this.getInstanceTypeName(node.parent)}, {`);
 		} else {
 			// Root type: just the properties object
 			lines.push(`${indentStr}type ${instanceName} = {`);
@@ -97,7 +97,7 @@ export class TypesGenerator {
 		// Nested type constructors are accessible via parent, not directly on instances
 		if (!node.parent) {
 			for (const child of node.children.values()) {
-				const childInstanceType = `${child.name}Instance`;
+				const childInstanceType = this.getInstanceTypeName(child);
 				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
 		}
@@ -149,7 +149,7 @@ export class TypesGenerator {
 			// Add subtype constructors (non-optional so they're accessible) - only for root types
 				if (!node.parent) {
 					for (const child of node.children.values()) {
-						const childInstanceType = `${child.name}Instance`;
+						const childInstanceType = this.getInstanceTypeName(child);
 						lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 					}
 				}
@@ -181,7 +181,7 @@ export class TypesGenerator {
 		// Generate complete instance interfaces
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
-				const interfaceName = `${node.name}Instance`;
+				const interfaceName = this.getInstanceTypeName(node);
 				generatedTypes.push(interfaceName);
 				this.generateCompleteInstanceInterface(node, lines);
 			}
@@ -198,11 +198,11 @@ export class TypesGenerator {
 		 * This is for the types.ts file that users import from
 		 */
 	private generateCompleteInstanceInterface(node: TypeNode, lines: string[]): void {
-		const typeName = `${node.name}Instance`;
+		const typeName = this.getInstanceTypeName(node);
 
 		if (node.parent) {
 			// Nested type: Use ProtoFlat to properly exclude overridden properties
-			lines.push(`export type ${typeName} = ProtoFlat<${node.parent.name}Instance, {`);
+			lines.push(`export type ${typeName} = ProtoFlat<${this.getInstanceTypeName(node.parent)}, {`);
 		} else {
 			// Root type: just the properties object
 			lines.push(`export type ${typeName} = {`);
@@ -220,7 +220,7 @@ export class TypesGenerator {
 		// This follows mnemonica's strictChain behavior
 		if (node.children.size > 0) {
 			for (const child of node.children.values()) {
-				const childInstanceType = `${child.name}Instance`;
+				const childInstanceType = this.getInstanceTypeName(child);
 				lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
 			}
 		}
@@ -282,8 +282,9 @@ export class TypesGenerator {
 		lines.push('import type {');
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
-				lines.push(`\t${node.name}Instance,`);
-				generatedTypes.push(`${node.name}Instance`);
+				const instanceTypeName = this.getInstanceTypeName(node);
+				lines.push(`\t${instanceTypeName},`);
+				generatedTypes.push(instanceTypeName);
 			}
 		}
 		lines.push('} from \'./types\';');
@@ -303,7 +304,7 @@ export class TypesGenerator {
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
 				const fullPath = this.getFullPath(node);
-				const instanceType = `${node.name}Instance`;
+				const instanceType = this.getInstanceTypeName(node);
 				// Generate typed constructor signature for nested types with properties
 				const constructorSig = this.generateConstructorSignature(node);
 				lines.push(`\t\t'${fullPath}': ${constructorSig} => ${instanceType};`);
@@ -355,5 +356,14 @@ export class TypesGenerator {
 			return node.name;
 		}
 		return `${this.getFullPath(node.parent)}.${node.name}`;
+	}
+
+	/**
+	 * Get the instance type name for a node
+	 * Uses full path with underscores: Usages.UsageEntry -> Usages_UsageEntry
+	 */
+	private getInstanceTypeName(node: TypeNode): string {
+		const fullPath = this.getFullPath(node);
+		return fullPath.replace(/\./g, '_');
 	}
 }

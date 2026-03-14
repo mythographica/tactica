@@ -53,4 +53,9 @@ export declare class TypesGenerator {
          * Get the full dotted path for a type node
          */
     private getFullPath;
+    /**
+     * Get the instance type name for a node
+     * Uses full path with underscores: Usages.UsageEntry -> Usages_UsageEntry
+     */
+    private getInstanceTypeName;
 }

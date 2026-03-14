@@ -24,6 +24,18 @@ export class TypeGraphImpl implements TypeGraph {
 		return this.allTypes.get(fullPath);
 	}
 
+	/**
+	 * Find a type by name (search through all types, return first match)
+	 */
+	findTypeByName(name: string): TypeNode | undefined {
+		for (const type of this.allTypes.values()) {
+			if (type.name === name) {
+				return type;
+			}
+		}
+		return undefined;
+	}
+
 	getAllTypes(): TypeNode[] {
 		return Array.from(this.allTypes.values());
 	}
