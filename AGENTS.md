@@ -167,8 +167,8 @@ import 'mnemonica';
 
 declare module 'mnemonica' {
 	export interface TypeRegistry {
-		'UserType': typeof import('./types').UserTypeConstructor;
-		'UserType.AdminType': typeof import('./types').AdminTypeConstructor;
+		'UserType': new (data: { name: string; email: string }) => UserType;
+		'UserType.AdminType': new (data: { role: string; permissions: string[] }) => UserType_AdminType;
 		// ... all discovered types
 	}
 }
@@ -240,6 +240,27 @@ npm run test
 
 # Run tests with coverage report
 npm run test:coverage
+```
+
+### Testing Rules (CRITICAL)
+
+**NEVER use `node -e` for testing.** Instead:
+- Write proper test files in the `test/` directory
+- Or create a temporary test file and run with `node <filename>`
+- Or use the existing test infrastructure (Mocha + Chai)
+
+**Why?** `node -e` commands require interactive terminal input and cannot be automated. They block waiting for user interaction that will never come in automated environments.
+
+**Correct approach:**
+```bash
+# ✅ CORRECT - Write a test file
+echo "console.log(require('./lib').something)" > /tmp/test.js && node /tmp/test.js
+
+# ✅ CORRECT - Use existing test infrastructure
+npm test -- --grep "specific test"
+
+# ❌ WRONG - Never use node -e for testing
+node -e "console.log(require('./lib').something)"
 ```
 
 ### Test Suites
