@@ -198,7 +198,7 @@ By default, Tactica generates `.tactica/types.ts` with exported type aliases:
 export type UserTypeInstance = {
     name: string;
     email: string;
-    AdminType: TypeConstructor<AdminTypeInstance>;
+    AdminType: new (role: string, permissions: string[]) => AdminTypeInstance;
 }
 
 export type AdminTypeInstance = UserTypeInstance & {

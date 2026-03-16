@@ -1,7 +1,7 @@
 'use strict';
 
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo } from './types';
+import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo, ConstructorParamInfo } from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -1402,41 +1402,42 @@ export class MnemonicaAnalyzer {
 		/**
 			 * Extract constructor parameters from define() call
 			 * This is used for TypeRegistry constructor signatures
+			 * Preserves parameter names and expands object types to their structure
 			 */
-		private extractConstructorParams(call: ts.CallExpression): Map<string, PropertyInfo> {
-			const params = new Map<string, PropertyInfo>();
+		private extractConstructorParams(call: ts.CallExpression): ConstructorParamInfo[] {
+			const params: ConstructorParamInfo[] = [];
 	
 			const handlerArg = call.arguments[1];
 			if (!handlerArg) return params;
 	
 			// Helper to resolve type alias and extract properties
-			const resolveTypeAndExtract = (typeNode: ts.TypeNode | undefined): PropertyInfo[] | undefined => {
+			const resolveTypeAndExtract = (typeNode: ts.TypeNode | undefined): string | undefined => {
 				if (!typeNode) return undefined;
 	
 				// Direct inline type literal: { prop: type }
 				if (ts.isTypeLiteralNode(typeNode)) {
-					const props: PropertyInfo[] = [];
+					const props: string[] = [];
 					for (const member of typeNode.members) {
 						if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
 							const propName = member.name.text;
+							const optional = member.questionToken ? '?' : '';
 							const type = this.inferType(member.type);
-							props.push({
-								name: propName,
-								type,
-								optional: !!member.questionToken
-							});
+							props.push(`${propName}${optional}: ${type}`);
 						}
 					}
-					return props;
+					return `{ ${props.join('; ')} }`;
 				}
 	
-				// Type reference: usage, UserData, etc.
+				// Type reference: usage, UserData, etc. - recursively expand
 				if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
 					const typeName = typeNode.typeName.text;
 					const aliasedType = this.typeAliases.get(typeName);
 					if (aliasedType) {
-						return resolveTypeAndExtract(aliasedType);
+						const expanded = resolveTypeAndExtract(aliasedType);
+						if (expanded) return expanded;
 					}
+					// If not an object type alias, return the type name
+					return typeName;
 				}
 	
 				return undefined;
@@ -1455,22 +1456,15 @@ export class MnemonicaAnalyzer {
 						continue;
 					}
 	
-					// For non-this parameters, try to resolve and extract properties
-					const props = resolveTypeAndExtract(param.type);
-					if (props) {
-						for (const prop of props) {
-							params.set(prop.name, prop);
-						}
-					} else if (i > 0) {
-						// Non-this parameter with simple type (not a resolved object type)
-						const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
-						const type = this.inferType(param.type);
-						params.set(paramName, {
-							name: paramName,
-							type,
-							optional: !!param.questionToken || !!param.initializer
-						});
-					}
+					// Get parameter name and expand its type
+					const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
+					const expandedType = resolveTypeAndExtract(param.type) || this.inferType(param.type);
+					
+					params.push({
+						name: paramName,
+						type: expandedType,
+						optional: !!param.questionToken || !!param.initializer
+					});
 				}
 			}
 	
@@ -1482,23 +1476,14 @@ export class MnemonicaAnalyzer {
 						if (!param.name || !ts.isIdentifier(param.name)) continue;
 
 						if (param.type) {
-							// Try to resolve and extract properties from the type
-							const props = resolveTypeAndExtract(param.type);
-							if (props) {
-								for (const prop of props) {
-									params.set(prop.name, prop);
-								}
-							} else {
-								// Simple type parameter
-								const paramName = param.name.text;
-								const optional = !!param.questionToken || !!param.initializer;
-								const type = this.inferType(param.type);
-								params.set(paramName, {
-									name: paramName,
-									type,
-									optional
-								});
-							}
+							const paramName = param.name.text;
+							const expandedType = resolveTypeAndExtract(param.type) || this.inferType(param.type);
+
+							params.push({
+								name: paramName,
+								type: expandedType,
+								optional: !!param.questionToken || !!param.initializer
+							});
 						}
 					}
 					break; // Only process first constructor
@@ -1508,4 +1493,4 @@ export class MnemonicaAnalyzer {
 
 		return params;
 	}
-	}
+}

@@ -29,8 +29,8 @@ export class TypesGenerator {
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
 		lines.push('');
 
-		// Import ProtoFlat and TypeConstructor from mnemonica
-		lines.push("import type { ProtoFlat, TypeConstructor } from 'mnemonica';");
+		// Import ProtoFlat from mnemonica
+		lines.push("import type { ProtoFlat } from 'mnemonica';");
 		lines.push('');
 
 		// Make this a module so we can use declare global
@@ -98,7 +98,8 @@ export class TypesGenerator {
 		if (!node.parent) {
 			for (const child of node.children.values()) {
 				const childInstanceType = this.getInstanceTypeName(child);
-				lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
+				const constructorSig = this.generateConstructorSignature(child);
+				lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
 			}
 		}
 
@@ -150,7 +151,8 @@ export class TypesGenerator {
 				if (!node.parent) {
 					for (const child of node.children.values()) {
 						const childInstanceType = this.getInstanceTypeName(child);
-						lines.push(`${indentStr}\t${child.name}: TypeConstructor<${childInstanceType}>;`);
+						const constructorSig = this.generateConstructorSignature(child);
+						lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
 					}
 				}
 	
@@ -174,8 +176,8 @@ export class TypesGenerator {
 		lines.push('/* eslint-disable @typescript-eslint/no-empty-interface */');
 		lines.push('');
 
-		// Import ProtoFlat and TypeConstructor from mnemonica
-		lines.push("import type { ProtoFlat, TypeConstructor } from 'mnemonica';");
+		// Import ProtoFlat from mnemonica
+		lines.push("import type { ProtoFlat } from 'mnemonica';");
 		lines.push('');
 
 		// Generate complete instance interfaces
@@ -221,7 +223,8 @@ export class TypesGenerator {
 		if (node.children.size > 0) {
 			for (const child of node.children.values()) {
 				const childInstanceType = this.getInstanceTypeName(child);
-				lines.push(`\t${child.name}: TypeConstructor<${childInstanceType}>;`);
+				const constructorSig = this.generateConstructorSignature(child);
+				lines.push(`\t${child.name}: ${constructorSig} => ${childInstanceType};`);
 			}
 		}
 
@@ -333,19 +336,19 @@ export class TypesGenerator {
 		// Use constructorParams if available, otherwise fall back to empty signature
 		const params = node.constructorParams;
 
-		if (!params || params.size === 0) {
-			return 'new (...args: unknown[])';
+		if (!params || params.length === 0) {
+			return 'new ()';
 		}
 
 		// Build typed constructor signature from constructor parameters
 		const props: string[] = [];
-		for (const [propName, propInfo] of params) {
-			const optional = propInfo.optional ? '?' : '';
-			props.push(`${propName}${optional}: ${propInfo.type}`);
+		for (const param of params) {
+			const optional = param.optional ? '?' : '';
+			props.push(`${param.name}${optional}: ${param.type}`);
 		}
 
 		// Return constructor signature with data parameter
-		return `new (data: { ${props.join('; ')} })`;
+		return `new (${props.join(', ')})`;
 	}
 
 	/**

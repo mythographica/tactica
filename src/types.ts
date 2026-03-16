@@ -25,6 +25,15 @@ export interface PropertyInfo {
 	readonly?: boolean;
 }
 
+/** Constructor parameter info for TypeRegistry signatures */
+export interface ConstructorParamInfo {
+	/** Parameter name (e.g., "usages", "data", "config") */
+	name: string;
+	/** The type string - can be a simple type or expanded object literal */
+	type: string;
+	optional: boolean;
+}
+
 export interface TypeNode {
 	/** Type name (e.g., "SecondType") */
 	name: string;
@@ -33,7 +42,7 @@ export interface TypeNode {
 	/** Properties defined in this type's constructor */
 	properties: Map<string, PropertyInfo>;
 	/** Constructor parameters (for TypeRegistry constructor signature) */
-	constructorParams?: Map<string, PropertyInfo>;
+	constructorParams?: ConstructorParamInfo[];
 	/** Parent type node */
 	parent?: TypeNode;
 	/** Child types */

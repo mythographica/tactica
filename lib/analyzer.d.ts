@@ -155,6 +155,7 @@ export declare class MnemonicaAnalyzer {
     /**
          * Extract constructor parameters from define() call
          * This is used for TypeRegistry constructor signatures
+         * Preserves parameter names and expands object types to their structure
          */
     private extractConstructorParams;
 }
