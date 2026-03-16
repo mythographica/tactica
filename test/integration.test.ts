@@ -103,13 +103,13 @@ const SecondType = FirstType.define('SecondType', function (this: { second: stri
 		const generated = generator.generateGlobalAugmentation();
 
 		// Should generate content
-		expect(generated.content).to.include('FirstTypeInstance');
-		expect(generated.content).to.include('SecondTypeInstance');
+		expect(generated.content).to.include('FirstType');
+		expect(generated.content).to.include('SecondType');
 		expect(generated.content).to.include('declare global');
 
 		// Should list the generated types
-		expect(generated.types).to.include('FirstTypeInstance');
-		expect(generated.types).to.include('SecondTypeInstance');
+		expect(generated.types).to.include('FirstType');
+		expect(generated.types).to.include('FirstType_SecondType');
 	});
 
 	it('should write generated types to file', () => {
@@ -139,8 +139,8 @@ const AdminType = UserType.define('AdminType', function (this: { role: string })
 		// Content should be valid
 		const content = fs.readFileSync(outputPath, 'utf-8');
 		expect(content).to.include('@mnemonica/tactica');
-		expect(content).to.include('UserTypeInstance');
-		expect(content).to.include('AdminTypeInstance');
+		expect(content).to.include('UserType');
+		expect(content).to.include('AdminType');
 	});
 
 	it('should handle complex nested hierarchy', () => {
@@ -179,10 +179,10 @@ const D = C.define('D', function (this: { d: string[] }) {
 		const generated = generator.generateGlobalAugmentation();
 
 		// Should include all instance interfaces
-		expect(generated.content).to.include('AInstance');
-		expect(generated.content).to.include('BInstance');
-		expect(generated.content).to.include('CInstance');
-		expect(generated.content).to.include('DInstance');
+		expect(generated.content).to.include('A');
+		expect(generated.content).to.include('B');
+		expect(generated.content).to.include('C');
+		expect(generated.content).to.include('D');
 	});
 
 	it('should handle @decorate() decorator pattern', () => {

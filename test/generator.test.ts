@@ -28,7 +28,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypesFile();
 
-			expect(result.content).to.include('export type FirstTypeInstance');
+			expect(result.content).to.include('export type FirstType');
 		});
 
 		it('should return types array', () => {
@@ -38,7 +38,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypesFile();
 
-			expect(result.types).to.include('UserInstance');
+			expect(result.types).to.include('User');
 		});
 	});
 
@@ -50,7 +50,7 @@ describe('TypesGenerator', () => {
 			const result = generator.generateGlobalAugmentation();
 
 			expect(result.content).to.include('declare global');
-			expect(result.content).to.include('FirstTypeInstance');
+			expect(result.content).to.include('FirstType');
 		});
 
 		it('should generate instance type alias', () => {
@@ -59,7 +59,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('type FirstTypeInstance');
+			expect(result.content).to.include('type FirstType');
 		});
 
 		it('should generate nested constructor properties', () => {
@@ -71,9 +71,9 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('ParentInstance');
+			expect(result.content).to.include('Parent');
 			expect(result.content).to.include('Child:');
-			expect(result.content).to.include('TypeConstructor<ChildInstance>');
+			expect(result.content).to.include('new () => Parent_Child');
 		});
 
 		it('should include parent in intersection type', () => {
@@ -85,7 +85,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('ChildInstance = ProtoFlat<ParentInstance,');
+			expect(result.content).to.include('Child = ProtoFlat<Parent,');
 		});
 	});
 });

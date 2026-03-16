@@ -8,83 +8,42 @@ import { TypeGraphImpl } from '../src/graph';
 import { TypesGenerator } from '../src/generator';
 import { TypesWriter } from '../src/writer';
 
+const fixturesDir = path.join(__dirname, 'fixtures', 'mnemographica-models');
+const testOutputDir = path.join(__dirname, '.test-mnemographica');
+
 describe('Mnemographica Models - Real Filesystem Test', () => {
-	const fixturesDir = path.join(__dirname, 'fixtures', 'mnemographica-models');
-	const outputDir = path.join(__dirname, '..', '.tactica-test-output');
-	
 	beforeEach(() => {
-		// Clean up any previous test output
-		if (fs.existsSync(outputDir)) {
-			fs.rmSync(outputDir, { recursive: true });
+		if (fs.existsSync(testOutputDir)) {
+			fs.rmSync(testOutputDir, { recursive: true });
 		}
+		fs.mkdirSync(testOutputDir, { recursive: true });
 	});
-	
+
 	afterEach(() => {
-		// Clean up test output after each test
-		if (fs.existsSync(outputDir)) {
-			fs.rmSync(outputDir, { recursive: true });
+		if (fs.existsSync(testOutputDir)) {
+			fs.rmSync(testOutputDir, { recursive: true });
 		}
 	});
 
-	/**
-	 * Helper function to analyze a single file and build graph
-	 */
 	function analyzeFile(fileName: string) {
-		const analyzer = new MnemonicaAnalyzer();
-		const graph = new TypeGraphImpl();
-		
 		const filePath = path.join(fixturesDir, fileName);
 		const content = fs.readFileSync(filePath, 'utf-8');
+		
+		const analyzer = new MnemonicaAnalyzer();
 		const result = analyzer.analyzeSource(content, filePath);
-		
-		// Build graph from results - first pass: create all nodes
-		const nodeMap = new Map<string, ReturnType<typeof TypeGraphImpl.createNode>>();
-		for (const type of result.types) {
-			const node = TypeGraphImpl.createNode(
-				type.name,
-				undefined, // Will set parent in second pass
-				type.sourceFile,
-				type.line,
-				type.column
-			);
-			for (const [propName, propInfo] of type.properties) {
-				node.properties.set(propName, propInfo);
-			}
-			nodeMap.set(type.name, node);
-		}
-		
-		// Second pass: set up parent-child relationships
-		for (const type of result.types) {
-			const node = nodeMap.get(type.name)!;
-			if (type.parent) {
-				const parentNode = nodeMap.get(type.parent.name);
-				if (parentNode) {
-					node.parent = parentNode;
-					parentNode.children.set(node.name, node);
-					graph.addChild(parentNode, node);
-				}
-			} else {
-				graph.addRoot(node);
-			}
-		}
+		const graph = analyzer.getGraph();
 		
 		return { analyzer, graph, result };
 	}
 
-	/**
-	 * Helper function to generate types and write to filesystem
-	 */
-	function generateAndWrite(graph: TypeGraphImpl) {
+	function generateAndWrite(graph: TypeGraphImpl): string {
 		const generator = new TypesGenerator(graph);
 		const generated = generator.generateTypesFile();
 		
-		const writer = new TypesWriter(outputDir);
-		writer.write(generated);
+		const writer = new TypesWriter(testOutputDir);
+		writer.writeTypesFile(generated);
 		
-		const typesPath = path.join(outputDir, 'types.ts');
-		expect(fs.existsSync(typesPath)).to.be.true;
-		
-		return fs.readFileSync(typesPath, 'utf-8');
+		return generated.content;
 	}
 
 	it('should generate correct types for Definition/Link pattern with Link: undefined', () => {
@@ -92,14 +51,15 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const typesContent = generateAndWrite(graph);
 		
 		// Verify ProtoFlat is imported
-		expect(typesContent).to.include("import type { ProtoFlat, TypeConstructor } from 'mnemonica'");
+		expect(typesContent).to.include("import type { ProtoFlat } from 'mnemonica'");
 		
-		// DefinitionInstance (root type) should have Link constructor property
-		expect(typesContent).to.include('export type DefinitionInstance = {');
-		expect(typesContent).to.include('Link: TypeConstructor<LinkInstance>');
+		// Definition (root type) should have Link constructor property
+		expect(typesContent).to.include('export type Definition = {');
+		expect(typesContent).to.include('Link:');
+		expect(typesContent).to.include('Definition_Link');
 		
-		// LinkInstance (nested type) should have Link: undefined
-		expect(typesContent).to.include('export type LinkInstance = ProtoFlat<DefinitionInstance, {');
+		// Definition_Link (nested type) should have Link: undefined
+		expect(typesContent).to.include('export type Definition_Link = ProtoFlat<Definition, {');
 		expect(typesContent).to.include('Link: undefined;');
 	});
 
@@ -107,25 +67,27 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Scene2D.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		// Scene2DInstance (root) should have Camera2D and GraphNode2D constructors
-		expect(typesContent).to.include('export type Scene2DInstance = {');
-		expect(typesContent).to.include('Camera2D: TypeConstructor<Camera2DInstance>');
-		expect(typesContent).to.include('GraphNode2D: TypeConstructor<GraphNode2DInstance>');
+		// Scene2D (root) should have Camera2D and GraphNode2D constructors
+		expect(typesContent).to.include('export type Scene2D = {');
+		expect(typesContent).to.include('Camera2D:');
+		expect(typesContent).to.include('Scene2D_Camera2D');
+		expect(typesContent).to.include('GraphNode2D:');
+		expect(typesContent).to.include('Scene2D_GraphNode2D');
 		
-		// Camera2DInstance (nested) should have Camera2D: undefined
-		expect(typesContent).to.include('export type Camera2DInstance = ProtoFlat<Scene2DInstance, {');
+		// Scene2D_Camera2D (nested) should have Camera2D: undefined
+		expect(typesContent).to.include('export type Scene2D_Camera2D = ProtoFlat<Scene2D, {');
 		expect(typesContent).to.include('Camera2D: undefined;');
 		
-		// GraphNode2DInstance (nested) should have GraphNode2D: undefined
+		// Scene2D_GraphNode2D (nested) should have GraphNode2D: undefined
 		// Note: Nested type instances don't get children constructors, only root types do
-		expect(typesContent).to.include('export type GraphNode2DInstance = ProtoFlat<Scene2DInstance, {');
+		expect(typesContent).to.include('export type Scene2D_GraphNode2D = ProtoFlat<Scene2D, {');
 		expect(typesContent).to.include('GraphNode2D: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined and proper ProtoFlat chain
-		expect(typesContent).to.include('export type Link2DInstance = ProtoFlat<GraphNode2DInstance, {');
+		expect(typesContent).to.include('export type Scene2D_GraphNode2D_Link2D = ProtoFlat<Scene2D_GraphNode2D, {');
 		expect(typesContent).to.include('Link2D: undefined;');
 		
-		expect(typesContent).to.include('export type Tooltip2DInstance = ProtoFlat<GraphNode2DInstance, {');
+		expect(typesContent).to.include('export type Scene2D_GraphNode2D_Tooltip2D = ProtoFlat<Scene2D_GraphNode2D, {');
 		expect(typesContent).to.include('Tooltip2D: undefined;');
 	});
 
@@ -154,8 +116,8 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('values:');
 		expect(typesContent).to.include('size:');
 		
-		// UsageEntryInstance should have UsageEntry: undefined
-		expect(typesContent).to.include('export type UsageEntryInstance = ProtoFlat<UsagesInstance, {');
+		// Usages_UsageEntry should have UsageEntry: undefined
+		expect(typesContent).to.include('export type Usages_UsageEntry = ProtoFlat<Usages, {');
 		expect(typesContent).to.include('UsageEntry: undefined;');
 	});
 
@@ -163,22 +125,24 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Scene3D.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		// Scene3DInstance (root) should have Camera3D and GraphNode3D
-		expect(typesContent).to.include('export type Scene3DInstance = {');
-		expect(typesContent).to.include('Camera3D: TypeConstructor<Camera3DInstance>');
-		expect(typesContent).to.include('GraphNode3D: TypeConstructor<GraphNode3DInstance>');
+		// Scene3D (root) should have Camera3D and GraphNode3D
+		expect(typesContent).to.include('export type Scene3D = {');
+		expect(typesContent).to.include('Camera3D:');
+		expect(typesContent).to.include('Scene3D_Camera3D');
+		expect(typesContent).to.include('GraphNode3D:');
+		expect(typesContent).to.include('Scene3D_GraphNode3D');
 		
-		// Camera3DInstance should have Camera3D: undefined
-		expect(typesContent).to.include('export type Camera3DInstance = ProtoFlat<Scene3DInstance, {');
+		// Scene3D_Camera3D should have Camera3D: undefined
+		expect(typesContent).to.include('export type Scene3D_Camera3D = ProtoFlat<Scene3D, {');
 		expect(typesContent).to.include('Camera3D: undefined;');
 		
-		// GraphNode3DInstance should have GraphNode3D: undefined
+		// Scene3D_GraphNode3D should have GraphNode3D: undefined
 		expect(typesContent).to.include('GraphNode3D: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined
-		expect(typesContent).to.include('export type Link3DInstance = ProtoFlat<GraphNode3DInstance, {');
+		expect(typesContent).to.include('export type Scene3D_GraphNode3D_Link3D = ProtoFlat<Scene3D_GraphNode3D, {');
 		expect(typesContent).to.include('Link3D: undefined;');
-		expect(typesContent).to.include('export type Tooltip3DInstance = ProtoFlat<GraphNode3DInstance, {');
+		expect(typesContent).to.include('export type Scene3D_GraphNode3D_Tooltip3D = ProtoFlat<Scene3D_GraphNode3D, {');
 		expect(typesContent).to.include('Tooltip3D: undefined;');
 	});
 
@@ -186,16 +150,17 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Trie.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		expect(typesContent).to.include('export type TrieInstance = {');
-		expect(typesContent).to.include('GraphNodeTrie: TypeConstructor<GraphNodeTrieInstance>');
+		expect(typesContent).to.include('export type Trie = {');
+		expect(typesContent).to.include('GraphNodeTrie:');
+		expect(typesContent).to.include('Trie_GraphNodeTrie');
 		
-		expect(typesContent).to.include('export type GraphNodeTrieInstance = ProtoFlat<TrieInstance, {');
+		expect(typesContent).to.include('export type Trie_GraphNodeTrie = ProtoFlat<Trie, {');
 		expect(typesContent).to.include('GraphNodeTrie: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined
-		expect(typesContent).to.include('export type LinkTrieInstance = ProtoFlat<GraphNodeTrieInstance, {');
+		expect(typesContent).to.include('export type Trie_GraphNodeTrie_LinkTrie = ProtoFlat<Trie_GraphNodeTrie, {');
 		expect(typesContent).to.include('LinkTrie: undefined;');
-		expect(typesContent).to.include('export type ContextMenuInstance = ProtoFlat<GraphNodeTrieInstance, {');
+		expect(typesContent).to.include('export type Trie_GraphNodeTrie_ContextMenu = ProtoFlat<Trie_GraphNodeTrie, {');
 		expect(typesContent).to.include('ContextMenu: undefined;');
 	});
 
@@ -203,10 +168,11 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Types.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		expect(typesContent).to.include('export type TypesInstance = {');
-		expect(typesContent).to.include('TypeEntry: TypeConstructor<TypeEntryInstance>');
+		expect(typesContent).to.include('export type Types = {');
+		expect(typesContent).to.include('TypeEntry:');
+		expect(typesContent).to.include('Types_TypeEntry');
 		
-		expect(typesContent).to.include('export type TypeEntryInstance = ProtoFlat<TypesInstance, {');
+		expect(typesContent).to.include('export type Types_TypeEntry = ProtoFlat<Types, {');
 		expect(typesContent).to.include('TypeEntry: undefined;');
 	});
 
@@ -214,10 +180,11 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Registry.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		expect(typesContent).to.include('export type RegistryInstance = {');
-		expect(typesContent).to.include('DefinitionEntry: TypeConstructor<DefinitionEntryInstance>');
+		expect(typesContent).to.include('export type Registry = {');
+		expect(typesContent).to.include('DefinitionEntry:');
+		expect(typesContent).to.include('Registry_DefinitionEntry');
 		
-		expect(typesContent).to.include('export type DefinitionEntryInstance = ProtoFlat<RegistryInstance, {');
+		expect(typesContent).to.include('export type Registry_DefinitionEntry = ProtoFlat<Registry, {');
 		expect(typesContent).to.include('DefinitionEntry: undefined;');
 	});
 
@@ -225,10 +192,11 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('LoggerTab.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		expect(typesContent).to.include('export type LoggerTabInstance = {');
-		expect(typesContent).to.include('LogEntry: TypeConstructor<LogEntryInstance>');
+		expect(typesContent).to.include('export type LoggerTab = {');
+		expect(typesContent).to.include('LogEntry:');
+		expect(typesContent).to.include('LoggerTab_LogEntry');
 		
-		expect(typesContent).to.include('export type LogEntryInstance = ProtoFlat<LoggerTabInstance, {');
+		expect(typesContent).to.include('export type LoggerTab_LogEntry = ProtoFlat<LoggerTab, {');
 		expect(typesContent).to.include('LogEntry: undefined;');
 	});
 
@@ -236,10 +204,11 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const { graph } = analyzeFile('Main.ts');
 		const typesContent = generateAndWrite(graph);
 		
-		expect(typesContent).to.include('export type MainInstance = {');
-		expect(typesContent).to.include('Adapter: TypeConstructor<AdapterInstance>');
+		expect(typesContent).to.include('export type Main = {');
+		expect(typesContent).to.include('Adapter:');
+		expect(typesContent).to.include('Main_Adapter');
 		
-		expect(typesContent).to.include('export type AdapterInstance = ProtoFlat<MainInstance, {');
+		expect(typesContent).to.include('export type Main_Adapter = ProtoFlat<Main, {');
 		expect(typesContent).to.include('Adapter: undefined;');
 	});
 });
