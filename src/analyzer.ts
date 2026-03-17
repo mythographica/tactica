@@ -1348,11 +1348,23 @@ export class MnemonicaAnalyzer {
 		if (!this.definitions.has(typePath)) {
 			return;
 		}
-			if (!this.usages.has(typePath)) {
-				this.usages.set(typePath, []);
-			}
-			this.usages.get(typePath)!.push(usage);
+		if (!this.usages.has(typePath)) {
+			this.usages.set(typePath, []);
 		}
+
+		// Check for duplicates based on location, code, and kind
+		const existingUsages = this.usages.get(typePath)!;
+		const isDuplicate = existingUsages.some(
+			existing =>
+				existing.location === usage.location &&
+				existing.code === usage.code &&
+				existing.kind === usage.kind
+		);
+
+		if (!isDuplicate) {
+			existingUsages.push(usage);
+		}
+	}
 	
 		/**
 			* Get type name from expression (identifier or property access)
