@@ -10,6 +10,7 @@ export declare class MnemonicaAnalyzer {
     private definitions;
     private usages;
     private typeAliases;
+    private variableToTypeMap;
     constructor(program?: ts.Program);
     /**
      * Analyze a source file for Mnemonica type definitions
@@ -32,6 +33,10 @@ export declare class MnemonicaAnalyzer {
      */
     getUsages(): Map<string, UsageInfo[]>;
     /**
+     * Set parent nodes in a source file to enable AST traversal up
+     */
+    private setParentNodesInSourceFile;
+    /**
      * Visit a node in the AST
      */
     private visitNode;
@@ -52,6 +57,11 @@ export declare class MnemonicaAnalyzer {
      */
     private processDefineCall;
     /**
+     * Track variable assignments that capture define() results
+     * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
+     */
+    private trackVariableAssignment;
+    /**
      * Process a @decorate() decorator
      */
     private processDecorateDecorator;
@@ -64,8 +74,12 @@ export declare class MnemonicaAnalyzer {
      */
     private findParentType;
     /**
-     * Get property chain from nested access
-     */
+        * Find a parent type by its name, searching in the graph
+        */
+    private findParentTypeByName;
+    /**
+        * Get property chain from nested access
+        */
     private getPropertyChain;
     /**
      * Extract properties from constructor function

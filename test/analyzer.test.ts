@@ -38,6 +38,35 @@ describe('MnemonicaAnalyzer', () => {
 			expect(result.types[1].name).to.equal('ChildType');
 		});
 
+		it('should handle variable name different from type name', () => {
+			// This tests the fix for: const User = define('UserEntity', ...)
+			// User.define('UserResponse', ...) should create UserEntity.UserResponse
+			const source = `
+				const User = define('UserEntity', function (this: any, data: { id: string }) {
+					this.id = data.id;
+				});
+				
+				const UserResponse = User.define('UserResponse', function (this: any, data: { id: string; type: string }) {
+					this.id = data.id;
+					this.type = data.type;
+				});
+			`;
+
+			const result = analyzer.analyzeSource(source);
+
+			expect(result.errors).to.have.length(0);
+			expect(result.types).to.have.length(2);
+			
+			// Find the types by full path
+			const userEntity = result.types.find(t => t.fullPath === 'UserEntity');
+			const userResponse = result.types.find(t => t.fullPath === 'UserEntity.UserResponse');
+			
+			expect(userEntity).to.exist;
+			expect(userResponse).to.exist;
+			expect(userEntity?.name).to.equal('UserEntity');
+			expect(userResponse?.name).to.equal('UserResponse');
+		});
+
 		it('should extract properties from constructor', () => {
 			// Test that types are created for define calls with properties
 			const source = `

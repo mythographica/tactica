@@ -13,6 +13,8 @@ export class MnemonicaAnalyzer {
 	private definitions = new Map<string, DefinitionInfo>();
 	private usages = new Map<string, UsageInfo[]>();
 	private typeAliases = new Map<string, ts.TypeNode>();
+	// Track variable assignments: variableName -> fullPath of the type it holds
+	private variableToTypeMap = new Map<string, string>();
 
 	constructor(program?: ts.Program) {
 		// Store program for future use (currently unused but kept for extensibility)
@@ -24,6 +26,8 @@ export class MnemonicaAnalyzer {
 	 */
 	analyzeFile(sourceFile: ts.SourceFile): AnalyzeResult {
 		this.errors = [];
+		// Ensure parent nodes are set for AST traversal
+		this.setParentNodesInSourceFile(sourceFile);
 		this.visitNode(sourceFile, sourceFile);
 
 		return {
@@ -64,6 +68,19 @@ export class MnemonicaAnalyzer {
 	 */
 	getUsages(): Map<string, UsageInfo[]> {
 		return this.usages;
+	}
+
+	/**
+	 * Set parent nodes in a source file to enable AST traversal up
+	 */
+	private setParentNodesInSourceFile(sourceFile: ts.SourceFile): void {
+		const setParent = (node: ts.Node, parent?: ts.Node) => {
+			// TypeScript doesn't expose parent as writable, but we need it
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(node as any).parent = parent;
+			ts.forEachChild(node, child => setParent(child, node));
+		};
+		setParent(sourceFile);
 	}
 
 	/**
@@ -181,6 +198,12 @@ export class MnemonicaAnalyzer {
 	 * Process a define() call
 	 */
 	private processDefineCall(call: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		// Check if this exact call has already been processed (prevents duplicates from chained calls)
+		if ((call as any).__tactica_processed) {
+			return;
+		}
+		(call as any).__tactica_processed = true;
+
 		const { line, character } = ts.getLineAndCharacterOfPosition(
 			sourceFile,
 			call.getStart(sourceFile)
@@ -199,7 +222,7 @@ export class MnemonicaAnalyzer {
 		}
 
 		// Determine parent type
-		const parentNode = this.findParentType(call);
+		const parentNode = this.findParentType(call, sourceFile);
 
 		// Build full path
 		const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
@@ -238,6 +261,30 @@ export class MnemonicaAnalyzer {
 			this.graph.addChild(parentNode, node);
 		} else {
 			this.graph.addRoot(node);
+		}
+
+		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
+		this.trackVariableAssignment(call, fullPath);
+	}
+
+	/**
+	 * Track variable assignments that capture define() results
+	 * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
+	 */
+	private trackVariableAssignment(call: ts.CallExpression, fullPath: string): void {
+		// Check if this call is the right-hand side of a variable declaration
+		// Walk up the tree to find VariableDeclaration
+		let current: ts.Node | undefined = call.parent;
+		while (current) {
+			if (ts.isVariableDeclaration(current)) {
+				// Found: const X = define(...)
+				if (ts.isIdentifier(current.name)) {
+					const varName = current.name.text;
+					this.variableToTypeMap.set(varName, fullPath);
+				}
+				return;
+			}
+			current = current.parent;
 		}
 	}
 
@@ -368,7 +415,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Find parent type node for nested define calls
 	 */
-	private findParentType(call: ts.CallExpression): TypeNode | undefined {
+	private findParentType(call: ts.CallExpression, _sourceFile: ts.SourceFile): TypeNode | undefined {
 		const expression = call.expression;
 
 		// Check for method call: SomeType.define('SubType', ...)
@@ -382,9 +429,19 @@ export class MnemonicaAnalyzer {
 		if (ts.isIdentifier(obj)) {
 			// Direct reference to parent type - search by simple name
 			const name = obj.text;
+
+			// First check variable mapping: const User = define('UserEntity', ...)
+			// In this case, name is "User" but we need to find "UserEntity"
+			const mappedFullPath = this.variableToTypeMap.get(name);
+			if (mappedFullPath) {
+				const mappedNode = this.graph.findType(mappedFullPath);
+				if (mappedNode) return mappedNode;
+			}
+
 			// First try exact match
 			const exact = this.graph.findType(name);
 			if (exact) return exact;
+
 			// Then search through all types for one with matching name
 			for (const type of this.graph.getAllTypes()) {
 				if (type.name === name) {
@@ -402,12 +459,47 @@ export class MnemonicaAnalyzer {
 			}
 		}
 
+		// Handle chained define: define('UserEntity', ...).define('UserResponse', ...)
+		if (ts.isCallExpression(obj)) {
+			// This is a chained call - the object is itself a define() call
+			// Check if the parent call is a define() that hasn't been processed yet
+			if (this.isDefineCall(obj)) {
+				// Process the parent define() call first to create its type node
+				// Use the sourceFile from the current context
+				this.processDefineCall(obj, _sourceFile);
+				
+				// Now find and return the newly created parent type
+				const parentTypeName = this.extractTypeName(obj);
+				if (parentTypeName) {
+					return this.findParentTypeByName(parentTypeName);
+				}
+			}
+		}
+
 		return undefined;
 	}
 
 	/**
-	 * Get property chain from nested access
-	 */
+		* Find a parent type by its name, searching in the graph
+		*/
+	private findParentTypeByName(name: string): TypeNode | undefined {
+		// First try exact match
+		const exact = this.graph.findType(name);
+		if (exact) return exact;
+
+		// Then search through all types for one with matching name
+		for (const type of this.graph.getAllTypes()) {
+			if (type.name === name) {
+				return type;
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+		* Get property chain from nested access
+		*/
 	private getPropertyChain(expr: ts.PropertyAccessExpression | ts.Identifier): string[] {
 		const chain: string[] = [];
 
