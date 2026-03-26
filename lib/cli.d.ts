@@ -9,6 +9,8 @@ interface CLIOptions extends TacticaConfig {
     watch?: boolean;
     project?: string;
     help?: boolean;
+    /** Custom topologica directories to scan */
+    topologicaDirs?: string[];
 }
 /**
  * Parse command line arguments

@@ -169,6 +169,7 @@ Tactica uses TypeScript's [`ts.createProgram()`](tactica/src/analyzer.ts) API to
 | `--output` | `-o` | Output directory (default: `.tactica`) |
 | `--include` | `-i` | Include patterns (comma-separated) |
 | `--exclude` | `-e` | Exclude patterns (comma-separated) |
+| `--topologica` | `-t` | Topologica directories to scan (comma-separated) |
 | `--module-augmentation` | `-m` | Generate global augmentation (legacy mode) |
 | `--verbose` | `-v` | Enable verbose logging |
 | `--help` | `-h` | Show help message |
@@ -187,6 +188,9 @@ npx tactica --watch --output ./custom-types
 
 # Exclude test files
 npx tactica --exclude "*.test.ts,*.spec.ts"
+
+# Scan custom topologica directories
+npx tactica --topologica ./src/ai-types,./custom/topologica
 ```
 
 ## Generated Output
@@ -345,6 +349,72 @@ const MyFn = function (this: any) {
 
 const MyFnType = define('MyFnType', MyFn);
 ```
+
+### 5. Topologica Directory Structures
+
+Tactica can analyze [Topologica](https://github.com/mythographica/topologica)-style directory structures to generate types:
+
+```
+ai-types/
+├── Sentience/
+│   ├── index.ts          # export function SentienceHandler(this, data)
+│   ├── Consciousness/
+│   │   ├── index.ts
+│   │   ├── Curiosity/
+│   │   │   └── index.ts
+│   │   └── Empathy/
+│   │       └── index.ts
+│   └── Memory/
+│       └── index.ts
+```
+
+**Handler file format:**
+
+```typescript
+// ai-types/Sentience/index.ts
+export interface SentienceData {
+    awareness?: string;
+    identity?: string;
+}
+
+export interface SentienceInstance {
+    awareness: string;
+    timestamp: number;
+    identity: string;
+    sentience: boolean;
+}
+
+export function SentienceHandler(
+    this: SentienceInstance,
+    data: SentienceData
+): void {
+    this.awareness = data?.awareness || 'awake';
+    this.timestamp = Date.now();
+    this.identity = data?.identity || 'AI Agent';
+    this.sentience = true;
+}
+```
+
+**Auto-discovery:** Tactica automatically scans these directories:
+- `./ai-types`
+- `./types`
+- `./topologica-types`
+- `./src/ai-types`
+- `./src/types`
+- `./src/topologica-types`
+
+**Custom directories:** Use the `--topologica` CLI option:
+
+```bash
+npx tactica --topologica ./src/ai-types,./custom/topologica
+```
+
+**Property extraction:** The analyzer parses handler files and extracts:
+- `this.property = value` assignments
+- `Object.assign(this, data)` patterns
+- Inferred types from initializers (`Date.now()` → `number`, string literals → `string`, etc.)
+
+Generated types include all extracted properties with proper TypeScript types.
 
 ## CLI Features
 

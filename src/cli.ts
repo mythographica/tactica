@@ -21,6 +21,8 @@ interface CLIOptions extends TacticaConfig {
 	watch?: boolean;
 	project?: string;
 	help?: boolean;
+	/** Custom topologica directories to scan */
+	topologicaDirs?: string[];
 }
 
 /**
@@ -61,6 +63,10 @@ function parseArgs(args: string[]): CLIOptions {
 			case '--verbose':
 				options.verbose = true;
 				break;
+			case '-t':
+			case '--topologica':
+				options.topologicaDirs = (options.topologicaDirs || []).concat(args[++i].split(','));
+				break;
 			case '-h':
 			case '--help':
 				options.help = true;
@@ -86,6 +92,7 @@ Options:
   -o, --output              Output directory for generated types (default: .tactica)
   -i, --include             Comma-separated list of file patterns to include
   -e, --exclude             Comma-separated list of file patterns to exclude
+  -t, --topologica          Comma-separated list of topologica directories to scan
   -m, --module-augmentation Use module augmentation instead of global (legacy mode)
   -v, --verbose             Enable verbose logging
   -h, --help                Show this help message
@@ -96,6 +103,7 @@ Examples:
   tactica --module-augmentation        # Use legacy module augmentation mode
   tactica --project ./src/tsconfig.json # Custom tsconfig path
   tactica --output ./types/mnemonica   # Custom output directory
+  tactica --topologica ./src/ai-types  # Scan specific topologica directory
 `);
 }
 
@@ -205,14 +213,31 @@ function mergeTopologicaTypes(graph: TypeGraphImpl, topologicaTypes: Map<string,
 /**
  * Scan for topologica directory structures
  */
-function scanTopologicaDirectories(projectDir: string): string[] {
+function scanTopologicaDirectories(projectDir: string, customDirs?: string[]): string[] {
 	const dirs: string[] = [];
+
+	// First, add custom directories if specified
+	if (customDirs) {
+		for (const dir of customDirs) {
+			const dirPath = path.isAbsolute(dir) ? dir : path.join(projectDir, dir);
+			if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
+				dirs.push(dirPath);
+			} else {
+				console.warn(`Warning: Topologica directory not found: ${dirPath}`);
+			}
+		}
+	}
+
+	// Then auto-discover standard topologica directories
 	const possibleDirs = ['ai-types', 'types', 'topologica-types'];
 
 	for (const dirName of possibleDirs) {
 		const dirPath = path.join(projectDir, dirName);
 		if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-			dirs.push(dirPath);
+			// Avoid duplicates
+			if (!dirs.includes(dirPath)) {
+				dirs.push(dirPath);
+			}
 		}
 	}
 
@@ -222,7 +247,10 @@ function scanTopologicaDirectories(projectDir: string): string[] {
 		for (const dirName of possibleDirs) {
 			const dirPath = path.join(srcPath, dirName);
 			if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-				dirs.push(dirPath);
+				// Avoid duplicates
+				if (!dirs.includes(dirPath)) {
+					dirs.push(dirPath);
+				}
 			}
 		}
 	}
@@ -323,7 +351,7 @@ function run(options: CLIOptions): void {
 
 	// Scan for topologica directory structures
 	const projectDir = path.dirname(tsconfigPath);
-	const topologicaDirs = scanTopologicaDirectories(projectDir);
+	const topologicaDirs = scanTopologicaDirectories(projectDir, options.topologicaDirs);
 
 	if (topologicaDirs.length > 0 && options.verbose) {
 		console.log(`Found topologica directories: ${topologicaDirs.join(', ')}`);

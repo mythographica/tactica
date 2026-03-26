@@ -81,6 +81,7 @@ src/
 ├── index.ts          # Main exports: analyzer, generator, writer, CLI, plugin
 ├── types.ts          # TypeScript type definitions
 ├── analyzer.ts       # AST analyzer for define()/decorate() calls
+├── topologica-analyzer.ts  # Analyzer for Topologica directory structures
 ├── graph.ts          # Trie-based type hierarchy graph
 ├── generator.ts      # TypeScript .d.ts file generator
 ├── writer.ts         # File writer for .tactica/ folder
@@ -117,6 +118,29 @@ Writes generated types to `.tactica/` directory.
 - `writeGlobalAugmentation(generated)` - Write global declarations to `index.d.ts` (module augmentation mode)
 - `writeTo(filename, content)` - Write custom file
 - `clean()` - Clear output directory
+
+#### TopologicaAnalyzer
+Analyzes Topologica-style directory structures to extract type hierarchies from filesystem organization.
+- `analyzeDirectory(directoryPath)` - Scan a directory structure for type definitions
+- `getGraph()` - Get the type graph with extracted properties
+- `getErrors()` - Get parsing errors
+
+**Property Extraction:** Uses TypeScript AST parsing to extract:
+- `this.property = value` assignments from handler functions
+- `Object.assign(this, data)` patterns
+- Inferred types from initializers (string literals → `string`, `Date.now()` → `number`, etc.)
+
+**Supported File Formats:**
+- `.ts` - TypeScript files with full type annotations
+- `.js` - JavaScript files (parsed with TypeScript compiler)
+- `.mjs` - ES Module JavaScript files
+
+**Auto-discovery:** The CLI automatically scans standard directories (`ai-types`, `types`, `topologica-types`) in both project root and `src/` subdirectory.
+
+**Custom directories:** Use the `--topologica` CLI option:
+```bash
+npx tactica --topologica ./src/ai-types,./custom/topologica
+```
 
 ### How It Works
 
