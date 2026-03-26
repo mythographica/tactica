@@ -27,7 +27,13 @@ export declare class TopologicaAnalyzer {
      */
     private extractPropertiesFromDir;
     /**
+     * Collect type aliases from source file
+     * e.g., export type SentienceData = { awareness?: string; }
+     */
+    private collectTypeAliases;
+    /**
      * Extract property assignments from a source file
+     * Returns constructor parameters if found
      */
     private extractPropertiesFromSourceFile;
     /**
@@ -42,6 +48,20 @@ export declare class TopologicaAnalyzer {
      * Extract properties from Object.assign(this, data) pattern
      */
     private extractFromObjectAssign;
+    /**
+     * Extract constructor parameters from a function
+     * Similar to main analyzer - skips `this` parameter and expands data types
+     */
+    private extractConstructorParams;
+    /**
+     * Expand a type node to its object literal representation
+     * Similar to main analyzer's resolveTypeAndExtract
+     */
+    private expandTypeToObject;
+    /**
+     * Convert a TypeScript type node to a simple string representation
+     */
+    private typeNodeToSimpleString;
     /**
      * Infer TypeScript type from an expression
      */

@@ -3,7 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo } from './types';
+import { TypeNode, PropertyInfo, ConstructorParamInfo } from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -55,14 +55,15 @@ export class TopologicaAnalyzer {
 					const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
 					const dirPath = path.join(currentPath, entry.name);
 					
-					// Extract properties from the handler file if it exists
-					const properties = this.extractPropertiesFromDir(dirPath);
+					// Extract properties and constructor params from the handler file if it exists
+					const { properties, constructorParams } = this.extractPropertiesFromDir(dirPath);
 					
 					// Create the type node
 					const typeNode: TypeNode = {
 						name: typeName,
 						fullPath: fullPath,
 						properties: properties,
+						constructorParams: constructorParams,
 						parent: parentNode,
 						children: new Map(),
 						sourceFile: dirPath,
@@ -92,8 +93,12 @@ export class TopologicaAnalyzer {
 	 * Extract properties from a directory's index file
 	 * Supports both .ts and .js files
 	 */
-	private extractPropertiesFromDir(dirPath: string): Map<string, PropertyInfo> {
+	private extractPropertiesFromDir(dirPath: string): {
+		properties: Map<string, PropertyInfo>;
+		constructorParams?: ConstructorParamInfo[]
+	} {
 		const properties = new Map<string, PropertyInfo>();
+		let constructorParams: ConstructorParamInfo[] | undefined;
 		
 		// Check for TypeScript file first, then JavaScript
 		const tsFile = path.join(dirPath, 'index.ts');
@@ -108,7 +113,7 @@ export class TopologicaAnalyzer {
 		}
 		
 		if (!targetFile) {
-			return properties;
+			return { properties };
 		}
 		
 		try {
@@ -120,35 +125,68 @@ export class TopologicaAnalyzer {
 				true
 			);
 			
-			// Find handler function and extract property assignments
-			this.extractPropertiesFromSourceFile(sourceFile, properties);
+			// Collect type aliases from the file (e.g., SentienceData = { ... })
+			const typeAliases = this.collectTypeAliases(sourceFile);
+			
+			// Find handler function and extract property assignments and constructor params
+			constructorParams = this.extractPropertiesFromSourceFile(sourceFile, properties, typeAliases);
 			
 		} catch (error) {
 			this.errors.push(`Error parsing ${targetFile}: ${(error as Error).message}`);
 		}
 		
-		return properties;
+		return { properties, constructorParams };
 	}
 
 	/**
-	 * Extract property assignments from a source file
+	 * Collect type aliases from source file
+	 * e.g., export type SentienceData = { awareness?: string; }
 	 */
-	private extractPropertiesFromSourceFile(
-		sourceFile: ts.SourceFile,
-		properties: Map<string, PropertyInfo>
-	): void {
+	private collectTypeAliases(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
+		const typeAliases = new Map<string, ts.TypeNode>();
+		
 		const visit = (node: ts.Node): void => {
-			// Look for function declarations, function expressions, or arrow functions
-			if (ts.isFunctionDeclaration(node) || 
-			    ts.isFunctionExpression(node) ||
-			    ts.isArrowFunction(node)) {
-				this.extractThisProperties(node, properties);
+			// Look for type alias declarations: export type Name = Type;
+			if (ts.isTypeAliasDeclaration(node)) {
+				const name = node.name.text;
+				typeAliases.set(name, node.type);
 			}
 			
 			ts.forEachChild(node, visit);
 		};
 		
 		visit(sourceFile);
+		return typeAliases;
+	}
+
+	/**
+	 * Extract property assignments from a source file
+	 * Returns constructor parameters if found
+	 */
+	private extractPropertiesFromSourceFile(
+		sourceFile: ts.SourceFile,
+		properties: Map<string, PropertyInfo>,
+		typeAliases?: Map<string, ts.TypeNode>
+	): ConstructorParamInfo[] | undefined {
+		let constructorParams: ConstructorParamInfo[] | undefined;
+		
+		const visit = (node: ts.Node): void => {
+			// Look for function declarations, function expressions, or arrow functions
+			if (ts.isFunctionDeclaration(node) ||
+			    ts.isFunctionExpression(node) ||
+			    ts.isArrowFunction(node)) {
+				this.extractThisProperties(node, properties);
+				// Extract constructor params from the first function found
+				if (!constructorParams) {
+					constructorParams = this.extractConstructorParams(node, typeAliases);
+				}
+			}
+			
+			ts.forEachChild(node, visit);
+		};
+		
+		visit(sourceFile);
+		return constructorParams;
 	}
 
 	/**
@@ -248,6 +286,120 @@ export class TopologicaAnalyzer {
 					});
 				}
 			}
+		}
+	}
+
+	/**
+	 * Extract constructor parameters from a function
+	 * Similar to main analyzer - skips `this` parameter and expands data types
+	 */
+	private extractConstructorParams(
+		func: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+		typeAliases?: Map<string, ts.TypeNode>
+	): ConstructorParamInfo[] | undefined {
+		if (!func.parameters || func.parameters.length === 0) {
+			return undefined;
+		}
+
+		const params: ConstructorParamInfo[] = [];
+		
+		// Skip `this` parameter (first param) and extract data parameters
+		for (let i = 0; i < func.parameters.length; i++) {
+			const param = func.parameters[i];
+			
+			// Skip `this` parameter (first param)
+			if (i === 0 && param.name.kind === ts.SyntaxKind.Identifier &&
+			    (param.name as ts.Identifier).text === 'this') {
+				continue;
+			}
+			
+			if (!param.type) continue;
+			
+			const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
+			const optional = param.questionToken !== undefined || param.initializer !== undefined;
+			
+			// Expand type to object literal if possible
+			const expandedType = this.expandTypeToObject(param.type, typeAliases);
+			const paramType = expandedType || this.typeNodeToSimpleString(param.type);
+			
+			params.push({
+				name: paramName,
+				type: paramType,
+				optional: optional
+			});
+		}
+		
+		return params.length > 0 ? params : undefined;
+	}
+
+	/**
+	 * Expand a type node to its object literal representation
+	 * Similar to main analyzer's resolveTypeAndExtract
+	 */
+	private expandTypeToObject(
+		typeNode: ts.TypeNode,
+		typeAliases?: Map<string, ts.TypeNode>
+	): string | undefined {
+		// Direct inline type literal: { prop: type }
+		if (ts.isTypeLiteralNode(typeNode)) {
+			const props: string[] = [];
+			for (const member of typeNode.members) {
+				if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+					const propName = member.name.text;
+					const opt = member.questionToken ? '?' : '';
+					const type = this.typeNodeToSimpleString(member.type);
+					props.push(`${propName}${opt}: ${type}`);
+				}
+			}
+			return `{ ${props.join('; ')} }`;
+		}
+
+		// Type reference: SentienceData, etc. - try to expand from type aliases
+		if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+			const typeName = typeNode.typeName.text;
+			
+			// If we have type aliases, try to expand the referenced type
+			if (typeAliases) {
+				const aliasedType = typeAliases.get(typeName);
+				if (aliasedType) {
+					const expanded = this.expandTypeToObject(aliasedType, typeAliases);
+					if (expanded) return expanded;
+				}
+			}
+			
+			// If not an object type alias, return the type name
+			return typeName;
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Convert a TypeScript type node to a simple string representation
+	 */
+	private typeNodeToSimpleString(typeNode: ts.TypeNode | undefined): string {
+		if (!typeNode) return 'any';
+		
+		switch (typeNode.kind) {
+			case ts.SyntaxKind.StringKeyword:
+				return 'string';
+			case ts.SyntaxKind.NumberKeyword:
+				return 'number';
+			case ts.SyntaxKind.BooleanKeyword:
+				return 'boolean';
+			case ts.SyntaxKind.AnyKeyword:
+				return 'any';
+			case ts.SyntaxKind.ArrayType:
+				return 'Array<any>';
+			case ts.SyntaxKind.TypeReference: {
+				const typeRef = typeNode as ts.TypeReferenceNode;
+				if (ts.isIdentifier(typeRef.typeName)) {
+					return typeRef.typeName.text;
+				}
+				return 'any';
+			}
+			default:
+				return 'any';
 		}
 	}
 
