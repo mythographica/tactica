@@ -33,6 +33,11 @@ export declare class MnemonicaAnalyzer {
      */
     getUsages(): Map<string, UsageInfo[]>;
     /**
+     * Add a topologica type to the analyzer for usage tracking.
+     * This allows the analyzer to recognize topologica types when collecting usages.
+     */
+    addTopologicaType(fullPath: string, node: import('./types').TypeNode): void;
+    /**
      * Set parent nodes in a source file to enable AST traversal up
      */
     private setParentNodesInSourceFile;

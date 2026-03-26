@@ -71,6 +71,25 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Add a topologica type to the analyzer for usage tracking.
+	 * This allows the analyzer to recognize topologica types when collecting usages.
+	 */
+	addTopologicaType(fullPath: string, node: import('./types').TypeNode): void {
+		// Add to graph so it can be found during usage collection
+		this.graph.addRoot(node);
+		// Also add to definitions so it's recognized as a known type
+		const definition: DefinitionInfo = {
+			name: node.name,
+			location: `${node.sourceFile}:1:1`,
+			kind: 'define',
+			parent: node.parent ? node.parent.fullPath : null,
+			strictChain: true,
+			blockErrors: false
+		};
+		this.definitions.set(fullPath, definition);
+	}
+
+	/**
 	 * Set parent nodes in a source file to enable AST traversal up
 	 */
 	private setParentNodesInSourceFile(sourceFile: ts.SourceFile): void {
