@@ -75,8 +75,20 @@ export class MnemonicaAnalyzer {
 	 * This allows the analyzer to recognize topologica types when collecting usages.
 	 */
 	addTopologicaType(fullPath: string, node: import('./types').TypeNode): void {
+		// Skip if already exists
+		if (this.graph.allTypes.has(fullPath)) {
+			return;
+		}
+
 		// Add to graph so it can be found during usage collection
-		this.graph.addRoot(node);
+		if (node.parent) {
+			// Add as child of parent
+			this.graph.addChild(node.parent, node);
+		} else {
+			// Add as root
+			this.graph.addRoot(node);
+		}
+
 		// Also add to definitions so it's recognized as a known type
 		const definition: DefinitionInfo = {
 			name: node.name,

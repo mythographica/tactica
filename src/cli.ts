@@ -190,27 +190,6 @@ function printTypeHierarchy(graph: TypeGraphImpl): void {
 }
 
 /**
- * Merge topologica types into mnemonica graph
- */
-function mergeTopologicaTypes(graph: TypeGraphImpl, topologicaTypes: Map<string, TypeNode>): void {
-	for (const [fullPath, typeNode] of topologicaTypes) {
-		// Skip if already exists in graph (prefer mnemonica's TypeScript analysis)
-		if (graph.allTypes.has(fullPath)) {
-			continue;
-		}
-
-		// Add to graph - parent relationship is already set in typeNode
-		if (typeNode.parent) {
-			// Add as child of parent
-			graph.addChild(typeNode.parent, typeNode);
-		} else {
-			// Add as root
-			graph.addRoot(typeNode);
-		}
-	}
-}
-
-/**
  * Scan for topologica directory structures
  */
 function scanTopologicaDirectories(projectDir: string, customDirs?: string[]): string[] {
@@ -346,7 +325,13 @@ function run(options: CLIOptions): void {
 	}
 
 	// Add topologica types to analyzer so they're available for usage detection
-	for (const [typePath, node] of topologicaTypes) {
+	// Process in order of path depth (parents first) to ensure proper hierarchy
+	const sortedTypes = Array.from(topologicaTypes.entries()).sort((a, b) => {
+		const depthA = (a[0].match(/\./g) || []).length;
+		const depthB = (b[0].match(/\./g) || []).length;
+		return depthA - depthB;
+	});
+	for (const [typePath, node] of sortedTypes) {
 		analyzer.addTopologicaType(typePath, node);
 	}
 
@@ -379,15 +364,8 @@ function run(options: CLIOptions): void {
 	}
 
 	// Generate types from mnemonica analysis
+	// Note: topologica types are already added to the analyzer's graph via addTopologicaType()
 	const graph = analyzer.getGraph();
-
-	// Merge topologica types into graph for type generation
-	for (const dir of topologicaDirs) {
-		const result = topologicaAnalyzer.analyzeDirectory(dir);
-		if (result.types.size > 0) {
-			mergeTopologicaTypes(graph, result.types);
-		}
-	}
 	const generator = new TypesGenerator(graph);
 
 	// Check if module augmentation mode is requested (legacy)
