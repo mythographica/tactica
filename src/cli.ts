@@ -359,10 +359,15 @@ function run(options: CLIOptions): void {
 
 	// Analyze topologica directories and merge into graph
 	const topologicaAnalyzer = new TopologicaAnalyzer();
+	const topologicaTypes = new Map<string, import('./types').TypeNode>();
 	for (const dir of topologicaDirs) {
 		const result = topologicaAnalyzer.analyzeDirectory(dir);
 		if (result.types.size > 0) {
 			mergeTopologicaTypes(graph, result.types);
+			// Collect topologica types for definitions
+			for (const [path, node] of result.types) {
+				topologicaTypes.set(path, node);
+			}
 			if (options.verbose) {
 				console.log(`Added ${result.types.size} types from ${dir}`);
 			}
@@ -410,8 +415,30 @@ export * from './registry';
 	}
 
 	// Generate definitions.json and usages.json for code navigation
-	const definitionsPath = writer.writeDefinitionsFile(analyzer.getDefinitions());
-	const usagesPath = writer.writeUsagesFile(analyzer.getUsages());
+	// Include both mnemonica and topologica definitions
+	const definitions = new Map(analyzer.getDefinitions());
+	const usages = new Map(analyzer.getUsages());
+	
+	// Add topologica types to definitions
+	for (const [fullPath, typeNode] of topologicaTypes) {
+		// Skip if already exists (prefer mnemonica's analysis)
+		if (definitions.has(fullPath)) {
+			continue;
+		}
+		
+		const definition: import('./types').DefinitionInfo = {
+			name: typeNode.name,
+			location: `${typeNode.sourceFile}/index.ts:1:1`,
+			kind: 'define',
+			parent: typeNode.parent ? typeNode.parent.fullPath : null,
+			strictChain: true,
+			blockErrors: false
+		};
+		definitions.set(fullPath, definition);
+	}
+	
+	const definitionsPath = writer.writeDefinitionsFile(definitions);
+	const usagesPath = writer.writeUsagesFile(usages);
 
 	if (options.verbose) {
 		console.log(`Generated definitions.json at: ${definitionsPath}`);

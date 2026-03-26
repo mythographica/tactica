@@ -563,6 +563,7 @@ npx tactica [options]
   -o, --output                Output directory (default: .tactica)
   -i, --include               File patterns to include
   -e, --exclude               File patterns to exclude
+  -t, --topologica            Topologica directories to scan (comma-separated)
   -m, --module-augmentation   Generate global augmentation (index.d.ts) instead of exportable types
   -v, --verbose               Enable verbose logging
   -h, --help                  Show help
@@ -599,6 +600,9 @@ npx tactica --exclude "**/*.test.ts" --exclude "**/*.spec.ts"
 
 # Custom project path
 npx tactica --project ./tsconfig.json
+
+# Scan custom topologica directories
+npx tactica --topologica ./src/ai-types,./custom/topologica
 ```
 
 ## Known Limitations
