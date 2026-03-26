@@ -264,14 +264,16 @@ export class MnemonicaAnalyzer {
 		}
 
 		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
-		this.trackVariableAssignment(call, fullPath);
+		// For chained calls like const X = define('A').define('B'), we want to map X -> A (the root)
+		this.trackVariableAssignment(call, parentNode, fullPath);
 	}
 
 	/**
-	 * Track variable assignments that capture define() results
-	 * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
-	 */
-	private trackVariableAssignment(call: ts.CallExpression, fullPath: string): void {
+		* Track variable assignments that capture define() results
+		* e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
+		* For chained calls like const X = define('A').define('B'), we map X -> A (the root type)
+		*/
+	private trackVariableAssignment(call: ts.CallExpression, parentNode: TypeNode | undefined, fullPath: string): void {
 		// Check if this call is the right-hand side of a variable declaration
 		// Walk up the tree to find VariableDeclaration
 		let current: ts.Node | undefined = call.parent;
@@ -280,6 +282,11 @@ export class MnemonicaAnalyzer {
 				// Found: const X = define(...)
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
+					// If this is a chained call (has parent), don't overwrite existing mapping
+					// The first define in the chain sets the mapping to the root type
+					if (parentNode && this.variableToTypeMap.has(varName)) {
+						return;
+					}
 					this.variableToTypeMap.set(varName, fullPath);
 				}
 				return;

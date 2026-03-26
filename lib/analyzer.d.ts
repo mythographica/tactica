@@ -57,9 +57,10 @@ export declare class MnemonicaAnalyzer {
      */
     private processDefineCall;
     /**
-     * Track variable assignments that capture define() results
-     * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
-     */
+        * Track variable assignments that capture define() results
+        * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
+        * For chained calls like const X = define('A').define('B'), we map X -> A (the root type)
+        */
     private trackVariableAssignment;
     /**
      * Process a @decorate() decorator
