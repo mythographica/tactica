@@ -34,13 +34,5 @@ export type {
 // CLI entry point
 export { main, run, watch, parseArgs } from './cli';
 
-// Plugin entry point (for TypeScript Language Service)
-import pluginInit from './plugin';
-export { default } from './plugin';
-
 // Version from package.json
 export const VERSION = pkg.version;
-
-// For TypeScript Language Service plugin compatibility
-// This ensures the factory function is available as the direct module export
-module.exports = pluginInit;
