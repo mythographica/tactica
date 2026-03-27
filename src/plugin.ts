@@ -65,18 +65,23 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
 
 		// Override getDefinitionAtPosition to provide Go to Definition for lookupTyped
 		proxy.getDefinitionAtPosition = (fileName: string, position: number): readonly ts.DefinitionInfo[] | undefined => {
-			// Debug logging
-			info.project.projectService.logger.info(`[Tactica] getDefinitionAtPosition called: ${fileName}:${position}`);
+			// Debug logging - this should appear in TypeScript logs when Ctrl+Click happens
+			info.project.projectService.logger.info(`[TACTICA PLUGIN ACTIVE] getDefinitionAtPosition called: ${fileName}:${position}`);
+			console.log(`[TACTICA PLUGIN] getDefinitionAtPosition called: ${fileName}:${position}`);
 
+			// TEMPORARY: Just log and return undefined to test if plugin is working
+			// Remove this once we confirm the plugin is being called
+			info.project.projectService.logger.info('[TACTICA PLUGIN] Test mode - returning undefined to verify plugin is active');
+			return undefined;
+
+			// TODO: Re-enable this once plugin is confirmed working
 			// First check if this is a lookupTyped string literal
-			const lookupDefinition = getLookupTypedDefinition(fileName, position, info, tsModule);
-			if (lookupDefinition) {
-				info.project.projectService.logger.info(`[Tactica] Returning lookup definition: ${lookupDefinition.length} results`);
-				return lookupDefinition;
-			}
-
-			// Fall back to default behavior
-			return oldService.getDefinitionAtPosition(fileName, position);
+			// const lookupDefinition = getLookupTypedDefinition(fileName, position, info, tsModule);
+			// if (lookupDefinition) {
+			// 	info.project.projectService.logger.info(`[Tactica] Returning lookup definition: ${lookupDefinition.length} results`);
+			// 	return lookupDefinition;
+			// }
+			// return oldService.getDefinitionAtPosition(fileName, position);
 		};
 
 		return proxy;
@@ -97,7 +102,9 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
 /**
  * Check if the position is inside a lookupTyped('TypeName') call's string literal
  * and return definition info for that type
+ * TEMPORARILY COMMENTED OUT FOR PLUGIN TESTING
  */
+/*
 function getLookupTypedDefinition(
 	fileName: string,
 	position: number,
@@ -141,75 +148,78 @@ function getLookupTypedDefinition(
 
 	if (!tsModule.isCallExpression(parent)) {
 		return undefined;
+		}
+	
+		const funcName = getFunctionName(parent.expression, tsModule);
+		info.project.projectService.logger.info(`[Tactica] Function name: ${funcName}`);
+		if (funcName !== 'lookupTyped') {
+			info.project.projectService.logger.info(`[Tactica] Not lookupTyped, returning`);
+			return undefined;
+		}
+	
+		// Check that this is the first argument
+		if (parent.arguments[0] !== token) {
+			info.project.projectService.logger.info(`[Tactica] Not first argument`);
+			return undefined;
+		}
+	
+		// Look up the type in definitions
+		info.project.projectService.logger.info(`[Tactica] Looking up type: ${typePath}, definitionsMap size: ${definitionsMap.size}`);
+		const definition = definitionsMap.get(typePath);
+		if (!definition) {
+			info.project.projectService.logger.info(`[Tactica] Definition not found for ${typePath}`);
+			return undefined;
+		}
+	
+		info.project.projectService.logger.info(`[Tactica] Found definition: ${definition.location}`);
+	
+		// Parse location (format: file.ts:line:column)
+		const locationMatch = definition.location.match(/^(.+):(\d+):(\d+)$/);
+		if (!locationMatch) {
+			return undefined;
+		}
+	
+		const [, defFilePath, lineStr, colStr] = locationMatch;
+		const line = parseInt(lineStr, 10) - 1; // 0-based
+		const col = parseInt(colStr, 10) - 1;   // 0-based
+	
+		// Get the source file for the definition
+		const defSourceFile = program.getSourceFile(defFilePath);
+		if (!defSourceFile) {
+			return undefined;
+		}
+	
+		// Calculate the position
+		const defPosition = defSourceFile.getPositionOfLineAndCharacter(line, col);
+	
+		// Find the identifier or node at that position to use as text span
+		const defToken = findTokenAtPosition(defSourceFile, defPosition, tsModule);
+		if (!defToken) {
+			return undefined;
+		}
+	
+		// Create definition info
+		const textSpan: ts.TextSpan = {
+			start: defToken.getStart(defSourceFile),
+			length: defToken.getWidth(defSourceFile),
+		};
+	
+		return [{
+			fileName: defFilePath,
+			textSpan,
+			kind: tsModule.ScriptElementKind.classElement,
+			name: definition.name,
+			containerName: definition.parent || '',
+			containerKind: tsModule.ScriptElementKind.moduleElement,
+		}];
 	}
-
-	const funcName = getFunctionName(parent.expression, tsModule);
-	info.project.projectService.logger.info(`[Tactica] Function name: ${funcName}`);
-	if (funcName !== 'lookupTyped') {
-		info.project.projectService.logger.info(`[Tactica] Not lookupTyped, returning`);
-		return undefined;
-	}
-
-	// Check that this is the first argument
-	if (parent.arguments[0] !== token) {
-		info.project.projectService.logger.info(`[Tactica] Not first argument`);
-		return undefined;
-	}
-
-	// Look up the type in definitions
-	info.project.projectService.logger.info(`[Tactica] Looking up type: ${typePath}, definitionsMap size: ${definitionsMap.size}`);
-	const definition = definitionsMap.get(typePath);
-	if (!definition) {
-		info.project.projectService.logger.info(`[Tactica] Definition not found for ${typePath}`);
-		return undefined;
-	}
-
-	info.project.projectService.logger.info(`[Tactica] Found definition: ${definition.location}`);
-
-	// Parse location (format: file.ts:line:column)
-	const locationMatch = definition.location.match(/^(.+):(\d+):(\d+)$/);
-	if (!locationMatch) {
-		return undefined;
-	}
-
-	const [, defFilePath, lineStr, colStr] = locationMatch;
-	const line = parseInt(lineStr, 10) - 1; // 0-based
-	const col = parseInt(colStr, 10) - 1;   // 0-based
-
-	// Get the source file for the definition
-	const defSourceFile = program.getSourceFile(defFilePath);
-	if (!defSourceFile) {
-		return undefined;
-	}
-
-	// Calculate the position
-	const defPosition = defSourceFile.getPositionOfLineAndCharacter(line, col);
-
-	// Find the identifier or node at that position to use as text span
-	const defToken = findTokenAtPosition(defSourceFile, defPosition, tsModule);
-	if (!defToken) {
-		return undefined;
-	}
-
-	// Create definition info
-	const textSpan: ts.TextSpan = {
-		start: defToken.getStart(defSourceFile),
-		length: defToken.getWidth(defSourceFile),
-	};
-
-	return [{
-		fileName: defFilePath,
-		textSpan,
-		kind: tsModule.ScriptElementKind.classElement,
-		name: definition.name,
-		containerName: definition.parent || '',
-		containerKind: tsModule.ScriptElementKind.moduleElement,
-	}];
-}
+	*/
 
 /**
  * Find token at position using TypeScript's internal API
+ * TEMPORARILY COMMENTED OUT FOR PLUGIN TESTING
  */
+/*
 function findTokenAtPosition(sourceFile: ts.SourceFile, position: number, tsModule: typeof ts): ts.Node | undefined {
 	// Use the language service to get the node at position
 	function find(node: ts.Node): ts.Node | undefined {
@@ -229,10 +239,13 @@ function findTokenAtPosition(sourceFile: ts.SourceFile, position: number, tsModu
 	}
 	return find(sourceFile);
 }
+*/
 
 /**
  * Get function name from expression (identifier or property access)
+ * TEMPORARILY COMMENTED OUT FOR PLUGIN TESTING
  */
+/*
 function getFunctionName(expr: ts.Expression, tsModule: typeof ts): string | undefined {
 	if (tsModule.isIdentifier(expr)) {
 		return expr.text;
@@ -242,6 +255,7 @@ function getFunctionName(expr: ts.Expression, tsModule: typeof ts): string | und
 	}
 	return undefined;
 }
+*/
 
 /**
  * Set up file watching for incremental updates
