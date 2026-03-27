@@ -33,7 +33,7 @@ export declare class TopologicaAnalyzer {
     private collectTypeAliases;
     /**
      * Extract property assignments from a source file
-     * Returns constructor parameters if found
+     * Returns constructor parameters and handler location if found
      */
     private extractPropertiesFromSourceFile;
     /**

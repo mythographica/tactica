@@ -117,8 +117,8 @@ export class TopologicaAnalyzer {
 			return { properties };
 		}
 		
-		// Default location points to the index file
-		const handlerLocation = { filePath: targetFile, line: 1, column: 1 };
+		// Default location points to the index file (will be updated if handler found)
+		let handlerLocation: { filePath: string; line: number; column: number } | undefined;
 		
 		try {
 			const content = fs.readFileSync(targetFile, 'utf-8');
@@ -133,7 +133,13 @@ export class TopologicaAnalyzer {
 			const typeAliases = this.collectTypeAliases(sourceFile);
 			
 			// Find handler function and extract property assignments and constructor params
-			constructorParams = this.extractPropertiesFromSourceFile(sourceFile, properties, typeAliases);
+			const result = this.extractPropertiesFromSourceFile(sourceFile, properties, typeAliases);
+			constructorParams = result.constructorParams;
+			
+			// Use the handler function location if found
+			if (result.handlerLocation) {
+				handlerLocation = result.handlerLocation;
+			}
 			
 		} catch (error) {
 			this.errors.push(`Error parsing ${targetFile}: ${(error as Error).message}`);
@@ -165,24 +171,61 @@ export class TopologicaAnalyzer {
 
 	/**
 	 * Extract property assignments from a source file
-	 * Returns constructor parameters if found
+	 * Returns constructor parameters and handler location if found
 	 */
 	private extractPropertiesFromSourceFile(
 		sourceFile: ts.SourceFile,
 		properties: Map<string, PropertyInfo>,
 		typeAliases?: Map<string, ts.TypeNode>
-	): ConstructorParamInfo[] | undefined {
+	): {
+		constructorParams?: ConstructorParamInfo[];
+		handlerLocation?: { filePath: string; line: number; column: number };
+	} {
 		let constructorParams: ConstructorParamInfo[] | undefined;
+		let handlerLocation: { filePath: string; line: number; column: number } | undefined;
 		
 		const visit = (node: ts.Node): void => {
-			// Look for function declarations, function expressions, or arrow functions
-			if (ts.isFunctionDeclaration(node) ||
-			    ts.isFunctionExpression(node) ||
-			    ts.isArrowFunction(node)) {
+			// Look for exported function declarations (topologica convention: one exported function per file)
+			if (ts.isFunctionDeclaration(node) && node.name) {
+				// Check if it's exported
+				const isExported = node.modifiers?.some(
+					m => m.kind === ts.SyntaxKind.ExportKeyword
+				);
+				
+				if (isExported) {
+					this.extractThisProperties(node, properties);
+					// Extract constructor params and location from the exported function
+					if (!constructorParams) {
+						constructorParams = this.extractConstructorParams(node, typeAliases);
+						// Capture the function location
+						const { line, character } = ts.getLineAndCharacterOfPosition(
+							sourceFile,
+							node.getStart(sourceFile)
+						);
+						handlerLocation = {
+							filePath: sourceFile.fileName,
+							line: line + 1, // 1-based
+							column: character + 1 // 1-based
+						};
+					}
+				}
+			}
+			// Also check function expressions/arrow functions assigned to exports
+			else if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
 				this.extractThisProperties(node, properties);
-				// Extract constructor params from the first function found
+				// Extract constructor params from non-exported functions too
 				if (!constructorParams) {
 					constructorParams = this.extractConstructorParams(node, typeAliases);
+					// Capture the function location
+					const { line, character } = ts.getLineAndCharacterOfPosition(
+						sourceFile,
+						node.getStart(sourceFile)
+					);
+					handlerLocation = {
+						filePath: sourceFile.fileName,
+						line: line + 1, // 1-based
+						column: character + 1 // 1-based
+					};
 				}
 			}
 			
@@ -190,7 +233,7 @@ export class TopologicaAnalyzer {
 		};
 		
 		visit(sourceFile);
-		return constructorParams;
+		return { constructorParams, handlerLocation };
 	}
 
 	/**

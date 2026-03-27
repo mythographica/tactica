@@ -418,7 +418,7 @@ export * from './registry';
 		
 		const definition: import('./types').DefinitionInfo = {
 			name: typeNode.name,
-			location: `${typeNode.sourceFile}/index.ts:1:1`,
+			location: `${typeNode.sourceFile}:${typeNode.line}:${typeNode.column}`,
 			kind: 'define',
 			parent: typeNode.parent ? typeNode.parent.fullPath : null,
 			strictChain: true,

@@ -92,7 +92,7 @@ export class MnemonicaAnalyzer {
 		// Also add to definitions so it's recognized as a known type
 		const definition: DefinitionInfo = {
 			name: node.name,
-			location: `${node.sourceFile}:1:1`,
+			location: `${node.sourceFile}:${node.line}:${node.column}`,
 			kind: 'define',
 			parent: node.parent ? node.parent.fullPath : null,
 			strictChain: true,
