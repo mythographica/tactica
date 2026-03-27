@@ -323,11 +323,31 @@ export class MnemonicaAnalyzer {
 				return;
 			}
 			current = current.parent;
+			}
 		}
-	}
-
-	/**
-	 * Process a @decorate() decorator
+	
+		/**
+			* Track variable assignments from lookupTyped() calls
+			* e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
+			*/
+		private trackLookupTypedAssignment(call: ts.CallExpression, typePath: string): void {
+			// Walk up the tree to find VariableDeclaration
+			let current: ts.Node | undefined = call.parent;
+			while (current) {
+				if (ts.isVariableDeclaration(current)) {
+					// Found: const X = lookupTyped(...)
+					if (ts.isIdentifier(current.name)) {
+						const varName = current.name.text;
+						this.variableToTypeMap.set(varName, typePath);
+					}
+					return;
+				}
+				current = current.parent;
+			}
+		}
+	
+		/**
+			* Process a @decorate() decorator
 	 */
 	private processDecorateDecorator(decorator: ts.Decorator, sourceFile: ts.SourceFile, classDeclParam?: ts.ClassDeclaration): void {
 		const { line, character } = ts.getLineAndCharacterOfPosition(
@@ -1077,6 +1097,12 @@ export class MnemonicaAnalyzer {
 				}
 
 				if (!typeRef.typeArguments || typeRef.typeArguments.length === 0) {
+					// Check if this type exists in our graph - convert to full path format
+					const typeNode = this.graph.findTypeByName(typeName);
+					if (typeNode) {
+						// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
+						return typeNode.fullPath.replace(/\./g, "_");
+					}
 					return typeName;
 				}
 
@@ -1452,6 +1478,8 @@ export class MnemonicaAnalyzer {
 							kind: 'lookup',
 							code: node.getText(sourceFile).slice(0, 100),
 						});
+						// Track variable assignment from lookupTyped for instantiation tracking
+						this.trackLookupTypedAssignment(node, typePath);
 					}
 				}
 			}
@@ -1501,7 +1529,13 @@ export class MnemonicaAnalyzer {
 			*/
 		private getTypeNameFromExpression(expr: ts.Expression): string | undefined {
 			if (ts.isIdentifier(expr)) {
-				return expr.text;
+				const name = expr.text;
+				// Check if this identifier is a variable mapped to a type (e.g., from lookupTyped)
+				const mappedType = this.variableToTypeMap.get(name);
+				if (mappedType) {
+					return mappedType;
+				}
+				return name;
 			}
 			if (ts.isPropertyAccessExpression(expr)) {
 				const chain = this.getPropertyChain(expr);

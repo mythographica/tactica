@@ -214,7 +214,7 @@ export class TypesGenerator {
 		for (const [propName, propInfo] of node.properties.entries()) {
 			const optional = propInfo.optional ? '?' : '';
 			const readonly = propInfo.readonly ? 'readonly ' : '';
-			lines.push(`\t${readonly}${propName}${optional}: ${propInfo.type};`);
+			lines.push(`\t${readonly}${propName}${optional}: ${this.resolveTypeInString(propInfo.type, node)};`);
 		}
 
 		// Add nested constructor properties for non-leaf nodes
@@ -368,5 +368,56 @@ export class TypesGenerator {
 	private getInstanceTypeName(node: TypeNode): string {
 		const fullPath = this.getFullPath(node);
 		return fullPath.replace(/\./g, '_');
+	}
+
+	/**
+	 * Resolve a simple type name to its full path name
+	 * e.g., "DefinitionEntry" -> "Definitions_DefinitionEntry"
+	 */
+	private resolveTypeName(simpleName: string, currentNode: TypeNode): string {
+		// First check if it's the current node or its children
+		if (currentNode.name === simpleName) {
+			return this.getInstanceTypeName(currentNode);
+		}
+		for (const child of currentNode.children.values()) {
+			if (child.name === simpleName) {
+				return this.getInstanceTypeName(child);
+			}
+		}
+		// Search all types in the graph
+		for (const type of this.graph.getAllTypes()) {
+			if (type.name === simpleName) {
+				return this.getInstanceTypeName(type);
+			}
+		}
+		return simpleName;
+	}
+
+	/**
+	 * Resolve simple type names to full path names within a type string
+	 * Handles complex types like Array<UsageEntry>, Map<string, TypeEntry>, etc.
+	 */
+	private resolveTypeInString(typeStr: string, currentNode: TypeNode): string {
+		// Get all type names from the graph
+		const allTypes = this.graph.getAllTypes();
+		const typeNames = new Set<string>();
+		for (const type of allTypes) {
+			typeNames.add(type.name);
+		}
+
+		// Sort by length (longest first) to avoid partial replacements
+		const sortedNames = Array.from(typeNames).sort((a, b) => b.length - a.length);
+
+		// Replace each simple type name with its full path version
+		let result = typeStr;
+		for (const name of sortedNames) {
+			// Use word boundary matching to avoid replacing partial names
+			const regex = new RegExp(`\\b${name}\\b`, 'g');
+			const fullTypeName = this.resolveTypeName(name, currentNode);
+			if (fullTypeName !== name) {
+				result = result.replace(regex, fullTypeName);
+			}
+		}
+		return result;
 	}
 }

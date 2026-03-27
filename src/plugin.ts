@@ -3,7 +3,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { TacticaConfig, TypeNode } from './types';
+import { TacticaConfig, TypeNode, DefinitionInfo } from './types';
 import { MnemonicaAnalyzer } from './analyzer';
 import { TopologicaAnalyzer } from './topologica-analyzer';
 import { TypeGraphImpl } from './graph';
@@ -26,6 +26,7 @@ interface PluginInfo {
 
 let pluginInfo: PluginInfo | undefined;
 let typeGraph = new TypeGraphImpl();
+let definitionsMap = new Map<string, DefinitionInfo>();
 
 /**
  * Initialize the plugin
@@ -62,6 +63,22 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
 			};
 		}
 
+		// Override getDefinitionAtPosition to provide Go to Definition for lookupTyped
+		proxy.getDefinitionAtPosition = (fileName: string, position: number): readonly ts.DefinitionInfo[] | undefined => {
+			// Debug logging
+			info.project.projectService.logger.info(`[Tactica] getDefinitionAtPosition called: ${fileName}:${position}`);
+
+			// First check if this is a lookupTyped string literal
+			const lookupDefinition = getLookupTypedDefinition(fileName, position, info, tsModule);
+			if (lookupDefinition) {
+				info.project.projectService.logger.info(`[Tactica] Returning lookup definition: ${lookupDefinition.length} results`);
+				return lookupDefinition;
+			}
+
+			// Fall back to default behavior
+			return oldService.getDefinitionAtPosition(fileName, position);
+		};
+
 		return proxy;
 	}
 
@@ -75,6 +92,155 @@ function init(modules: { typescript: typeof ts }): ts.server.PluginModule {
 		create,
 		onConfigurationChanged,
 	};
+}
+
+/**
+ * Check if the position is inside a lookupTyped('TypeName') call's string literal
+ * and return definition info for that type
+ */
+function getLookupTypedDefinition(
+	fileName: string,
+	position: number,
+	info: ts.server.PluginCreateInfo,
+	tsModule: typeof ts
+): readonly ts.DefinitionInfo[] | undefined {
+	info.project.projectService.logger.info(`[Tactica] getLookupTypedDefinition called`);
+
+	const program = info.languageService.getProgram();
+	if (!program) {
+		info.project.projectService.logger.info(`[Tactica] No program found`);
+		return undefined;
+	}
+
+	const sourceFile = program.getSourceFile(fileName);
+	if (!sourceFile) {
+		info.project.projectService.logger.info(`[Tactica] No source file found for ${fileName}`);
+		return undefined;
+	}
+
+	// Find the token at the current position
+	const token = findTokenAtPosition(sourceFile, position, tsModule);
+	if (!token) {
+		info.project.projectService.logger.info(`[Tactica] No token found at position ${position}`);
+		return undefined;
+	}
+
+	info.project.projectService.logger.info(`[Tactica] Token kind: ${tsModule.SyntaxKind[token.kind]}`);
+
+	// Check if the token is a string literal
+	if (!tsModule.isStringLiteral(token) && !tsModule.isNoSubstitutionTemplateLiteral(token)) {
+		info.project.projectService.logger.info(`[Tactica] Token is not a string literal`);
+		return undefined;
+	}
+
+	info.project.projectService.logger.info(`[Tactica] Token text: ${token.text}`);
+
+	// Check if this string is the first argument to lookupTyped()
+	const typePath = token.text;
+	const parent = token.parent;
+
+	if (!tsModule.isCallExpression(parent)) {
+		return undefined;
+	}
+
+	const funcName = getFunctionName(parent.expression, tsModule);
+	info.project.projectService.logger.info(`[Tactica] Function name: ${funcName}`);
+	if (funcName !== 'lookupTyped') {
+		info.project.projectService.logger.info(`[Tactica] Not lookupTyped, returning`);
+		return undefined;
+	}
+
+	// Check that this is the first argument
+	if (parent.arguments[0] !== token) {
+		info.project.projectService.logger.info(`[Tactica] Not first argument`);
+		return undefined;
+	}
+
+	// Look up the type in definitions
+	info.project.projectService.logger.info(`[Tactica] Looking up type: ${typePath}, definitionsMap size: ${definitionsMap.size}`);
+	const definition = definitionsMap.get(typePath);
+	if (!definition) {
+		info.project.projectService.logger.info(`[Tactica] Definition not found for ${typePath}`);
+		return undefined;
+	}
+
+	info.project.projectService.logger.info(`[Tactica] Found definition: ${definition.location}`);
+
+	// Parse location (format: file.ts:line:column)
+	const locationMatch = definition.location.match(/^(.+):(\d+):(\d+)$/);
+	if (!locationMatch) {
+		return undefined;
+	}
+
+	const [, defFilePath, lineStr, colStr] = locationMatch;
+	const line = parseInt(lineStr, 10) - 1; // 0-based
+	const col = parseInt(colStr, 10) - 1;   // 0-based
+
+	// Get the source file for the definition
+	const defSourceFile = program.getSourceFile(defFilePath);
+	if (!defSourceFile) {
+		return undefined;
+	}
+
+	// Calculate the position
+	const defPosition = defSourceFile.getPositionOfLineAndCharacter(line, col);
+
+	// Find the identifier or node at that position to use as text span
+	const defToken = findTokenAtPosition(defSourceFile, defPosition, tsModule);
+	if (!defToken) {
+		return undefined;
+	}
+
+	// Create definition info
+	const textSpan: ts.TextSpan = {
+		start: defToken.getStart(defSourceFile),
+		length: defToken.getWidth(defSourceFile),
+	};
+
+	return [{
+		fileName: defFilePath,
+		textSpan,
+		kind: tsModule.ScriptElementKind.classElement,
+		name: definition.name,
+		containerName: definition.parent || '',
+		containerKind: tsModule.ScriptElementKind.moduleElement,
+	}];
+}
+
+/**
+ * Find token at position using TypeScript's internal API
+ */
+function findTokenAtPosition(sourceFile: ts.SourceFile, position: number, tsModule: typeof ts): ts.Node | undefined {
+	// Use the language service to get the node at position
+	function find(node: ts.Node): ts.Node | undefined {
+		if (position >= node.getStart(sourceFile) && position < node.getEnd()) {
+			let result: ts.Node | undefined;
+			tsModule.forEachChild(node, child => {
+				if (!result) {
+					const found = find(child);
+					if (found) {
+						result = found;
+					}
+				}
+			});
+			return result || node;
+		}
+		return undefined;
+	}
+	return find(sourceFile);
+}
+
+/**
+ * Get function name from expression (identifier or property access)
+ */
+function getFunctionName(expr: ts.Expression, tsModule: typeof ts): string | undefined {
+	if (tsModule.isIdentifier(expr)) {
+		return expr.text;
+	}
+	if (tsModule.isPropertyAccessExpression(expr)) {
+		return expr.name.text;
+	}
+	return undefined;
 }
 
 /**
@@ -190,7 +356,7 @@ function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): 
 		// Get the graph from mnemonica analysis
 		typeGraph = analyzer.getGraph();
 
-		// Scan for topologica directory structures
+		// Scan for topologica directories
 		const projectDir = info.project.getCurrentDirectory();
 		const topologicaDirs = scanTopologicaDirectories(projectDir);
 
@@ -207,6 +373,34 @@ function generateTypes(info: ts.server.PluginCreateInfo, _tsModule: typeof ts): 
 				}
 			}
 		}
+
+		// Update definitions map for Go to Definition
+		definitionsMap = analyzer.getDefinitions();
+
+		// Also add topologica types to definitions
+		for (const [fullPath, typeNode] of typeGraph.allTypes) {
+			if (!definitionsMap.has(fullPath)) {
+				// For topologica types, ensure we point to the actual file (index.ts), not directory
+				let location = `${typeNode.sourceFile}:${typeNode.line}:${typeNode.column}`;
+				if (fs.existsSync(typeNode.sourceFile) && fs.statSync(typeNode.sourceFile).isDirectory()) {
+					// If sourceFile is a directory, look for index.ts
+					const indexPath = path.join(typeNode.sourceFile, 'index.ts');
+					if (fs.existsSync(indexPath)) {
+						location = `${indexPath}:1:1`;
+					}
+				}
+				const definition: DefinitionInfo = {
+					name: typeNode.name,
+					location,
+					kind: 'define',
+					parent: typeNode.parent ? typeNode.parent.fullPath : null,
+					strictChain: true,
+					blockErrors: false,
+				};
+				definitionsMap.set(fullPath, definition);
+			}
+		}
+
 		const generator = new TypesGenerator(typeGraph);
 		const generated = generator.generateTypesFile();
 

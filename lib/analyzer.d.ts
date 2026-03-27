@@ -68,8 +68,13 @@ export declare class MnemonicaAnalyzer {
         */
     private trackVariableAssignment;
     /**
-     * Process a @decorate() decorator
-     */
+        * Track variable assignments from lookupTyped() calls
+        * e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
+        */
+    private trackLookupTypedAssignment;
+    /**
+        * Process a @decorate() decorator
+ */
     private processDecorateDecorator;
     /**
      * Extract type name from define() call arguments

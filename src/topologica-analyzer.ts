@@ -56,9 +56,9 @@ export class TopologicaAnalyzer {
 					const dirPath = path.join(currentPath, entry.name);
 					
 					// Extract properties and constructor params from the handler file if it exists
-					const { properties, constructorParams } = this.extractPropertiesFromDir(dirPath);
+					const { properties, constructorParams, handlerLocation } = this.extractPropertiesFromDir(dirPath);
 					
-					// Create the type node
+					// Create the type node with proper source location for Go to Definition
 					const typeNode: TypeNode = {
 						name: typeName,
 						fullPath: fullPath,
@@ -66,9 +66,9 @@ export class TopologicaAnalyzer {
 						constructorParams: constructorParams,
 						parent: parentNode,
 						children: new Map(),
-						sourceFile: dirPath,
-						line: 0,
-						column: 0,
+						sourceFile: handlerLocation?.filePath || dirPath,
+						line: handlerLocation?.line || 0,
+						column: handlerLocation?.column || 0,
 						constructorName: typeName
 					};
 					
@@ -95,7 +95,8 @@ export class TopologicaAnalyzer {
 	 */
 	private extractPropertiesFromDir(dirPath: string): {
 		properties: Map<string, PropertyInfo>;
-		constructorParams?: ConstructorParamInfo[]
+		constructorParams?: ConstructorParamInfo[];
+		handlerLocation?: { filePath: string; line: number; column: number };
 	} {
 		const properties = new Map<string, PropertyInfo>();
 		let constructorParams: ConstructorParamInfo[] | undefined;
@@ -116,6 +117,9 @@ export class TopologicaAnalyzer {
 			return { properties };
 		}
 		
+		// Default location points to the index file
+		const handlerLocation = { filePath: targetFile, line: 1, column: 1 };
+		
 		try {
 			const content = fs.readFileSync(targetFile, 'utf-8');
 			const sourceFile = ts.createSourceFile(
@@ -135,7 +139,7 @@ export class TopologicaAnalyzer {
 			this.errors.push(`Error parsing ${targetFile}: ${(error as Error).message}`);
 		}
 		
-		return { properties, constructorParams };
+		return { properties, constructorParams, handlerLocation };
 	}
 
 	/**

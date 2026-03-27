@@ -58,4 +58,14 @@ export declare class TypesGenerator {
      * Uses full path with underscores: Usages.UsageEntry -> Usages_UsageEntry
      */
     private getInstanceTypeName;
+    /**
+     * Resolve a simple type name to its full path name
+     * e.g., "DefinitionEntry" -> "Definitions_DefinitionEntry"
+     */
+    private resolveTypeName;
+    /**
+     * Resolve simple type names to full path names within a type string
+     * Handles complex types like Array<UsageEntry>, Map<string, TypeEntry>, etc.
+     */
+    private resolveTypeInString;
 }

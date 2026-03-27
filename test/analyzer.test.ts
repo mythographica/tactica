@@ -904,10 +904,11 @@ describe('MnemonicaAnalyzer', () => {
 	
 				const usages = analyzer.getUsages();
 				const userTypeUsages = usages.get('UserType');
-				// lookupTyped('UserType') is detected, but new UserType2()
-				// can't be traced back without variable flow analysis
-				expect(userTypeUsages).to.have.length(1);
+				// Both lookupTyped('UserType') and new UserType2() are now tracked
+				// via variable flow analysis
+				expect(userTypeUsages).to.have.length(2);
 				expect(userTypeUsages![0].kind).to.equal('lookup');
+				expect(userTypeUsages![1].kind).to.equal('instantiation');
 			});
 	
 			it('should track nested constructor access via instance', () => {
