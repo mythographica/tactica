@@ -28,6 +28,13 @@ export interface ConstructorParamInfo {
     type: string;
     optional: boolean;
 }
+/**
+ * Where a TypeNode's property/parameter shape was sourced from.
+ * Higher-priority sources win when multiple are available.
+ *
+ * Priority: 'generic' > 'thisAnnotation' > 'inference'.
+ */
+export type ShapeSource = 'generic' | 'thisAnnotation' | 'inference';
 export interface TypeNode {
     /** Type name (e.g., "SecondType") */
     name: string;
@@ -37,6 +44,19 @@ export interface TypeNode {
     properties: Map<string, PropertyInfo>;
     /** Constructor parameters (for TypeRegistry constructor signature) */
     constructorParams?: ConstructorParamInfo[];
+    /**
+     * Properties declared by the user via define<TInstance, …>(…) generic
+     * argument or `this:` parameter annotation. Resolved through the
+     * TypeChecker when ts.Program is available. Authoritative when set.
+     */
+    declaredProperties?: Map<string, PropertyInfo>;
+    /**
+     * Constructor parameters declared by the user via define<…, TArgs>(…)
+     * generic argument. Authoritative when set.
+     */
+    declaredConstructorParams?: ConstructorParamInfo[];
+    /** Where the canonical shape came from (highest-priority source). */
+    propertiesSource?: ShapeSource;
     /** Parent type node */
     parent?: TypeNode;
     /** Child types */
@@ -125,4 +145,27 @@ export interface UsagesJson {
     version: string;
     generatedAt: string;
     usages: Record<string, UsageInfo[]>;
+}
+/**
+ * Drift detector report — emitted when a TypeNode's declared shape
+ * disagrees with what the constructor body actually does.
+ */
+export type DriftKind = 'typeMismatch' | 'declaredOnly' | 'inferredOnly';
+export interface DriftReport {
+    /** Full path of the type that drifted (e.g., "Parent.Child") */
+    typeName: string;
+    /** Source file where the define() call lives */
+    fileName: string;
+    /** 1-based line number of the define() call */
+    line: number;
+    /** Property or parameter name that drifted */
+    key: string;
+    /** Type as declared (interface / generic / this: annotation) */
+    declaredType: string | undefined;
+    /** Type as inferred from constructor body */
+    inferredType: string | undefined;
+    /** What kind of drift this is */
+    kind: DriftKind;
+    /** Human-readable, single-line message */
+    message: string;
 }

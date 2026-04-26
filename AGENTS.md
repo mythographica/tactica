@@ -318,6 +318,38 @@ This ensures documentation stays in sync with actual analyzer capabilities.
 
 ## Supported Patterns
 
+### 0. Declared Generic Types (preferred for new code)
+
+```typescript
+// schemas.ts
+export interface UserShape { name: string; email: string; }
+export interface UserArgs  { name: string; email: string; }
+
+// types.ts
+import { define } from 'mnemonica';
+import type { UserShape, UserArgs } from './schemas';
+
+export const UserType = define<UserShape, UserArgs>(
+    'UserType',
+    function (this, data) { Object.assign(this, data); },
+);
+```
+
+When tactica is invoked with a `ts.Program` (the CLI path), it reads
+`call.typeArguments[0]` as the instance shape and `call.typeArguments[1]`
+as the constructor-args shape, resolving both through the TypeChecker.
+Cross-file aliases work because the checker has the full project graph.
+
+**Precedence (highest wins):** generic args → `this:` annotation →
+body inference. The first three trigger the **drift detector**, which
+emits warnings to `.tactica/drift.txt` and to stderr when the layers
+disagree (declared key never assigned, type mismatch, or undeclared key
+assigned). `--strict-drift` turns any drift into exit-code 1.
+
+This pattern is the canonical answer to the chicken-egg problem
+documented in `chicken-egg.md`: declared interfaces are the contract,
+runtime constructors implement them, tactica is the bridge.
+
 ### 1. define() Calls
 
 ```typescript

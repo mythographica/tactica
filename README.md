@@ -230,6 +230,69 @@ export type UserType_AdminType = ProtoFlat<UserType, {
 - Use **Default mode** for new projects - explicit imports are clearer and work better with tree-shaking
 - Use **Global mode** if you want types available without imports (legacy behavior)
 
+## Type-First Pattern (Recommended)
+
+Tactica reads explicit generic arguments on `define<TInstance, TArgs>(…)`
+ahead of inferring properties from the constructor body. This solves
+the chicken-and-egg loop where you'd otherwise need to write the
+runtime constructor before you can describe it with types.
+
+**Three-file layout:**
+
+```typescript
+// 1. src/schemas.ts — pure types, no runtime
+export interface UserShape { name: string; email: string; }
+export interface UserArgs  { name: string; email: string; }
+
+// 2. src/types.ts — runtime, types are imported
+import { define } from 'mnemonica';
+import type { UserShape, UserArgs } from './schemas';
+
+export const UserType = define<UserShape, UserArgs>(
+    'UserType',
+    function (this, data) {       // ← `this` and `data` typed by the generics
+        Object.assign(this, data); // body inference is no longer required
+    },
+);
+
+// 3. anywhere — full type safety on lookupTyped
+import { lookupTyped } from 'mnemonica';
+import './.tactica/registry';     // augments TypeRegistry
+
+const Found = lookupTyped('UserType');
+const u = new Found({ name: 'Alice', email: 'a@x' }); // typed!
+```
+
+When tactica sees `define<UserShape, UserArgs>(…)` and a `ts.Program` is
+available (the CLI path always provides one), it resolves `UserShape`
+and `UserArgs` through the TypeChecker — **including imports from other
+files** — and uses the resolved shapes as the canonical instance type
+and constructor signature in `.tactica/registry.ts`.
+
+**Precedence for shape resolution:**
+
+1. Explicit generic arguments — `define<TInstance, TArgs>(…)`
+2. `this:` parameter annotation — `function(this: UserShape, data)`
+3. Inference from constructor body — `this.name = …` assignments
+
+The first of these that resolves successfully wins. The other layers
+remain as fallbacks (and as cross-checks: see *Drift detection* below).
+
+### Drift detection
+
+When both a declared shape and an inferred shape are available, tactica
+compares them and emits a drift report for any mismatch — wrong type,
+declared key never assigned, undeclared key assigned. Reports are
+written to `.tactica/drift.txt` and printed as warnings on stderr.
+
+Run with `--strict-drift` to make any drift fail the CLI with exit code
+1 (useful in CI).
+
+```sh
+tactica                # warnings only
+tactica --strict-drift # fail CI on any drift
+```
+
 ## What Gets Analyzed
 
 ### 1. define() Calls

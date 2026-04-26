@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, DriftReport } from './types';
 import { TypeGraphImpl } from './graph';
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -11,7 +11,34 @@ export declare class MnemonicaAnalyzer {
     private usages;
     private typeAliases;
     private variableToTypeMap;
+    private program?;
+    private _typeChecker?;
     constructor(program?: ts.Program);
+    /**
+     * Lazily-resolved TypeChecker. Returns undefined when the analyzer was
+     * created without a ts.Program (e.g. in unit tests using
+     * analyzeSource(string)). All callers must be null-safe.
+     */
+    private getTypeChecker;
+    /**
+     * Resolve a TS TypeNode (e.g. a generic argument or `this:` annotation)
+     * into a property map using the TypeChecker. Returns undefined if no
+     * checker is available, the type is not an object, or it has no
+     * accessible properties.
+     *
+     * This is the bridge that lets declared interfaces in another file
+     * become tactica's source of truth.
+     */
+    private resolvePropertiesFromTypeNode;
+    /**
+     * Resolve a TypeNode that represents the constructor-args generic
+     * (TArgs in `define<TInstance, TArgs>`) into a ConstructorParamInfo
+     * array. We treat the args type as the shape of a single positional
+     * argument named `data`, mirroring the conventional
+     * `function(this, data) { … }` signature. When the args type is a
+     * tuple, each tuple element becomes a positional parameter.
+     */
+    private resolveConstructorParamsFromTypeNode;
     /**
      * Analyze a source file for Mnemonica type definitions
      */
@@ -32,6 +59,21 @@ export declare class MnemonicaAnalyzer {
      * Get collected usages
      */
     getUsages(): Map<string, UsageInfo[]>;
+    /**
+     * Compare each TypeNode's declared shape (from generic args or `this:`
+     * annotation) against its inferred shape (from constructor body) and
+     * return a list of drift reports.
+     *
+     * Heuristics:
+     *  - Suppress reports when there is no declared shape, since inference
+     *    is the only source of truth in that case.
+     *  - Suppress reports when the body uses `Object.assign(this, data)`
+     *    style — i.e. inferred set is empty — because the assignments
+     *    aren't visible textually. Only contradictory inferred entries
+     *    raise drift.
+     *  - Compare type strings as-is (the TypeChecker normalizes them).
+     */
+    detectDrift(): DriftReport[];
     /**
      * Add a topologica type to the analyzer for usage tracking.
      * This allows the analyzer to recognize topologica types when collecting usages.
@@ -177,6 +219,21 @@ export declare class MnemonicaAnalyzer {
          * Check if a name looks like a type (starts with uppercase)
          */
     private isLikelyTypeName;
+    /**
+     * Extract the user-declared instance / args shapes from explicit
+     * generic arguments on `define<TInstance, TArgs>(…)`.
+     *
+     * Returns whatever subset can be resolved — both, one, or neither.
+     * Requires a TypeChecker (CLI path); silently no-ops without one.
+     */
+    private extractDeclaredFromGenerics;
+    /**
+     * Extract user-declared instance shape from the constructor's
+     * `this:` annotation, resolved via the TypeChecker so imported
+     * type aliases work across files. Returns undefined when no checker
+     * is available or the annotation is missing.
+     */
+    private extractDeclaredFromThisAnnotation;
     /**
          * Extract constructor parameters from define() call
          * This is used for TypeRegistry constructor signatures

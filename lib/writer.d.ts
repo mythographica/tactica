@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, DriftReport } from './types';
 /**
  * Writes generated types to file system
  */
@@ -37,6 +37,12 @@ export declare class TypesWriter {
      * Write definitions.json file
      */
     writeDefinitionsFile(definitions: Map<string, DefinitionInfo>): string;
+    /**
+     * Write drift.txt — one human-readable line per drift report. Returns
+     * the absolute path written, or null when no reports were given (so
+     * we don't leave stale files around).
+     */
+    writeDriftReport(reports: DriftReport[]): string | null;
     /**
      * Write usages.json file
      */

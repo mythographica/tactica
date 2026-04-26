@@ -210,8 +210,15 @@ export class TypesGenerator {
 			lines.push(`export type ${typeName} = {`);
 		}
 
-		// Add instance properties extracted from the constructor
-		for (const [propName, propInfo] of node.properties.entries()) {
+		// Prefer declared properties (from define<TInstance, …> generic or
+		// `this:` annotation) when present. Falls back to inferred properties
+		// derived from constructor body assignments.
+		const propertiesForInstanceType =
+			node.declaredProperties && node.declaredProperties.size > 0
+				? node.declaredProperties
+				: node.properties;
+
+		for (const [propName, propInfo] of propertiesForInstanceType.entries()) {
 			const optional = propInfo.optional ? '?' : '';
 			const readonly = propInfo.readonly ? 'readonly ' : '';
 			lines.push(`\t${readonly}${propName}${optional}: ${this.resolveTypeInString(propInfo.type, node)};`);
@@ -333,8 +340,11 @@ export class TypesGenerator {
 		 * Uses constructorParams for TypeRegistry signature (not instance properties)
 		 */
 	private generateConstructorSignature(node: TypeNode): string {
-		// Use constructorParams if available, otherwise fall back to empty signature
-		const params = node.constructorParams;
+		// Prefer declared params (from define<…, TArgs>) over inferred ones.
+		const params =
+			node.declaredConstructorParams && node.declaredConstructorParams.length > 0
+				? node.declaredConstructorParams
+				: node.constructorParams;
 
 		if (!params || params.length === 0) {
 			return 'new ()';
