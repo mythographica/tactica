@@ -23,6 +23,8 @@ interface CLIOptions extends TacticaConfig {
 	help?: boolean;
 	/** Custom topologica directories to scan */
 	topologicaDirs?: string[];
+	/** Exit non-zero if drift detector emits any reports */
+	strictDrift?: boolean;
 }
 
 /**
@@ -67,6 +69,9 @@ function parseArgs(args: string[]): CLIOptions {
 			case '--topologica':
 				options.topologicaDirs = (options.topologicaDirs || []).concat(args[++i].split(','));
 				break;
+			case '--strict-drift':
+				options.strictDrift = true;
+				break;
 			case '-h':
 			case '--help':
 				options.help = true;
@@ -94,6 +99,7 @@ Options:
   -e, --exclude             Comma-separated list of file patterns to exclude
   -t, --topologica          Comma-separated list of topologica directories to scan
   -m, --module-augmentation Use module augmentation instead of global (legacy mode)
+      --strict-drift        Exit non-zero if drift detector emits any reports
   -v, --verbose             Enable verbose logging
   -h, --help                Show this help message
 
@@ -363,6 +369,16 @@ function run(options: CLIOptions): void {
 		}
 	}
 
+	// Drift detection: compare declared (generic args / this:) shape against
+	// inferred (constructor body) shape. Reports are warnings by default;
+	// --strict-drift turns them into a non-zero exit.
+	const driftReports = analyzer.detectDrift();
+	if (driftReports.length > 0) {
+		for (const report of driftReports) {
+			console.warn(`[drift] ${report.fileName}:${report.line} — ${report.message}`);
+		}
+	}
+
 	// Generate types from mnemonica analysis
 	// Note: topologica types are already added to the analyzer's graph via addTopologicaType()
 	const graph = analyzer.getGraph();
@@ -430,9 +446,19 @@ export * from './registry';
 	const definitionsPath = writer.writeDefinitionsFile(definitions);
 	const usagesPath = writer.writeUsagesFile(usages);
 
+	const driftPath = writer.writeDriftReport(driftReports);
+
 	if (options.verbose) {
 		console.log(`Generated definitions.json at: ${definitionsPath}`);
 		console.log(`Generated usages.json at: ${usagesPath}`);
+		if (driftPath) {
+			console.log(`Wrote drift report at: ${driftPath} (${driftReports.length} entries)`);
+		}
+	}
+
+	if (options.strictDrift && driftReports.length > 0) {
+		console.error(`Drift detected (${driftReports.length} report${driftReports.length === 1 ? '' : 's'}). Failing under --strict-drift.`);
+		process.exit(1);
 	}
 
 	if (options.verbose) {

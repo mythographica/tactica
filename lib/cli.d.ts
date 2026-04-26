@@ -11,6 +11,8 @@ interface CLIOptions extends TacticaConfig {
     help?: boolean;
     /** Custom topologica directories to scan */
     topologicaDirs?: string[];
+    /** Exit non-zero if drift detector emits any reports */
+    strictDrift?: boolean;
 }
 /**
  * Parse command line arguments

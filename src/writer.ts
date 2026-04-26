@@ -2,7 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, DriftReport } from './types';
 
 /**
  * Writes generated types to file system
@@ -99,6 +99,22 @@ export class TypesWriter {
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write drift.txt — one human-readable line per drift report. Returns
+	 * the absolute path written, or null when no reports were given (so
+	 * we don't leave stale files around).
+	 */
+	writeDriftReport (reports: DriftReport[]): string | null {
+		if (!reports || reports.length === 0) return null;
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'drift.txt');
+		const lines = reports.map(r =>
+			`${r.fileName}:${r.line} [${r.kind}] ${r.message}`
+		);
+		fs.writeFileSync(filePath, `${lines.join('\n')}\n`, 'utf-8');
 		return filePath;
 	}
 

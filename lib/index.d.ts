@@ -10,6 +10,6 @@ export { TopologicaAnalyzer } from './topologica-analyzer';
 export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
-export type { TacticaConfig, TypeNode, TypeGraph, PropertyInfo, AnalyzeResult, AnalyzeError, GeneratedTypes, DefinitionInfo, UsageInfo, DefinitionsJson, UsagesJson, } from './types';
+export type { TacticaConfig, TypeNode, TypeGraph, PropertyInfo, ConstructorParamInfo, ShapeSource, AnalyzeResult, AnalyzeError, GeneratedTypes, DefinitionInfo, UsageInfo, DefinitionsJson, UsagesJson, DriftReport, DriftKind, } from './types';
 export { main, run, watch, parseArgs } from './cli';
 export declare const VERSION: string;

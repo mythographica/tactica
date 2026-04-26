@@ -22,6 +22,8 @@ export type {
 	TypeNode,
 	TypeGraph,
 	PropertyInfo,
+	ConstructorParamInfo,
+	ShapeSource,
 	AnalyzeResult,
 	AnalyzeError,
 	GeneratedTypes,
@@ -29,6 +31,8 @@ export type {
 	UsageInfo,
 	DefinitionsJson,
 	UsagesJson,
+	DriftReport,
+	DriftKind,
 } from './types';
 
 // CLI entry point
