@@ -802,11 +802,17 @@ export class MnemonicaAnalyzer {
 						if (!type) {
 							type = this.inferTypeFromInitializer(expr.right, dataTypeMap);
 						}
-						properties.set(name, {
-							name,
-							type,
-							optional: false,
-						});
+						// Don't overwrite a known type from `this` annotation with unknown
+						const existing = properties.get(name);
+						if (existing && existing.type !== 'unknown' && type === 'unknown') {
+							// Keep the better type from explicit annotation
+						} else {
+							properties.set(name, {
+								name,
+								type,
+								optional: false,
+							});
+						}
 					}
 				}
 			}
@@ -1052,8 +1058,20 @@ export class MnemonicaAnalyzer {
 				return 'void';
 			case ts.SyntaxKind.ArrayType:
 				return 'Array<' + this.inferType((typeNode as ts.ArrayTypeNode).elementType) + '>';
-			case ts.SyntaxKind.TypeLiteral:
-				return 'object';
+			case ts.SyntaxKind.TypeLiteral: {
+				// Inline-expand type literals instead of collapsing to 'object'
+				const typeLit = typeNode as ts.TypeLiteralNode;
+				const props: string[] = [];
+				for (const member of typeLit.members) {
+					if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+						const propName = member.name.text;
+						const optional = member.questionToken ? '?' : '';
+						const type = this.inferType(member.type);
+						props.push(`${propName}${optional}: ${type}`);
+					}
+				}
+				return `{ ${props.join('; ')} }`;
+			}
 			case ts.SyntaxKind.LiteralType: {
 				// Handle string literal types like 'user', 'admin', etc.
 				const literal = (typeNode as ts.LiteralTypeNode).literal;
@@ -1069,6 +1087,9 @@ export class MnemonicaAnalyzer {
 				}
 				if (literal.kind === ts.SyntaxKind.FalseKeyword) {
 					return 'false';
+				}
+				if (literal.kind === ts.SyntaxKind.NullKeyword) {
+					return 'null';
 				}
 				return 'unknown';
 			}
@@ -1156,8 +1177,16 @@ export class MnemonicaAnalyzer {
 			case ts.SyntaxKind.IndexedAccessType: {
 				// Handle indexed access: T[K]
 				const indexed = typeNode as ts.IndexedAccessTypeNode;
-				const objectType = this.inferType(indexed.objectType);
+				let objectType = this.inferType(indexed.objectType);
 				const indexType = this.inferType(indexed.indexType);
+				// If objectType is 'object', try to resolve the underlying type alias
+				if (objectType === 'object' && ts.isTypeReferenceNode(indexed.objectType)) {
+					const refName = ts.isIdentifier(indexed.objectType.typeName) ? indexed.objectType.typeName.text : '';
+					const aliased = this.typeAliases.get(refName);
+					if (aliased) {
+						objectType = this.inferType(aliased);
+					}
+				}
 				return `${objectType}[${indexType}]`;
 			}
 			case ts.SyntaxKind.TypeOperator: {
@@ -1623,7 +1652,11 @@ export class MnemonicaAnalyzer {
 						const expanded = resolveTypeAndExtract(aliasedType);
 						if (expanded) return expanded;
 					}
-					// If not an object type alias, return the type name
+					// If not an object type alias, return the type name with args
+					if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
+						const args = typeNode.typeArguments.map(arg => this.inferType(arg));
+						return typeName + '<' + args.join(', ') + '>';
+					}
 					return typeName;
 				}
 	

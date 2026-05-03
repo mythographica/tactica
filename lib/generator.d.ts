@@ -5,7 +5,12 @@ import { TypeGraphImpl } from './graph';
  */
 export declare class TypesGenerator {
     private graph;
-    constructor(graph: TypeGraphImpl);
+    private esm;
+    constructor(graph: TypeGraphImpl, esm?: boolean);
+    /**
+     * Get import path with optional .js extension for ESM NodeNext
+     */
+    private importPath;
     /**
         * Generate global augmentation file that augments user classes directly
         * This allows using decorated classes without manual type casting

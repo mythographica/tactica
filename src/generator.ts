@@ -7,7 +7,18 @@ import { TypeGraphImpl } from './graph';
  * TypeScript declaration file generator
  */
 export class TypesGenerator {
-	constructor(private graph: TypeGraphImpl) {}
+	private esm: boolean;
+
+	constructor(private graph: TypeGraphImpl, esm = false) {
+		this.esm = esm;
+	}
+
+	/**
+	 * Get import path with optional .js extension for ESM NodeNext
+	 */
+	private importPath(relative: string): string {
+		return this.esm ? `${relative}.js` : relative;
+	}
 
 	/**
 		* Generate global augmentation file that augments user classes directly
@@ -290,7 +301,7 @@ export class TypesGenerator {
 				generatedTypes.push(instanceTypeName);
 			}
 		}
-		lines.push('} from \'./types\';');
+		lines.push(`} from '${this.importPath('./types')}';`);
 		lines.push('');
 
 		// Generate module augmentation for mnemonica TypeRegistry

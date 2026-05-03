@@ -11,6 +11,8 @@ interface CLIOptions extends TacticaConfig {
     help?: boolean;
     /** Custom topologica directories to scan */
     topologicaDirs?: string[];
+    /** Add .js extensions to relative imports for ESM NodeNext resolution */
+    esm?: boolean;
 }
 /**
  * Parse command line arguments
