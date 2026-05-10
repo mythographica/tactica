@@ -154,7 +154,7 @@ export interface EDSJson {
 /**
  * Flow kind for tracking native instance usage patterns
  */
-export type FlowKind = 'propertyRead' | 'propertyWrite' | 'methodCall' | 'destructureRead' | 'passAsArg' | 'return' | 'spread' | 'arrayElement' | 'conditionalAccess' | 'elementAccess' | 'reassignment';
+export type FlowKind = 'propertyRead' | 'propertyWrite' | 'methodCall' | 'destructureRead' | 'passAsArg' | 'return' | 'spread' | 'arrayElement' | 'conditionalAccess' | 'elementAccess' | 'reassignment' | 'instantiation';
 /**
  * Flow info for native instance usage tracking
  */

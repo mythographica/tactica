@@ -386,6 +386,7 @@ function run(options: CLIOptions): void {
 	}
 
 	// Second pass: collect usages (now all definitions are known, including topologica)
+	analyzer.resetUsages();
 	for (const sourceFile of sourceFiles) {
 		if (options.verbose) {
 			console.log(`Analyzing (usages): ${sourceFile.fileName}`);

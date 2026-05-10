@@ -24,6 +24,17 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Reset usage-related state for a fresh pass.
+	 * Call before the usage-collection pass to avoid duplicates from definition pass.
+	 */
+	resetUsages(): void {
+		this.usages.clear();
+		this.edsUsages.clear();
+		this.flowUsages.clear();
+		this.variableToTypeMap.clear();
+	}
+
+	/**
 	 * Analyze a source file for Mnemonica type definitions
 	 */
 	analyzeFile(sourceFile: ts.SourceFile): AnalyzeResult {
@@ -1509,7 +1520,12 @@ export class MnemonicaAnalyzer {
 		private collectUsage(node: ts.Node, sourceFile: ts.SourceFile): void {
 		// Check for new Type() instantiation
 		if (ts.isNewExpression(node) && node.expression) {
-			const typeName = this.getTypeNameFromExpression(node.expression);
+			let typeName: string | undefined;
+			if (ts.isPropertyAccessExpression(node.expression)) {
+				typeName = this.resolveTypePath(node.expression);
+			} else {
+				typeName = this.getTypeNameFromExpression(node.expression);
+			}
 			if (typeName) {
 				const { line, character } = ts.getLineAndCharacterOfPosition(
 					sourceFile,
@@ -1522,6 +1538,13 @@ export class MnemonicaAnalyzer {
 				});
 				// Track variable assignment from new Type() for flow analysis
 				this.trackNewAssignment(node, typeName);
+				// Also record as flow event
+				this.addFlow(typeName, {
+					location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind: 'instantiation',
+					code: node.getText(sourceFile).slice(0, 100),
+					context: 'new expression',
+				});
 			}
 		}
 	

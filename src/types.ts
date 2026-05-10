@@ -189,7 +189,8 @@ export type FlowKind =
 	| 'arrayElement'
 	| 'conditionalAccess'
 	| 'elementAccess'
-	| 'reassignment';
+	| 'reassignment'
+	| 'instantiation';
 
 /**
  * Flow info for native instance usage tracking

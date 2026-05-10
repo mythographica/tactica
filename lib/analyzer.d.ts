@@ -15,6 +15,11 @@ export declare class MnemonicaAnalyzer {
     private variableToTypeMap;
     constructor(program?: ts.Program);
     /**
+     * Reset usage-related state for a fresh pass.
+     * Call before the usage-collection pass to avoid duplicates from definition pass.
+     */
+    resetUsages(): void;
+    /**
      * Analyze a source file for Mnemonica type definitions
      */
     analyzeFile(sourceFile: ts.SourceFile): AnalyzeResult;
