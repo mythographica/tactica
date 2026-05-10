@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
 import { TypeGraphImpl } from './graph';
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -9,6 +9,8 @@ export declare class MnemonicaAnalyzer {
     private graph;
     private definitions;
     private usages;
+    private edsUsages;
+    private flowUsages;
     private typeAliases;
     private variableToTypeMap;
     constructor(program?: ts.Program);
@@ -32,6 +34,14 @@ export declare class MnemonicaAnalyzer {
      * Get collected usages
      */
     getUsages(): Map<string, UsageInfo[]>;
+    /**
+     * Get collected EDS usages
+     */
+    getEDSUsages(): Map<string, EDSInfo[]>;
+    /**
+     * Get collected flow usages
+     */
+    getFlowUsages(): Map<string, FlowInfo[]>;
     /**
      * Add a topologica type to the analyzer for usage tracking.
      * This allows the analyzer to recognize topologica types when collecting usages.
@@ -73,8 +83,13 @@ export declare class MnemonicaAnalyzer {
         */
     private trackLookupTypedAssignment;
     /**
+        * Track variable assignments from new Type() calls
+        * e.g., const user = new UserType() maps "user" -> "UserType"
+        */
+    private trackNewAssignment;
+    /**
         * Process a @decorate() decorator
- */
+     */
     private processDecorateDecorator;
     /**
      * Extract type name from define() call arguments
@@ -166,8 +181,65 @@ export declare class MnemonicaAnalyzer {
         */
     private addUsage;
     /**
-        * Get type name from expression (identifier or property access)
-        */
+     * Collect EDS (Execution Data Storage) usage information
+     */
+    private collectEDS;
+    /**
+     * Resolve type from EDS call argument (best effort)
+     */
+    private resolveEDSArgumentType;
+    /**
+     * Add an EDS usage to the collection
+     */
+    private addEDS;
+    /**
+     * Collect native flow patterns (instance usage after creation)
+     * Phase 1: property access, method calls, arguments, return, destructuring, etc.
+     */
+    private collectFlow;
+    /**
+     * Collect property access flow (read or conditional)
+     */
+    private collectFlowPropertyAccess;
+    /**
+     * Collect element access flow: user['name']
+     */
+    private collectFlowElementAccess;
+    /**
+     * Collect assignment flow: user.name = value or user = other
+     */
+    private collectFlowAssignment;
+    /**
+     * Collect method call flow: user.validate()
+     */
+    private collectFlowMethodCall;
+    /**
+     * Collect argument passing flow: processUser(user)
+     */
+    private collectFlowArgumentPass;
+    /**
+     * Collect destructuring flow: const { name } = user
+     */
+    private collectFlowDestructure;
+    /**
+     * Collect return flow: return user
+     */
+    private collectFlowReturn;
+    /**
+     * Collect spread flow: { ...user }
+     */
+    private collectFlowSpread;
+    /**
+     * Resolve type from an expression (identifier, property access, etc.)
+     */
+    private resolveExpressionType;
+    /**
+     * Add a flow usage to the collection
+     */
+    private addFlow;
+    /**
+            * Get type name from expression (identifier or property access)
+            */
     private getTypeNameFromExpression;
     /**
         * Resolve full type path from property access

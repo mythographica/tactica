@@ -151,6 +151,31 @@ npx tactica --topologica ./src/ai-types,./custom/topologica
    - Default mode: Exportable type aliases in `types.ts`
    - Global mode: Global declarations in `index.d.ts`
 5. **Output**: Files are written to `.tactica/` directory
+   - `types.ts` — exportable type aliases
+   - `registry.ts` — type-safe `lookupTyped()` augmentation
+   - `definitions.json` — type definition locations for navigation
+   - `usages.json` — static usage references
+   - `eds.json` — execution data flow patterns *(when --eds enabled)*
+
+### EDS (Execution Data Storage) Tracking
+
+Tactica detects execution flow patterns alongside type definitions:
+
+**Detected EDS patterns:**
+- `wrap()` / `wrapArgs()` / `wrapInstanceMethods()` → `kind: 'wrap'`
+- `link()` / `runWithInstance()` → `kind: 'link'`
+- `getLastContext()` / `getErrorInstance()` → `kind: 'contextConsume'`
+- `enrichError()` → `kind: 'errorEnrich'`
+- `attachHooks()` → `kind: 'hookAttach'`
+- `createDiveInterceptor()` / `createDivePlugin()` / `createDiveMiddleware()` → `kind: 'adapterUse'`
+
+**Auto-detection:** If `@mnemonica/dive` is in `package.json` dependencies, `--eds` defaults to on.
+
+**Override:**
+```bash
+npx tactica --eds      # force enable
+npx tactica --no-eds   # force disable
+```
 
 ### Triple-Slash References
 
@@ -565,6 +590,8 @@ npx tactica [options]
   -e, --exclude               File patterns to exclude
   -t, --topologica            Topologica directories to scan (comma-separated)
   -m, --module-augmentation   Generate global augmentation (index.d.ts) instead of exportable types
+  --eds                       Enable EDS (Execution Data Storage) tracking
+  --no-eds                    Disable EDS tracking
   -v, --verbose               Enable verbose logging
   -h, --help                  Show help
 ```
@@ -597,6 +624,12 @@ npx tactica --watch --module-augmentation
 
 # Exclude test files
 npx tactica --exclude "**/*.test.ts" --exclude "**/*.spec.ts"
+
+# Enable EDS tracking (auto-enabled when @mnemonica/dive is in dependencies)
+npx tactica --eds
+
+# Disable EDS tracking
+npx tactica --no-eds
 
 # Custom project path
 npx tactica --project ./tsconfig.json

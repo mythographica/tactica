@@ -25,6 +25,8 @@ interface CLIOptions extends TacticaConfig {
 	topologicaDirs?: string[];
 	/** Add .js extensions to relative imports for ESM NodeNext resolution */
 	esm?: boolean;
+	/** Enable EDS (Execution Data Storage) tracking */
+	eds?: boolean;
 }
 
 /**
@@ -72,6 +74,12 @@ function parseArgs(args: string[]): CLIOptions {
 			case '--esm':
 				options.esm = true;
 				break;
+			case '--eds':
+				options.eds = true;
+				break;
+			case '--no-eds':
+				options.eds = false;
+				break;
 			case '-h':
 			case '--help':
 				options.help = true;
@@ -100,6 +108,8 @@ Options:
   -t, --topologica          Comma-separated list of topologica directories to scan
   -m, --module-augmentation Use module augmentation instead of global (legacy mode)
   --esm                     Add .js extensions to relative imports (NodeNext ESM)
+  --eds                     Enable EDS (Execution Data Storage) tracking
+  --no-eds                  Disable EDS tracking
   -v, --verbose             Enable verbose logging
   -h, --help                Show this help message
 
@@ -193,6 +203,26 @@ function printTypeHierarchy(graph: TypeGraphImpl): void {
 		printNode(roots[i], '', i === roots.length - 1);
 	}
 	console.log(); // Empty line at end
+}
+
+/**
+ * Check if @mnemonica/dive is present in package.json dependencies
+ */
+function hasDiveDependency(projectDir: string): boolean {
+	const packageJsonPath = path.join(projectDir, 'package.json');
+	if (!fs.existsSync(packageJsonPath)) {
+		return false;
+	}
+	try {
+		const content = fs.readFileSync(packageJsonPath, 'utf-8');
+		const pkg = JSON.parse(content);
+		const deps = pkg.dependencies || {};
+		const devDeps = pkg.devDependencies || {};
+		const peerDeps = pkg.peerDependencies || {};
+		return '@mnemonica/dive' in deps || '@mnemonica/dive' in devDeps || '@mnemonica/dive' in peerDeps;
+	} catch {
+		return false;
+	}
 }
 
 /**
@@ -439,6 +469,28 @@ export * from './registry${options.esm ? '.js' : ''}';
 	if (options.verbose) {
 		console.log(`Generated definitions.json at: ${definitionsPath}`);
 		console.log(`Generated usages.json at: ${usagesPath}`);
+	}
+
+	// Determine EDS setting: explicit flag > auto-detect dive > default off
+	let enableEDS = options.eds;
+	if (enableEDS === undefined) {
+		enableEDS = hasDiveDependency(projectDir);
+	}
+
+	if (enableEDS) {
+		const eds = analyzer.getEDSUsages();
+		const edsPath = writer.writeEDSFile(eds);
+		if (options.verbose) {
+			console.log(`Generated eds.json at: ${edsPath}`);
+		}
+	}
+
+	// Always generate flow.json (native instance usage tracking)
+	const flow = analyzer.getFlowUsages();
+	const flowPath = writer.writeFlowFile(flow);
+	if (options.verbose) {
+		const flowCount = Array.from(flow.values()).reduce((sum, arr) => sum + arr.length, 0);
+		console.log(`Generated flow.json at: ${flowPath} (${flowCount} flow entries)`);
 	}
 
 	if (options.verbose) {

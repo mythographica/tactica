@@ -1,7 +1,7 @@
 'use strict';
 
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo, ConstructorParamInfo } from './types';
+import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo, ConstructorParamInfo, EDSInfo, FlowInfo } from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -12,6 +12,8 @@ export class MnemonicaAnalyzer {
 	private graph = new TypeGraphImpl();
 	private definitions = new Map<string, DefinitionInfo>();
 	private usages = new Map<string, UsageInfo[]>();
+	private edsUsages = new Map<string, EDSInfo[]>();
+	private flowUsages = new Map<string, FlowInfo[]>();
 	private typeAliases = new Map<string, ts.TypeNode>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
@@ -68,6 +70,20 @@ export class MnemonicaAnalyzer {
 	 */
 	getUsages(): Map<string, UsageInfo[]> {
 		return this.usages;
+	}
+
+	/**
+	 * Get collected EDS usages
+	 */
+	getEDSUsages(): Map<string, EDSInfo[]> {
+		return this.edsUsages;
+	}
+
+	/**
+	 * Get collected flow usages
+	 */
+	getFlowUsages(): Map<string, FlowInfo[]> {
+		return this.flowUsages;
 	}
 
 	/**
@@ -130,6 +146,12 @@ export class MnemonicaAnalyzer {
 
 		// Check for type usages (new Type(), type annotations, etc.)
 		this.collectUsage(node, sourceFile);
+
+		// Check for EDS patterns (wrap, link, getLastContext, etc.)
+		this.collectEDS(node, sourceFile);
+
+		// Check for native flow patterns (property access, method calls, etc.)
+		this.collectFlow(node, sourceFile);
 
 		// Collect type aliases for resolving type references
 		if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
@@ -337,28 +359,48 @@ export class MnemonicaAnalyzer {
 			}
 		}
 	
-		/**
-			* Track variable assignments from lookupTyped() calls
-			* e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
-			*/
-		private trackLookupTypedAssignment(call: ts.CallExpression, typePath: string): void {
-			// Walk up the tree to find VariableDeclaration
-			let current: ts.Node | undefined = call.parent;
-			while (current) {
-				if (ts.isVariableDeclaration(current)) {
-					// Found: const X = lookupTyped(...)
-					if (ts.isIdentifier(current.name)) {
-						const varName = current.name.text;
-						this.variableToTypeMap.set(varName, typePath);
-					}
-					return;
+	/**
+		* Track variable assignments from lookupTyped() calls
+		* e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
+		*/
+	private trackLookupTypedAssignment(call: ts.CallExpression, typePath: string): void {
+		// Walk up the tree to find VariableDeclaration
+		let current: ts.Node | undefined = call.parent;
+		while (current) {
+			if (ts.isVariableDeclaration(current)) {
+				// Found: const X = lookupTyped(...)
+				if (ts.isIdentifier(current.name)) {
+					const varName = current.name.text;
+					this.variableToTypeMap.set(varName, typePath);
 				}
-				current = current.parent;
+				return;
 			}
+			current = current.parent;
 		}
-	
-		/**
-			* Process a @decorate() decorator
+	}
+
+	/**
+		* Track variable assignments from new Type() calls
+		* e.g., const user = new UserType() maps "user" -> "UserType"
+		*/
+	private trackNewAssignment(newExpr: ts.NewExpression, typePath: string): void {
+		// Walk up the tree to find VariableDeclaration
+		let current: ts.Node | undefined = newExpr.parent;
+		while (current) {
+			if (ts.isVariableDeclaration(current)) {
+				// Found: const X = new Type(...)
+				if (ts.isIdentifier(current.name)) {
+					const varName = current.name.text;
+					this.variableToTypeMap.set(varName, typePath);
+				}
+				return;
+			}
+			current = current.parent;
+		}
+	}
+
+	/**
+		* Process a @decorate() decorator
 	 */
 	private processDecorateDecorator(decorator: ts.Decorator, sourceFile: ts.SourceFile, classDeclParam?: ts.ClassDeclaration): void {
 		const { line, character } = ts.getLineAndCharacterOfPosition(
@@ -1465,21 +1507,23 @@ export class MnemonicaAnalyzer {
 			* Collect usage information for type references
 			*/
 		private collectUsage(node: ts.Node, sourceFile: ts.SourceFile): void {
-			// Check for new Type() instantiation
-			if (ts.isNewExpression(node) && node.expression) {
-				const typeName = this.getTypeNameFromExpression(node.expression);
-				if (typeName) {
-					const { line, character } = ts.getLineAndCharacterOfPosition(
-						sourceFile,
-						node.getStart(sourceFile)
-					);
-					this.addUsage(typeName, {
-						location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-						kind: 'instantiation',
-						code: node.getText(sourceFile).slice(0, 100),
-					});
-				}
+		// Check for new Type() instantiation
+		if (ts.isNewExpression(node) && node.expression) {
+			const typeName = this.getTypeNameFromExpression(node.expression);
+			if (typeName) {
+				const { line, character } = ts.getLineAndCharacterOfPosition(
+					sourceFile,
+					node.getStart(sourceFile)
+				);
+				this.addUsage(typeName, {
+					location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind: 'instantiation',
+					code: node.getText(sourceFile).slice(0, 100),
+				});
+				// Track variable assignment from new Type() for flow analysis
+				this.trackNewAssignment(node, typeName);
 			}
+		}
 	
 			// Check for property access on instances (user.AdminType)
 			if (ts.isPropertyAccessExpression(node)) {
@@ -1563,8 +1607,489 @@ export class MnemonicaAnalyzer {
 			existingUsages.push(usage);
 		}
 	}
-	
-		/**
+
+	/**
+	 * Collect EDS (Execution Data Storage) usage information
+	 */
+	private collectEDS(node: ts.Node, sourceFile: ts.SourceFile): void {
+		if (!ts.isCallExpression(node) || !node.expression) {
+			return;
+		}
+
+		const funcName = this.getFunctionName(node.expression);
+		if (!funcName) {
+			return;
+		}
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		// wrap(fn), wrapArgs(fn), wrapInstanceMethods(obj)
+		if (funcName === 'wrap' || funcName === 'wrapArgs' || funcName === 'wrapInstanceMethods') {
+			const targetType = this.resolveEDSArgumentType(node.arguments[0]);
+			this.addEDS(targetType || 'unknown', {
+				location,
+				kind: 'wrap',
+				code,
+				targetType: targetType || undefined,
+			});
+			return;
+		}
+
+		// link(parent, child), runWithInstance(instance, fn)
+		if (funcName === 'link' || funcName === 'runWithInstance') {
+			const targetType = this.resolveEDSArgumentType(node.arguments[0]);
+			this.addEDS(targetType || 'unknown', {
+				location,
+				kind: 'link',
+				code,
+				targetType: targetType || undefined,
+			});
+			return;
+		}
+
+		// getLastContext(), getErrorInstance(err)
+		if (funcName === 'getLastContext' || funcName === 'getErrorInstance') {
+			this.addEDS('unknown', {
+				location,
+				kind: 'contextConsume',
+				code,
+			});
+			return;
+		}
+
+		// enrichError(err, instance)
+		if (funcName === 'enrichError') {
+			const targetType = node.arguments.length > 1
+				? this.resolveEDSArgumentType(node.arguments[1])
+				: undefined;
+			this.addEDS(targetType || 'unknown', {
+				location,
+				kind: 'errorEnrich',
+				code,
+				targetType: targetType || undefined,
+			});
+			return;
+		}
+
+		// attachHooks(types), attachHooks([A, B])
+		if (funcName === 'attachHooks' && node.arguments.length > 0) {
+			const arg = node.arguments[0];
+			if (ts.isArrayLiteralExpression(arg)) {
+				for (const element of arg.elements) {
+					const targetType = this.resolveEDSArgumentType(element);
+					this.addEDS(targetType || 'unknown', {
+						location,
+						kind: 'hookAttach',
+						code,
+						targetType: targetType || undefined,
+					});
+				}
+			} else {
+				const targetType = this.resolveEDSArgumentType(arg);
+				this.addEDS(targetType || 'unknown', {
+					location,
+					kind: 'hookAttach',
+					code,
+					targetType: targetType || undefined,
+				});
+			}
+			return;
+		}
+
+		// Adapters: createDiveInterceptor, createDivePlugin, createDiveMiddleware
+		if (funcName === 'createDiveInterceptor' || funcName === 'createDivePlugin' || funcName === 'createDiveMiddleware') {
+			this.addEDS('unknown', {
+				location,
+				kind: 'adapterUse',
+				code,
+			});
+			return;
+		}
+	}
+
+	/**
+	 * Resolve type from EDS call argument (best effort)
+	 */
+	private resolveEDSArgumentType(arg: ts.Expression | undefined): string | undefined {
+		if (!arg) {
+			return undefined;
+		}
+
+		// Identifier: variable name
+		if (ts.isIdentifier(arg)) {
+			const mapped = this.variableToTypeMap.get(arg.text);
+			if (mapped) {
+				return mapped;
+			}
+			// Maybe it's a type name directly
+			if (this.definitions.has(arg.text)) {
+				return arg.text;
+			}
+			return undefined;
+		}
+
+		// Property access: obj.prop
+		if (ts.isPropertyAccessExpression(arg)) {
+			return this.resolveTypePath(arg);
+		}
+
+		// This expression: this.something
+		if (ts.isPropertyAccessExpression(arg) && ts.isIdentifier(arg.expression) && arg.expression.text === 'this') {
+			return undefined;
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Add an EDS usage to the collection
+	 */
+	private addEDS(typePath: string, info: EDSInfo): void {
+		if (!this.edsUsages.has(typePath)) {
+			this.edsUsages.set(typePath, []);
+		}
+
+		const existing = this.edsUsages.get(typePath)!;
+		const isDuplicate = existing.some(
+			e => e.location === info.location && e.kind === info.kind && e.code === info.code
+		);
+
+		if (!isDuplicate) {
+			existing.push(info);
+		}
+	}
+
+	/**
+	 * Collect native flow patterns (instance usage after creation)
+	 * Phase 1: property access, method calls, arguments, return, destructuring, etc.
+	 */
+	private collectFlow(node: ts.Node, sourceFile: ts.SourceFile): void {
+		// Property read: user.name or user?.name
+		if (ts.isPropertyAccessExpression(node)) {
+			this.collectFlowPropertyAccess(node, sourceFile);
+			return;
+		}
+
+		// Element access: user['name']
+		if (ts.isElementAccessExpression(node)) {
+			this.collectFlowElementAccess(node, sourceFile);
+			return;
+		}
+
+		// Property write: user.name = value
+		if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+			this.collectFlowAssignment(node, sourceFile);
+			return;
+		}
+
+		// Method call: user.validate()  AND  argument passing: processUser(user)
+		if (ts.isCallExpression(node) && node.expression) {
+			this.collectFlowMethodCall(node, sourceFile);
+			this.collectFlowArgumentPass(node, sourceFile);
+			return;
+		}
+
+		// Destructure read: const { name } = user
+		if (ts.isVariableDeclaration(node) && node.initializer) {
+			this.collectFlowDestructure(node, sourceFile);
+			return;
+		}
+
+		// Return instance: return user
+		if (ts.isReturnStatement(node) && node.expression) {
+			this.collectFlowReturn(node, sourceFile);
+			return;
+		}
+
+		// Spread: { ...user }
+		if (ts.isSpreadElement(node)) {
+			this.collectFlowSpread(node, sourceFile);
+			return;
+		}
+	}
+
+	/**
+	 * Collect property access flow (read or conditional)
+	 */
+	private collectFlowPropertyAccess(node: ts.PropertyAccessExpression, sourceFile: ts.SourceFile): void {
+		const objectType = this.resolveExpressionType(node.expression);
+		if (!objectType) { return; }
+
+		const propName = node.name.text;
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		// Skip if this is a type constructor access (e.g., UserType.define)
+		if (propName === 'define') { return; }
+
+		this.addFlow(objectType, {
+			location,
+			kind: 'propertyRead',
+			code,
+			propertyName: propName,
+			targetType: objectType
+		});
+	}
+
+	/**
+	 * Collect element access flow: user['name']
+	 */
+	private collectFlowElementAccess(node: ts.ElementAccessExpression, sourceFile: ts.SourceFile): void {
+		const objectType = this.resolveExpressionType(node.expression);
+		if (!objectType) { return; }
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		this.addFlow(objectType, {
+			location,
+			kind: 'elementAccess',
+			code,
+			targetType: objectType
+		});
+	}
+
+	/**
+	 * Collect assignment flow: user.name = value or user = other
+	 */
+	private collectFlowAssignment(node: ts.BinaryExpression, sourceFile: ts.SourceFile): void {
+		// Property write: user.name = value
+		if (ts.isPropertyAccessExpression(node.left)) {
+			const objectType = this.resolveExpressionType(node.left.expression);
+			if (!objectType) { return; }
+
+			const propName = node.left.name.text;
+			const { line, character } = ts.getLineAndCharacterOfPosition(
+				sourceFile,
+				node.getStart(sourceFile)
+			);
+			const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+			const code = node.getText(sourceFile).slice(0, 100);
+
+			this.addFlow(objectType, {
+				location,
+				kind: 'propertyWrite',
+				code,
+				propertyName: propName,
+				targetType: objectType
+			});
+			return;
+		}
+
+		// Variable reassignment: user = other
+		if (ts.isIdentifier(node.left)) {
+			const varName = node.left.text;
+			const mappedType = this.variableToTypeMap.get(varName);
+			if (!mappedType) { return; }
+
+			const { line, character } = ts.getLineAndCharacterOfPosition(
+				sourceFile,
+				node.getStart(sourceFile)
+			);
+			const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+			const code = node.getText(sourceFile).slice(0, 100);
+
+			this.addFlow(mappedType, {
+				location,
+				kind: 'reassignment',
+				code,
+				targetType: mappedType
+			});
+		}
+	}
+
+	/**
+	 * Collect method call flow: user.validate()
+	 */
+	private collectFlowMethodCall(node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		if (!ts.isPropertyAccessExpression(node.expression)) { return; }
+
+		const objectType = this.resolveExpressionType(node.expression.expression);
+		if (!objectType) { return; }
+
+		const methodName = node.expression.name.text;
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		// Skip if this is a type constructor call (e.g., new UserType())
+		if (methodName === 'define') { return; }
+
+		this.addFlow(objectType, {
+			location,
+			kind: 'methodCall',
+			code,
+			propertyName: methodName,
+			targetType: objectType
+		});
+	}
+
+	/**
+	 * Collect argument passing flow: processUser(user)
+	 */
+	private collectFlowArgumentPass(node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		for (let i = 0; i < node.arguments.length; i++) {
+			const arg = node.arguments[i];
+			const argType = this.resolveExpressionType(arg);
+			if (!argType) { continue; }
+
+			const funcName = this.getFunctionName(node.expression) || 'anonymous';
+			const { line, character } = ts.getLineAndCharacterOfPosition(
+				sourceFile,
+				node.getStart(sourceFile)
+			);
+			const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+			const code = node.getText(sourceFile).slice(0, 100);
+
+			this.addFlow(argType, {
+				location,
+				kind: 'passAsArg',
+				code,
+				targetType: argType,
+				context: `arg ${i} to ${funcName}`
+			});
+		}
+	}
+
+	/**
+	 * Collect destructuring flow: const { name } = user
+	 */
+	private collectFlowDestructure(node: ts.VariableDeclaration, sourceFile: ts.SourceFile): void {
+		if (!ts.isObjectBindingPattern(node.name)) { return; }
+
+		const sourceType = this.resolveExpressionType(node.initializer!);
+		if (!sourceType) { return; }
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		// Extract destructured property names
+		const props: string[] = [];
+		for (const element of node.name.elements) {
+			if (ts.isIdentifier(element.name)) {
+				props.push(element.name.text);
+			}
+		}
+
+		this.addFlow(sourceType, {
+			location,
+			kind: 'destructureRead',
+			code,
+			targetType: sourceType,
+			context: props.join(', ')
+		});
+	}
+
+	/**
+	 * Collect return flow: return user
+	 */
+	private collectFlowReturn(node: ts.ReturnStatement, sourceFile: ts.SourceFile): void {
+		const returnType = this.resolveExpressionType(node.expression!);
+		if (!returnType) { return; }
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		this.addFlow(returnType, {
+			location,
+			kind: 'return',
+			code,
+			targetType: returnType
+		});
+	}
+
+	/**
+	 * Collect spread flow: { ...user }
+	 */
+	private collectFlowSpread(node: ts.SpreadElement, sourceFile: ts.SourceFile): void {
+		const spreadType = this.resolveExpressionType(node.expression);
+		if (!spreadType) { return; }
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		this.addFlow(spreadType, {
+			location,
+			kind: 'spread',
+			code,
+			targetType: spreadType
+		});
+	}
+
+	/**
+	 * Resolve type from an expression (identifier, property access, etc.)
+	 */
+	private resolveExpressionType(expr: ts.Expression): string | undefined {
+		// Identifier: user
+		if (ts.isIdentifier(expr)) {
+			return this.variableToTypeMap.get(expr.text);
+		}
+
+		// Property access: user.name (return object type, not property type)
+		if (ts.isPropertyAccessExpression(expr)) {
+			return this.resolveExpressionType(expr.expression);
+		}
+
+		// Element access: user['name']
+		if (ts.isElementAccessExpression(expr)) {
+			return this.resolveExpressionType(expr.expression);
+		}
+
+		// This expression: this (if in a method, we can't resolve without more context)
+		if (expr.kind === ts.SyntaxKind.ThisKeyword) {
+			return undefined;
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Add a flow usage to the collection
+	 */
+	private addFlow(typePath: string, info: FlowInfo): void {
+		if (!this.flowUsages.has(typePath)) {
+			this.flowUsages.set(typePath, []);
+		}
+
+		const existing = this.flowUsages.get(typePath)!;
+		const isDuplicate = existing.some(
+			e => e.location === info.location && e.kind === info.kind && e.code === info.code
+		);
+
+		if (!isDuplicate) {
+			existing.push(info);
+		}
+	}
+
+	/**
 			* Get type name from expression (identifier or property access)
 			*/
 		private getTypeNameFromExpression(expr: ts.Expression): string | undefined {

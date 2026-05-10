@@ -126,3 +126,57 @@ export interface UsagesJson {
     generatedAt: string;
     usages: Record<string, UsageInfo[]>;
 }
+/**
+ * EDS (Execution Data Storage) kind for tracking execution flow patterns
+ */
+export type EDSKind = 'wrap' | 'link' | 'contextConsume' | 'errorEnrich' | 'hookAttach' | 'adapterUse';
+/**
+ * EDS info for execution data flow tracking
+ */
+export interface EDSInfo {
+    /** Location in source: file.ts:Line:Col */
+    location: string;
+    /** Kind of EDS usage */
+    kind: EDSKind;
+    /** Code snippet */
+    code: string;
+    /** Resolved target type if detectable */
+    targetType?: string;
+}
+/**
+ * JSON output for eds.json
+ */
+export interface EDSJson {
+    version: string;
+    generatedAt: string;
+    eds: Record<string, EDSInfo[]>;
+}
+/**
+ * Flow kind for tracking native instance usage patterns
+ */
+export type FlowKind = 'propertyRead' | 'propertyWrite' | 'methodCall' | 'destructureRead' | 'passAsArg' | 'return' | 'spread' | 'arrayElement' | 'conditionalAccess' | 'elementAccess' | 'reassignment';
+/**
+ * Flow info for native instance usage tracking
+ */
+export interface FlowInfo {
+    /** Location in source: file.ts:Line:Col */
+    location: string;
+    /** Kind of flow */
+    kind: FlowKind;
+    /** Code snippet */
+    code: string;
+    /** Property name if applicable */
+    propertyName?: string;
+    /** Resolved target type if known */
+    targetType?: string;
+    /** Context (function name, param position, etc.) */
+    context?: string;
+}
+/**
+ * JSON output for flow.json
+ */
+export interface FlowJson {
+    version: string;
+    generatedAt: string;
+    flow: Record<string, FlowInfo[]>;
+}

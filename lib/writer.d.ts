@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
 /**
  * Writes generated types to file system
  */
@@ -41,4 +41,12 @@ export declare class TypesWriter {
      * Write usages.json file
      */
     writeUsagesFile(usages: Map<string, UsageInfo[]>): string;
+    /**
+     * Write eds.json file
+     */
+    writeEDSFile(eds: Map<string, EDSInfo[]>): string;
+    /**
+     * Write flow.json file
+     */
+    writeFlowFile(flow: Map<string, FlowInfo[]>): string;
 }

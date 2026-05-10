@@ -2,7 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratedTypes, DefinitionInfo, UsageInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
 
 /**
  * Writes generated types to file system
@@ -119,6 +119,52 @@ export class TypesWriter {
 			version: '1.0',
 			generatedAt: new Date().toISOString(),
 			usages: usagesObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write eds.json file
+	 */
+	writeEDSFile (eds: Map<string, EDSInfo[]>): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'eds.json');
+
+		// Convert Map to plain object
+		const edsObj: Record<string, EDSInfo[]> = {};
+		for (const [key, value] of eds) {
+			edsObj[key] = value;
+		}
+
+		const json = {
+			version: '1.0',
+			generatedAt: new Date().toISOString(),
+			eds: edsObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write flow.json file
+	 */
+	writeFlowFile(flow: Map<string, FlowInfo[]>): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'flow.json');
+
+		// Convert Map to plain object
+		const flowObj: Record<string, FlowInfo[]> = {};
+		for (const [key, value] of flow) {
+			flowObj[key] = value;
+		}
+
+		const json = {
+			version: '1.0',
+			generatedAt: new Date().toISOString(),
+			flow: flowObj,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');

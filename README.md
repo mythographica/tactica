@@ -171,6 +171,8 @@ Tactica uses TypeScript's [`ts.createProgram()`](tactica/src/analyzer.ts) API to
 | `--exclude` | `-e` | Exclude patterns (comma-separated) |
 | `--topologica` | `-t` | Topologica directories to scan (comma-separated) |
 | `--module-augmentation` | `-m` | Generate global augmentation (legacy mode) |
+| `--eds` | | Enable EDS (Execution Data Storage) tracking |
+| `--no-eds` | | Disable EDS tracking |
 | `--verbose` | `-v` | Enable verbose logging |
 | `--help` | `-h` | Show help message |
 
@@ -191,6 +193,12 @@ npx tactica --exclude "*.test.ts,*.spec.ts"
 
 # Scan custom topologica directories
 npx tactica --topologica ./src/ai-types,./custom/topologica
+
+# Enable EDS tracking (auto-enabled when @mnemonica/dive is in dependencies)
+npx tactica --eds
+
+# Disable EDS tracking
+npx tactica --no-eds
 ```
 
 ## Generated Output
@@ -617,6 +625,66 @@ Type Hierarchy (Trie)
 │           └── properties: { permissions: string[] }
 └── OrderType
     └── properties: { items: Item[] }
+```
+
+## EDS (Execution Data Storage) Tracking
+
+Tactica can detect execution flow patterns in your codebase — function calls like `wrap()`, `link()`, `getLastContext()`, `enrichError()`, `attachHooks()`, and adapter creation. This produces `.tactica/eds.json`, consumed by tools like MnemoGraphica to visualize how instances flow through your system.
+
+### Detected Patterns
+
+| Function | EDS Kind | Description |
+|----------|----------|-------------|
+| `wrap(fn)` | `wrap` | Wraps a function for context propagation |
+| `wrapArgs(fn)` | `wrap` | Wraps function arguments |
+| `wrapInstanceMethods(obj)` | `wrap` | Wraps all methods on an instance |
+| `link(parent, child)` | `link` | Links two instances in EDS chain |
+| `runWithInstance(inst, fn)` | `link` | Runs function with instance context |
+| `getLastContext()` | `contextConsume` | Retrieves current EDS context |
+| `getErrorInstance(err)` | `contextConsume` | Gets instance from error |
+| `enrichError(err, inst)` | `errorEnrich` | Attaches instance to error |
+| `attachHooks(types)` | `hookAttach` | Installs hooks on types |
+| `createDiveInterceptor()` | `adapterUse` | NestJS interceptor adapter |
+| `createDivePlugin()` | `adapterUse` | Fastify plugin adapter |
+| `createDiveMiddleware()` | `adapterUse` | Express middleware adapter |
+
+### Enabling EDS Tracking
+
+EDS is **auto-enabled** when `@mnemonica/dive` is found in your `package.json` dependencies. You can override this:
+
+```bash
+# Force enable
+npx tactica --eds
+
+# Force disable
+npx tactica --no-eds
+```
+
+### Output Format
+
+`.tactica/eds.json`:
+```json
+{
+  "version": "1.0",
+  "generatedAt": "2026-05-09T...",
+  "eds": {
+    "StressEntity": [
+      {
+        "location": "/project/src/queue.ts:45:12",
+        "kind": "wrap",
+        "code": "wrap(process)",
+        "targetType": "StressEntity"
+      }
+    ],
+    "UserEntity": [
+      {
+        "location": "/project/src/module.ts:12:5",
+        "kind": "hookAttach",
+        "code": "attachHooks([UserEntity, AdminEntity])"
+      }
+    ]
+  }
+}
 ```
 
 ## Troubleshooting

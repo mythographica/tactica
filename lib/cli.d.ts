@@ -13,6 +13,8 @@ interface CLIOptions extends TacticaConfig {
     topologicaDirs?: string[];
     /** Add .js extensions to relative imports for ESM NodeNext resolution */
     esm?: boolean;
+    /** Enable EDS (Execution Data Storage) tracking */
+    eds?: boolean;
 }
 /**
  * Parse command line arguments
