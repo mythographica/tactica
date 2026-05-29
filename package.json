@@ -20,8 +20,8 @@
 		"test:coverage": "npx nyc npm test",
 		"test:coverage:html": "npx nyc --reporter=html npm test",
 		"lint": "npx eslint --fix ./src",
-		"use:public": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='latest';p.devDependencies.mnemonica='latest';p.devDependencies.typeomatica='latest';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to PUBLIC npm dependencies (latest)');\" && rm -rf node_modules package-lock.json && npm install",
-		"use:local": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='file:../core';p.devDependencies.mnemonica='file:../core';p.devDependencies.typeomatica='file:../typeomatica';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to LOCAL file: dependencies');\""
+		"use:public": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='latest';p.devDependencies.mnemonica='latest';p.devDependencies.typeomatica='latest';p.dependencies.mnemonica='latest';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to PUBLIC npm dependencies (latest)');\" && rm -rf node_modules package-lock.json && npm install",
+		"use:local": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='file:../core';p.devDependencies.mnemonica='file:../core';p.devDependencies.typeomatica='file:../typeomatica';p.dependencies.mnemonica='file:../core';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to LOCAL file: dependencies');\""
 	},
 	"keywords": [
 		"mnemonica",
@@ -60,6 +60,6 @@
 	"dependencies": {
 		"@types/chokidar": "^2.1.0",
 		"chokidar": "^3.5.0",
-		"mnemonica": "file:../core"
+		"mnemonica": "latest"
 	}
 }
