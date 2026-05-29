@@ -1,712 +1,358 @@
 # AGENTS.md
 
-This file provides guidance to agents when working with code in this repository.
+Guidance for AI agents working in this repository. Keep responses tight, prefer code over prose.
 
-## Project Overview
+## What tactica is (and isn't)
 
-**@mnemonica/tactica** is a TypeScript Language Service Plugin that generates type definitions for Mnemonica's dynamic nested constructors. It enables TypeScript to understand runtime type hierarchies created through `define()` and `decorate()` calls.
+**Is:** a CLI tool + Node library that statically analyzes TypeScript/JavaScript source and generates type definitions plus navigation metadata for Mnemonica's dynamic types. Output lives in `.tactica/`.
 
-### Role in the Ecosystem
+**Isn't:** a TypeScript Language Service Plugin. There is no `create(info)` factory, nothing for `tsserver` to load. IDE features (Go to Definition, Find References, graph visualization) are provided by the **mnemographica** VS Code extension, which consumes tactica's `.tactica/*.json` output. If you find docs or tests that imply a plugin exists in this repo, they are stale — please correct them.
 
-Tactica serves three key purposes:
+## Role in the ecosystem
 
-1. **Type Generation**: Generates `.tactica/types.ts` with TypeScript interfaces for Mnemonica types
-2. **Hierarchy Tracking**: Provides type information for nested constructors that TypeScript can't infer
-3. **Location Data**: Tracks where `define()`/`decorate()` are called and where instances are created
-
-This location data feeds into **Mnemonica Graphica** for visualization and navigation.
-
-### AI Agent Context
-
-Tactica enables AI agents to:
-- Understand the complete type hierarchy without executing code
-- Navigate between type definitions and usage sites
-- Provide intelligent suggestions based on the inheritance graph
-
-## Build/Test Commands
-
-All commands run from the `tactica/` directory:
-
-```bash
-# Build the project
-npm run build
-
-# Run tests
-npm run test
-
-# Run tests with coverage
-npm run test:coverage
-
-# Watch mode for development
-npm run watch
+```
+┌───────────────────────────────────────┐
+│   User code (TS/JS using mnemonica)   │
+└────────────────┬──────────────────────┘
+                 │ parsed by
+                 ▼
+┌───────────────────────────────────────┐
+│            tactica (this repo)        │
+│   CLI + library — code generator      │
+└────────────────┬──────────────────────┘
+                 │ writes to disk
+                 ▼
+┌───────────────────────────────────────┐
+│   .tactica/  output (contract below)  │
+└───┬─────────────────┬─────────────────┘
+    │                 │
+    │ imported by tsc │ read by mnemographica (VS Code extension)
+    ▼                 ▼
+typed mnemonica   Go to Def · Find Refs · Graph view
 ```
 
-## Code Style
+## Build / Test
 
-### Indentation
-- **Tabs** for indentation (not spaces)
-- See `.editorconfig`: `indent_style = tab`, `indent_size = 4`
+```bash
+npm run build              # rm -rf lib && tsc && chmod +x lib/cli.js
+npm test                   # mocha + chai
+npm run test:coverage      # nyc text + text-summary
+npm run test:coverage:html # nyc html report
+npm run watch              # tsc -w
+npm run lint               # eslint --fix src
+```
 
-### Function Spacing
-- **Always** space before function parentheses:
-  ```typescript
-  function myFunc () { }  // ✓ correct
-  function myFunc() { }   // ✗ wrong
-  ```
+Local-vs-public dependency switching:
 
-### TypeScript Strictness
-- `strict: true` enabled
-- `noImplicitAny: true`
-- `noUnusedLocals: true` - unused variables cause errors
-- `noUnusedParameters: true` - unused parameters cause errors
-- `isolatedModules: true` - each file must be independently transpilable
+```bash
+npm run use:public  # peer/dev/dep → 'latest' from npm
+npm run use:local   # peer/dev/dep → file:../core, file:../typeomatica
+```
 
-### Return Statement Pattern
-- **Always** use intermediate variable before return for debugging support:
-  ```typescript
-  // ✓ correct - allows setting breakpoint on the variable
-  const result = this.service.doSomething();
-  return result;
-  
-  // ✗ wrong - cannot set breakpoint on return value
-  return this.service.doSomething();
-  ```
+`use:public` is the right state for any release work. `use:local` is for ecosystem-wide development.
 
-## Architecture
-
-### Core Components
+## Source layout
 
 ```
 src/
-├── index.ts          # Main exports: analyzer, generator, writer, CLI, plugin
-├── types.ts          # TypeScript type definitions
-├── analyzer.ts       # AST analyzer for define()/decorate() calls
-├── topologica-analyzer.ts  # Analyzer for Topologica directory structures
-├── graph.ts          # Trie-based type hierarchy graph
-├── generator.ts      # TypeScript .d.ts file generator
-├── writer.ts         # File writer for .tactica/ folder
-├── plugin.ts         # TypeScript Language Service Plugin entry
-└── cli.ts            # Standalone CLI tool
+├── index.ts                # public exports (analyzer, generator, writer, CLI, types)
+├── types.ts                # all interface / type definitions
+├── analyzer.ts             # AST analyzer for define()/decorate() + usage/EDS/flow collection
+├── topologica-analyzer.ts  # AST analyzer for Topologica directory structures
+├── graph.ts                # Trie-based TypeGraphImpl
+├── generator.ts            # generates types.ts / registry.ts / index.d.ts
+├── writer.ts               # writes .tactica/* files
+└── cli.ts                  # CLI entry point, parseArgs, run, watch, main
 ```
 
-### Key Classes
+No `plugin.ts`. There is no plugin code anywhere.
 
-#### MnemonicaAnalyzer
-Parses TypeScript and JavaScript source files to find Mnemonica type definitions.
-- `analyzeFile(sourceFile)` - Analyze a TS/JS source file
-- `analyzeSource(sourceCode)` - Analyze source code string
-- `getGraph()` - Get the type graph
+## Code style
 
-**JavaScript Support Note:** The analyzer uses [`ts.createProgram()`](tactica/src/analyzer.ts) which can parse JavaScript files when `allowJs: true` is configured in tsconfig.json. This enables analyzing projects that use Mnemonica in JavaScript rather than TypeScript. See the JavaScript Support section in README.md for details.
+- **Tabs** for indentation, size 4.
+- **Space before `(`** in function declarations: `function foo ()`, not `function foo()`.
+- TypeScript strict mode is on (`noUnusedLocals`, `noUnusedParameters`, `isolatedModules`).
+- Prefer intermediate variables before return for debuggability:
+  ```ts
+  const result = this.service.doSomething();
+  return result;
+  ```
 
-#### TypeGraphImpl
-Trie-based data structure representing type hierarchy.
-- `roots` - Root types (defined at module level)
-- `allTypes` - All types indexed by full path
-- `addRoot()`, `addChild()` - Build the hierarchy
-- `bfs()`, `dfs()` - Traverse the graph
+## Output contract (consumed by downstream tools)
 
-#### TypesGenerator
-Generates TypeScript declaration files from the type graph.
-- `generateTypesFile()` - Generate exportable type aliases (default mode, outputs `types.ts`)
-- `generateGlobalAugmentation()` - Generate global type declarations (legacy mode, outputs `index.d.ts`)
-- `generateSingleType(node)` - Generate single type
+Tactica writes to `--output` (default `.tactica/`). The contract below is what **mnemographica** and other consumers depend on. Do not break these field names or the file naming without coordinated changes in mnemographica.
 
-#### TypesWriter
-Writes generated types to `.tactica/` directory.
-- `writeTypesFile(generated)` - Write exportable types to `types.ts` (default mode)
-- `writeGlobalAugmentation(generated)` - Write global declarations to `index.d.ts` (module augmentation mode)
-- `writeTo(filename, content)` - Write custom file
-- `clean()` - Clear output directory
+### `types.ts` (default mode)
 
-#### TopologicaAnalyzer
-Analyzes Topologica-style directory structures to extract type hierarchies from filesystem organization.
-- `analyzeDirectory(directoryPath)` - Scan a directory structure for type definitions
-- `getGraph()` - Get the type graph with extracted properties
-- `getErrors()` - Get parsing errors
+```ts
+import type { ProtoFlat } from 'mnemonica';
 
-**Property Extraction:** Uses TypeScript AST parsing to extract:
-- `this.property = value` assignments from handler functions
-- `Object.assign(this, data)` patterns
-- Inferred types from initializers (string literals → `string`, `Date.now()` → `number`, etc.)
+export type UserType = {
+    name: string;
+    AdminType: new (data: { role: string }) => UserType_AdminType;
+};
 
-**Supported File Formats:**
-- `.ts` - TypeScript files with full type annotations
-- `.js` - JavaScript files (parsed with TypeScript compiler)
-- `.mjs` - ES Module JavaScript files
-
-**Auto-discovery:** The CLI automatically scans standard directories (`ai-types`, `types`, `topologica-types`) in both project root and `src/` subdirectory.
-
-**Custom directories:** Use the `--topologica` CLI option:
-```bash
-npx tactica --topologica ./src/ai-types,./custom/topologica
+export type UserType_AdminType = ProtoFlat<UserType, {
+    role: string;
+    AdminType: undefined;
+}>;
 ```
 
-### How It Works
+- One `export type` per discovered type, named `<DottedPath>` with `.` → `_`.
+- Nested types use `ProtoFlat<Parent, Self>` so overridden parent properties are excluded.
+- Each nested type emits its own constructor name as `undefined` (strict-chain marker) and similar for siblings.
+- Source: `TypesGenerator.generateTypesFile()` → `TypesWriter.writeTypesFile()`.
 
-1. **Parse**: TypeScript AST is parsed to find `define()` and `decorate()` calls
-2. **Analyze**: The analyzer extracts type names, properties, and hierarchy
-3. **Graph**: A Trie (tree) structure represents the type hierarchy
-4. **Generate**: TypeScript declarations are generated
-   - Default mode: Exportable type aliases in `types.ts`
-   - Global mode: Global declarations in `index.d.ts`
-5. **Output**: Files are written to `.tactica/` directory
-   - `types.ts` — exportable type aliases
-   - `registry.ts` — type-safe `lookupTyped()` augmentation
-   - `definitions.json` — type definition locations for navigation
-   - `usages.json` — static usage references
-   - `eds.json` — execution data flow patterns *(when --eds enabled)*
+### `registry.ts` (default mode)
 
-### EDS (Execution Data Storage) Tracking
-
-Tactica detects execution flow patterns alongside type definitions:
-
-**Detected EDS patterns:**
-- `wrap()` / `wrapArgs()` / `wrapInstanceMethods()` → `kind: 'wrap'`
-- `link()` / `runWithInstance()` → `kind: 'link'`
-- `getLastContext()` / `getErrorInstance()` → `kind: 'contextConsume'`
-- `enrichError()` → `kind: 'errorEnrich'`
-- `attachHooks()` → `kind: 'hookAttach'`
-- `createDiveInterceptor()` / `createDivePlugin()` / `createDiveMiddleware()` → `kind: 'adapterUse'`
-
-**Auto-detection:** If `@mnemonica/dive` is in `package.json` dependencies, `--eds` defaults to on.
-
-**Override:**
-```bash
-npx tactica --eds      # force enable
-npx tactica --no-eds   # force disable
-```
-
-### Triple-Slash References
-
-For global augmentation mode, use triple-slash reference directives:
-
-```typescript
-// At the top of your entry file (e.g., src/index.ts)
-/// <reference types="./.tactica/index" />
-
-// Or from project root
-/// <reference types="../.tactica/index" />
-```
-
-This makes global types available without explicit imports.
-
-### Type-Safe Lookup with lookupTyped()
-
-Mnemonica core provides `lookupTyped()` for type-safe type retrieval. This works through TypeScript's module augmentation of the `TypeRegistry` interface.
-
-#### How It Works
-
-1. **Mnemonica exports an empty TypeRegistry interface**:
-```typescript
-// In mnemonica core
-export interface TypeRegistry {
-	[key: string]: new (...args: unknown[]) => unknown;
-}
-
-export function lookupTyped<K extends keyof TypeRegistry>(
-	path: K
-): TypeRegistry[K] | undefined;
-```
-
-2. **Tactica generates a registry file** that augments this interface:
-```typescript
-// .tactica/registry.ts (generated by tactica)
-import 'mnemonica';
+```ts
+import type { UserType, UserType_AdminType } from './types';
 
 declare module 'mnemonica' {
-	export interface TypeRegistry {
-		'UserType': new (data: { name: string; email: string }) => UserType;
-		'UserType.AdminType': new (data: { role: string; permissions: string[] }) => UserType_AdminType;
-		// ... all discovered types
-	}
+    interface TypeRegistry {
+        'UserType': new (data: { name: string }) => UserType;
+        'UserType.AdminType': new (data: { role: string }) => UserType_AdminType;
+    }
+}
+
+import type { TypeRegistry } from 'mnemonica';
+export type { TypeRegistry };
+```
+
+- Module augmentation of `mnemonica.TypeRegistry`.
+- Keys are full dotted paths (`'A.B.C'`); values are typed constructors that return the corresponding instance type.
+- Source: `TypesGenerator.generateTypeRegistry()` → `TypesWriter.writeTo('registry.ts', …)`.
+
+### `index.ts` (default mode)
+
+```ts
+export * from './types';
+export * from './registry';
+```
+
+In ESM mode (`--esm`) the imports gain `.js` extensions.
+
+### `index.d.ts` (legacy `--module-augmentation` mode)
+
+```ts
+import type { ProtoFlat } from 'mnemonica';
+export {};
+declare global {
+    type UserType = { … };
+    interface UserType { … } // declaration-merging shape for @decorate classes
 }
 ```
 
-3. **Projects import the registry** to enable type-safe lookup:
-```typescript
-// main.ts
-import './.tactica/registry'; // Augments mnemonica's TypeRegistry
-import { lookupTyped } from 'mnemonica';
+Single file; types are global. Consumed via triple-slash reference or `typeRoots`. Source: `TypesGenerator.generateGlobalAugmentation()` → `TypesWriter.writeGlobalAugmentation()`.
 
-const UserType = lookupTyped('UserType'); // Fully typed!
-const user = new UserType({ name: 'John' });
-```
+### `definitions.json` (always)
 
-#### Registry Generation
-
-To generate the registry file:
-```bash
-npx tactica --registry
-```
-
-Or enable it in tsconfig.json plugin options:
 ```json
 {
-	"compilerOptions": {
-		"plugins": [{
-			"name": "@mnemonica/tactica",
-			"outputDir": ".tactica",
-			"generateRegistry": true
-		}]
-	}
+    "version": "1.0",
+    "generatedAt": "2026-05-22T…",
+    "definitions": {
+        "UserType": {
+            "name": "UserType",
+            "location": "/abs/path/src/users.ts:10:7",
+            "kind": "define",
+            "parent": null,
+            "strictChain": true,
+            "blockErrors": false
+        },
+        "UserType.AdminType": { … }
+    }
 }
 ```
 
-#### Implementation Notes
+- `kind` is `"define" | "decorate"`.
+- `location` is `<file>:<1-based-line>:<1-based-column>`.
+- `parent` is the parent's full path or `null` for root types.
+- **Consumed by:** `mnemographica/src/providers/definitionProvider.ts` (Go to Definition), `mnemographica/src/models/Registry.ts` (registry view).
 
-- The registry uses TypeScript's declaration merging (module augmentation)
-- Types are referenced using `typeof` to get the constructor type
-- The augmentation is additive - it doesn't replace the default TypeRegistry
-- Falls back to `unknown` if the registry is not augmented
+### `usages.json` (always)
 
-### Type Casting for @decorate() Classes
-
-When using `@decorate()` on classes, TypeScript may not recognize the decorated class as a valid constructor. Use type casting:
-
-```typescript
-import { decorate, type ConstructorFunction } from 'mnemonica';
-
-@decorate()
-class MyClass {
-    name: string = '';
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-05-22T…",
+    "usages": {
+        "UserType": [
+            { "location": "/abs/path/src/main.ts:3:7", "kind": "instantiation", "code": "new UserType({…})" },
+            { "location": "/abs/path/src/main.ts:5:9", "kind": "propertyAccess", "code": "user.AdminType" }
+        ]
+    }
 }
-
-// Cast to ConstructorFunction for define()
-const MyType = define('MyType', MyClass as ConstructorFunction<{ name: string }>);
-
-// Or when creating instances
-const instance = new (MyClass as ConstructorFunction<{ name: string }>)();
 ```
+
+- `kind` is one of `'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'lookup' | 'reference'`.
+- **Consumed by:** `mnemographica/src/providers/referenceProvider.ts` (Find All References).
+
+### `flow.json` (always)
+
+Native-instance flow patterns (property reads/writes, method calls, destructures, returns, spreads, reassignments, instantiations, conditional and element access). Same shape as `usages.json` but keyed by `FlowKind`.
+
+### `eds.json` (when EDS enabled)
+
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-05-22T…",
+    "eds": {
+        "UserEntity": [
+            { "location": "/abs/path/src/queue.ts:45:12", "kind": "wrap", "code": "wrap(process)", "targetType": "UserEntity" }
+        ]
+    }
+}
+```
+
+`kind ∈ 'wrap' | 'link' | 'contextConsume' | 'errorEnrich' | 'hookAttach' | 'adapterUse'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
+
+## Key classes (quick reference)
+
+### `MnemonicaAnalyzer`
+
+Parses TS/JS source via the TS compiler API; populates a `TypeGraphImpl` and four usage maps.
+
+- `analyzeFile(sourceFile)` — analyze one `ts.SourceFile`.
+- `analyzeSource(code, fileName?)` — analyze a string of source code.
+- `resetUsages()` — clear usage/EDS/flow maps before the second pass (the CLI runs definitions first, then usages).
+- `addTopologicaType(fullPath, node)` — inject a topologica-discovered type into the graph + definitions.
+- Getters: `getGraph`, `getDefinitions`, `getUsages`, `getEDSUsages`, `getFlowUsages`.
+
+JavaScript files work when `allowJs: true` is in the user's `tsconfig.json`. The same AST visitors run on JS — type inference is naturally weaker without annotations.
+
+### `TopologicaAnalyzer`
+
+Scans a directory tree where each subdirectory represents a type and `index.ts` / `index.js` / `index.mjs` exports a handler function. Extracts properties from `this.x = …` assignments and `Object.assign(this, …)` patterns, with a small literal-type inference table.
+
+- `analyzeDirectory(path)` → `{ types: Map<string, TypeNode>, errors: string[] }`.
+- `getGraph()`, `getErrors()`.
+
+### `TypeGraphImpl`
+
+Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). Helpers: `addRoot`, `addChild`, `findType`, `findTypeByName`, `getAllTypes`, `clear`, `*bfs()`, `*dfs()`, and the static `createNode(name, parent, sourceFile, line, column)` factory.
+
+### `TypesGenerator`
+
+- `generateTypesFile()` → default-mode `types.ts` content.
+- `generateTypeRegistry()` → default-mode `registry.ts` content.
+- `generateGlobalAugmentation()` → legacy-mode `index.d.ts` content.
+- `generateSingleType(node)` → one type's text.
+- Constructor takes `(graph, esm = false)`; `esm: true` appends `.js` to relative imports.
+
+### `TypesWriter`
+
+Thin filesystem wrapper. One method per output file:
+
+- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeTo(filename, content)`.
+- `write(generated)` is a legacy alias for `writeTypesFile`.
+- `clean()` empties the output directory; `getOutputDir()` returns the configured path.
+
+## CLI options
+
+```
+-w, --watch                 Watch mode
+-p, --project <path>        Path to tsconfig.json (default: nearest ancestor)
+-o, --output <dir>          Output directory (default: .tactica)
+-i, --include <patterns>    Comma-separated include patterns
+-e, --exclude <patterns>    Comma-separated exclude patterns
+-t, --topologica <dirs>     Comma-separated Topologica directories
+-m, --module-augmentation   Legacy mode — emit single .tactica/index.d.ts
+    --esm                   Append .js to relative imports (NodeNext ESM)
+    --eds                   Force-enable EDS tracking
+    --no-eds                Force-disable EDS tracking
+-v, --verbose               Verbose logging
+-h, --help                  Show help
+```
+
+**Mode behavior:**
+
+- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (+ `definitions.json`, `usages.json`, `flow.json`, optional `eds.json`).
+- With `--module-augmentation`: writes `index.d.ts` (+ same JSONs). Default mode is the recommended path.
+
+The flag name `--module-augmentation` is historical; what it actually does is emit a **global**-augmentation single file. Renaming would be a breaking change to existing scripts.
 
 ## Testing
 
-Tests are in `test/` directory using Mocha + Chai:
+Mocha + chai, files in `test/**/*.test.ts`. `tsconfig.test.json` extends the main tsconfig but disables `noUnusedLocals/noUnusedParameters` and sets `noEmit`.
 
-```bash
-# Run all tests
-npm run test
+**Hard rule:** never use `node -e`. Write a real test file in `test/` and run with `npm test` or `node /tmp/foo.js`. `node -e` blocks waiting for stdin in automation.
 
-# Run tests with coverage report
-npm run test:coverage
-```
+After changing analyzer behavior:
 
-### Testing Rules (CRITICAL)
+1. Run `npm test` and `npm run test:coverage`.
+2. Re-read the "What Gets Analyzed" / "Property Type Inference" sections of `README.md`.
+3. If new capabilities or new limitations exist, update both README and this file in the same commit.
 
-**NEVER use `node -e` for testing.** Instead:
-- Write proper test files in the `test/` directory
-- Or create a temporary test file and run with `node <filename>`
-- Or use the existing test infrastructure (Mocha + Chai)
+## Supported patterns (the analyzer recognizes these)
 
-**Why?** `node -e` commands require interactive terminal input and cannot be automated. They block waiting for user interaction that will never come in automated environments.
+- `define('TypeName', handler)` — root or nested via `Parent.define(…)` or chained `define(…).define(…)`.
+- `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
+- `Object.assign(this, data)` (extracts from `data`'s type annotation).
+- Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`).
+- Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback.
+- Async constructor functions.
+- `as TypeConstructor<{…}>` casting (and `as ConstructorFunction<{…}>` legacy alias) for plain function constructors.
+- Typeomatica `@Strict` decorator alongside `@decorate`; `Object.setPrototypeOf(MyType.prototype, new BaseClass(…))`.
 
-**Correct approach:**
-```bash
-# ✅ CORRECT - Write a test file
-echo "console.log(require('./lib').something)" > /tmp/test.js && node /tmp/test.js
+Falls back to `unknown` when inference fails.
 
-# ✅ CORRECT - Use existing test infrastructure
-npm test -- --grep "specific test"
+## Common contribution patterns
 
-# ❌ WRONG - Never use node -e for testing
-node -e "console.log(require('./lib').something)"
-```
+### Add a new analyzer feature
 
-### Test Suites
-
-| File | Description |
-|------|-------------|
-| `analyzer.test.ts` | Unit tests for AST analyzer |
-| `generator.test.ts` | Unit tests for code generator |
-| `writer.test.ts` | Unit tests for file writer |
-| `integration.test.ts` | Integration tests for core/test-ts patterns |
-| `examples.test.ts` | Tests for tactica-test example files |
-| `typeomatica.test.ts` | Combined mnemonica + typeomatica patterns |
-
-### After Modifying Tests
-
-**IMPORTANT**: After adding or modifying tests, you **MUST** compare the tested features with the documentation:
-
-1. **Review the tests** - What new capabilities are being tested?
-2. **Check README.md** - Is the "Known Limitations" section still accurate?
-3. **Check README.md** - Are the "Supported Patterns" documented?
-4. **Check AGENTS.md** - Do the "Supported Patterns" examples match?
-5. **Update documentation** if tests reveal new capabilities or changed behavior
-
-Example workflow:
-```
-Add new tests for feature X → Run tests → Verify they pass →
-Compare with README/AGENTS → Update documentation if needed
-```
-
-This ensures documentation stays in sync with actual analyzer capabilities.
-
-## Supported Patterns
-
-### 1. define() Calls
-
-```typescript
-// Root type
-const UserType = define('UserType', function (this: any) {
-    this.name = '';
-});
-
-// Nested type (subtypes)
-const AdminType = UserType.define('AdminType', function (this: any) {
-    this.role = 'admin';
-});
-```
-
-### 2. @decorate() Decorator
-
-```typescript
-// Basic decorator
-@decorate()
-class User {
-    name: string = '';
-}
-
-// With parent class
-@decorate(ParentClass)
-class Child {
-    childProp: string = '';
-}
-
-// With options
-@decorate({
-    blockErrors: true,
-    strictChain: false,
-    exposeInstanceMethods: true
-})
-class Configurable {
-    value: string = '';
-}
-
-// Both parent and options
-@decorate(ParentClass, { strictChain: false })
-class ChildWithOptions {
-    prop: string = '';
-}
-```
-
-### 3. Object.assign Pattern
-
-```typescript
-const UserType = define('UserType', function (this: any, data: any) {
-    Object.assign(this, data);
-});
-```
-
-### 4. Typeomatica Integration
-
-Tactica works with Typeomatica patterns without breaking:
-
-```typescript
-import { Strict, BaseClass } from 'typeomatica';
-import { decorate } from 'mnemonica';
-
-// @Strict decorator alongside @decorate
-@decorate()
-@Strict({ someProp: 123 })
-class StrictEntity {
-    someProp!: number;
-}
-
-// BaseClass with Object.setPrototypeOf
-@decorate()
-class MyBase {
-    baseField = 555;
-}
-
-Object.setPrototypeOf(MyBase.prototype, new BaseClass({ strict: true }));
-```
-
-### 5. ConstructorFunction Pattern
-
-```typescript
-import { ConstructorFunction } from 'mnemonica';
-
-const MyFn = function (this: any) {
-    this.field = 123;
-} as ConstructorFunction<{ field: number }>;
-
-const MyFnType = define('MyFnType', MyFn);
-```
-
-### 6. Configuration Options
-
-```typescript
-// exposeInstanceMethods option
-const HiddenType = define('HiddenType', function (this: any) {
-    this.data = 'hidden';
-}, {
-    exposeInstanceMethods: false,
-});
-
-// Shorthand syntax (same as above)
-const HiddenShorthand = define('HiddenShorthand', function (this: any) {
-    this.data = 'shorthand';
-}, false);
-```
-
-### 7. Type Inference from Expressions
-
-The analyzer infers types from various expression patterns:
-
-```typescript
-// Arithmetic operations → number
-const CalcType = define('CalcType', function (this: any, data: { x: number; y: number }) {
-    this.sum = data.x + data.y;      // number
-    this.diff = data.x - data.y;     // number
-    this.product = data.x * data.y;  // number
-    this.quotient = data.x / data.y; // number
-});
-
-// Built-in function calls
-const TimeType = define('TimeType', function (this: any) {
-    this.now = Date.now();           // number
-    this.parsed = parseInt('123');   // number
-    this.str = String(123);          // string
-    this.bool = Boolean(1);          // boolean
-});
-
-// Template literals → string
-const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
-    this.fullName = `${data.first} ${data.last}`; // string
-});
-
-// new Expressions
-const ContainerType = define('ContainerType', function (this: any) {
-    this.created = new Date();       // Date
-    this.items = new Array();        // Array
-    this.cache = new Map();          // Map
-});
-
-// Direct parameter assignment
-const DirectType = define('DirectType', function (this: any, name: string, count: number) {
-    this.name = name;    // string
-    this.count = count;  // number
-});
-
-// Data parameter property access
-const DataType = define('DataType', function (this: any, data: { id: string; items: string[] }) {
-    this.id = data.id;       // string
-    this.items = data.items; // Array<string>
-});
-
-// Async constructors
-const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
-    this.value = data.value;
-    this.computed = data.value * 2;  // number
-    this.timestamp = Date.now();     // number
-});
-```
-
-## Common Patterns
-
-### Adding a New Analyzer Feature
-
-```typescript
-// 1. Add detection in visitNode()
+```ts
+// In analyzer.ts visitNode():
 if (this.isNewPattern(node)) {
     this.processNewPattern(node as ts.CallExpression, sourceFile);
 }
 
-// 2. Implement detection method
-private isNewPattern(node: ts.Node): boolean {
-    // Detection logic
-}
-
-// 3. Implement processing method
-private processNewPattern(call: ts.CallExpression, sourceFile: ts.SourceFile): void {
-    // Extract info and add to graph
-}
+private isNewPattern (node: ts.Node): boolean { /* detection */ }
+private processNewPattern (call: ts.CallExpression, sf: ts.SourceFile): void { /* extract + add to graph */ }
 ```
 
-### Working with the Type Graph
+### Work with the type graph
 
-```typescript
+```ts
 const graph = new TypeGraphImpl();
-
-// Create nodes
-const root = TypeGraphImpl.createNode('UserType', undefined, 'file.ts', 1, 1);
+const root  = TypeGraphImpl.createNode('UserType', undefined, 'file.ts', 1, 1);
 graph.addRoot(root);
 
 const child = TypeGraphImpl.createNode('AdminType', root, 'file.ts', 5, 1);
 graph.addChild(root, child);
 
-// Traverse
 for (const node of graph.bfs()) {
     console.log(node.fullPath);
 }
 ```
 
-### Generating Types
+### Generate output
 
-```typescript
+```ts
 const generator = new TypesGenerator(graph);
+const writer    = new TypesWriter('.tactica');
 
-// Default mode: generate exportable type aliases (types.ts)
-const generatedTypes = generator.generateTypesFile();
-// generatedTypes.content - the types.ts file content
-// generatedTypes.types - array of generated type names
-
-// Global mode: generate global type declarations (index.d.ts)
-const generatedGlobal = generator.generateGlobalAugmentation();
-// generatedGlobal.content - the index.d.ts file content
-// generatedGlobal.types - array of generated type names
-
-// Generate single type
-const singleType = generator.generateSingleType(node);
+writer.writeTypesFile(generator.generateTypesFile());
+writer.writeTo('registry.ts', generator.generateTypeRegistry().content);
 ```
 
-## Configuration
+## Known limitations
 
-### tsconfig.json Plugin Config
+- **Rest/tuple parameters** — `...args: [Data, ...unknown[]]` and then `args[0]` is not tracked. Use a direct named parameter.
+- **Multi-level property access** — `this.x = data.profile.name` resolves `this.x` to `unknown`. Flatten or use a direct parameter.
+- **No `getTypeChecker()` binding** — cross-file resolution uses name-based heuristics, not the real symbol table.
+- **`exposeInstanceMethods` is not parsed** from `define()` options. Mnemonica accepts it at runtime; tactica ignores it.
 
-```json
-{
-  "compilerOptions": {
-    "plugins": [
-      {
-        "name": "@mnemonica/tactica",
-        "outputDir": ".tactica",
-        "include": ["src/**/*.ts"],
-        "exclude": ["**/*.test.ts"]
-      }
-    ]
-  }
-}
-```
+## Related projects
 
-### CLI Options
-
-```bash
-npx tactica [options]
-  -w, --watch                 Watch for file changes
-  -p, --project               Path to tsconfig.json
-  -o, --output                Output directory (default: .tactica)
-  -i, --include               File patterns to include
-  -e, --exclude               File patterns to exclude
-  -t, --topologica            Topologica directories to scan (comma-separated)
-  -m, --module-augmentation   Generate global augmentation (index.d.ts) instead of exportable types
-  --eds                       Enable EDS (Execution Data Storage) tracking
-  --no-eds                    Disable EDS tracking
-  -v, --verbose               Enable verbose logging
-  -h, --help                  Show help
-```
-
-**Output Modes:**
-
-- **Default mode** (no flags): Generates `.tactica/types.ts` with exportable type aliases
-  - Import types explicitly: `import type { UserTypeInstance } from './.tactica/types'`
-  - Recommended for new projects - explicit imports work better with tree-shaking
-
-- **Global mode** (`--module-augmentation`): Generates `.tactica/index.d.ts` with global declarations
-  - Types available without imports via global augmentation
-  - Use triple-slash reference: `/// <reference types="./.tactica/index" />`
-  - Legacy behavior, useful for gradual migration
-
-**Examples:**
-
-```bash
-# Default mode - generate types.ts
-npx tactica
-
-# Global mode - generate index.d.ts
-npx tactica --module-augmentation
-
-# Watch mode with default output
-npx tactica --watch
-
-# Watch mode with global augmentation
-npx tactica --watch --module-augmentation
-
-# Exclude test files
-npx tactica --exclude "**/*.test.ts" --exclude "**/*.spec.ts"
-
-# Enable EDS tracking (auto-enabled when @mnemonica/dive is in dependencies)
-npx tactica --eds
-
-# Disable EDS tracking
-npx tactica --no-eds
-
-# Custom project path
-npx tactica --project ./tsconfig.json
-
-# Scan custom topologica directories
-npx tactica --topologica ./src/ai-types,./custom/topologica
-```
-
-## Known Limitations
-
-1. **Single-pass analysis**: Without a full TypeScript program, parent-child relationships may not be fully resolved. Using `ts.Program` provides better binding.
-
-2. **Deep nested property access**: Property access like `data.nested.prop` returns `unknown` - only single-level access (`data.prop`) is fully supported.
-
-3. **Complex property definitions**: While arithmetic operations, template literals, and common built-in functions are supported, complex expressions may fall back to `unknown`.
-
-4. **Decorator support**: `@decorate()` is detected, but complex decorator patterns may need enhancement.
-
-## Type Inference Capabilities
-
-The analyzer can infer property types from various expression patterns:
-
-### Supported Patterns
-
-```typescript
-// Arithmetic operations → number
-const CalcType = define('CalcType', function (this: any, data: { x: number; y: number }) {
-	this.sum = data.x + data.y;      // number
-	this.diff = data.x - data.y;     // number
-	this.product = data.x * data.y;  // number
-	this.quotient = data.x / data.y; // number
-});
-
-// Built-in function calls
-const TimeType = define('TimeType', function (this: any) {
-	this.now = Date.now();           // number
-	this.parsed = parseInt('123');   // number
-	this.str = String(123);          // string
-	this.bool = Boolean(1);          // boolean
-});
-
-// Template literals → string
-const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
-	this.fullName = `${data.first} ${data.last}`; // string
-});
-
-// new Expressions
-const ContainerType = define('ContainerType', function (this: any) {
-	this.created = new Date();       // Date
-	this.items = new Array();        // Array
-	this.cache = new Map();          // Map
-});
-
-// Direct parameter assignment
-const DirectType = define('DirectType', function (this: any, name: string, count: number) {
-	this.name = name;    // string
-	this.count = count;  // number
-});
-
-// Data parameter property access
-const DataType = define('DataType', function (this: any, data: { id: string; items: string[] }) {
-	this.id = data.id;       // string
-	this.items = data.items; // Array<string>
-});
-```
-
-### Fallback Behavior
-
-When type cannot be inferred, the analyzer falls back to `unknown`. This is safe and allows manual type annotation if needed.
-
-## Related Projects
-
-- **mnemonica** (core/) - Instance inheritance system
-- **topologica** - Filesystem-based type discovery
+- **mnemonica** (`../core`) — the inheritance runtime tactica targets.
+- **typeomatica** (`../typeomatica`) — companion runtime type guards.
+- **topologica** — filesystem-based type discovery (tactica's `--topologica` flag consumes this convention).
+- **mnemographica** (`../mnemographica`) — VS Code extension; consumes `.tactica/*.json`.
 
 ## Resources
 
-- [TypeScript Compiler API](https://github.com/Microsoft/TypeScript/wiki/Using-the-Compiler-API)
-- [TypeScript Language Service Plugin Docs](https://github.com/microsoft/TypeScript/wiki/Writing-a-Language-Service-Plugin)
-- Mnemonica README: `core/README.md`
+- [TypeScript Compiler API](https://github.com/microsoft/TypeScript/wiki/Using-the-Compiler-API)
+- mnemonica README: `../core/README.md`
+- mnemographica README: `../mnemographica/README.md`

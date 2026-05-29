@@ -131,6 +131,30 @@ describe('Class Property Extraction', () => {
 			expect(result.types).to.have.length(1);
 			expect(result.types[0].properties.size).to.equal(0);
 		});
+
+		it('should extract constructor params with typed parameters from class expression', () => {
+			const source = `
+				import { define } from 'mnemonica';
+
+				export const UserType = define('UserType', class {
+					name: string = '';
+					count: number = 0;
+					constructor(name: string, count: number) {
+						this.name = name;
+						this.count = count;
+					}
+				});
+			`;
+
+			const graph = analyzer.analyzeSource(source);
+			expect(graph.errors).to.have.length(0);
+			const userType = graph.types[0];
+			expect(userType.name).to.equal('UserType');
+			const params = userType.constructorParams;
+			expect(params).to.be.an('array');
+			expect(params!.find(p => p.name === 'name')?.type).to.equal('string');
+			expect(params!.find(p => p.name === 'count')?.type).to.equal('number');
+		});
 	});
 
 	describe('UsageEntry pattern from Usages.ts', () => {

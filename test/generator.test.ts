@@ -79,13 +79,103 @@ describe('TypesGenerator', () => {
 		it('should include parent in intersection type', () => {
 			const parent = TypeGraphImpl.createNode('Parent', undefined, 'test.ts', 1, 1);
 			const child = TypeGraphImpl.createNode('Child', parent, 'test.ts', 5, 1);
-			
+
 			graph.addRoot(parent);
 			graph.addChild(parent, child);
 
 			const result = generator.generateGlobalAugmentation();
 
 			expect(result.content).to.include('Child = ProtoFlat<Parent,');
+		});
+	});
+
+	describe('generateTypeRegistry', () => {
+		it('should generate module augmentation for mnemonica TypeRegistry', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			node.properties.set('name', { name: 'name', type: 'string', optional: false });
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("declare module 'mnemonica'");
+			expect(result.content).to.include('interface TypeRegistry');
+			expect(result.content).to.include("'UserType':");
+		});
+
+		it('should include import for instance types', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("import type {");
+			expect(result.content).to.include("UserType,");
+		});
+
+		it('should re-export TypeRegistry for backward compatibility', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("import type { TypeRegistry } from 'mnemonica'");
+			expect(result.content).to.include('export type { TypeRegistry }');
+		});
+
+		it('should return generated type names', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.types).to.include('UserType');
+		});
+
+		it('should generate nested type entries', () => {
+			const parent = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			const child = TypeGraphImpl.createNode('AdminType', parent, 'test.ts', 5, 1);
+			graph.addRoot(parent);
+			graph.addChild(parent, child);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("'UserType':");
+			expect(result.content).to.include("'UserType.AdminType':");
+		});
+	});
+
+	describe('generateSingleType', () => {
+		it('should return type text for a single node', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			node.properties.set('name', { name: 'name', type: 'string', optional: false });
+			graph.addRoot(node);
+
+			const result = generator.generateSingleType(node);
+
+			expect(result).to.be.a('string');
+			expect(result).to.include('UserType');
+		});
+	});
+
+	describe('ESM mode', () => {
+		it('should append .js extension to imports in ESM mode', () => {
+			const esmGenerator = new TypesGenerator(graph, true);
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			graph.addRoot(node);
+
+			const result = esmGenerator.generateTypeRegistry();
+
+			expect(result.content).to.include("from './types.js'");
+		});
+
+		it('should not append .js extension in default mode', () => {
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("from './types'");
+			expect(result.content).to.not.include("from './types.js'");
 		});
 	});
 });

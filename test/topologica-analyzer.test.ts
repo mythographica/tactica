@@ -188,4 +188,159 @@ describe('TopologicaAnalyzer', () => {
 			expect(errors.length).to.be.greaterThan(0);
 		});
 	});
+
+	describe('type inference paths', () => {
+		const fixturePath = path.join(__dirname, 'fixtures', 'type-inference');
+
+		it('should analyze type-inference fixture without errors', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			expect(result.errors).to.have.length(0);
+			expect(result.types.has('Complex')).to.be.true;
+		});
+
+		it('should infer new Date() as number (timestamp)', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('createdAt')?.type).to.equal('number');
+		});
+
+		it('should infer new Map() as Map<any, any>', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('mapData')?.type).to.equal('Map<any, any>');
+		});
+
+		it('should infer new Set() as Set<any>', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('setData')?.type).to.equal('Set<any>');
+		});
+
+		it('should infer new RegExp() as RegExp', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('regexp')?.type).to.equal('RegExp');
+		});
+
+		it('should infer new Array() as Array<any>', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('arrData')?.type).to.equal('Array<any>');
+		});
+
+		it('should infer Date.now() as number', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('timestamp')?.type).to.equal('number');
+		});
+
+		it('should infer parseInt() as number', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('parsed')?.type).to.equal('number');
+		});
+
+		it('should infer parseFloat() as number', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('parsed2')?.type).to.equal('number');
+		});
+
+		it('should infer String() as string', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('str')?.type).to.equal('string');
+		});
+
+		it('should infer Number() as number', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('num')?.type).to.equal('number');
+		});
+
+		it('should infer Boolean() as boolean', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('flag')?.type).to.equal('boolean');
+		});
+
+		it('should extract constructor params with primitive types from type alias', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			const params = complex?.constructorParams;
+			expect(params).to.be.an('array');
+			// tag: string, score: number, enabled: boolean, items: string[]
+			const tagParam = params?.find(p => p.name === 'tag');
+			const scoreParam = params?.find(p => p.name === 'score');
+			const enabledParam = params?.find(p => p.name === 'enabled');
+			const itemsParam = params?.find(p => p.name === 'items');
+			expect(tagParam?.type).to.equal('string');
+			expect(scoreParam?.type).to.equal('number');
+			expect(enabledParam?.type).to.equal('boolean');
+			expect(itemsParam?.type).to.equal('Array<any>');
+		});
+
+		it('should expand type alias to object literal for first param', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			const params = complex?.constructorParams;
+			// First param is `data: ComplexData` which should be expanded to { label: string; count: number; active: boolean }
+			const dataParam = params?.find(p => p.name === 'data');
+			expect(dataParam?.type).to.include('label');
+			expect(dataParam?.type).to.include('string');
+		});
+
+		it('should detect nested Complex.Nested type', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			expect(result.types.has('Complex.Nested')).to.be.true;
+		});
+
+		it('should infer null literal as null', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('nullProp')?.type).to.equal('null');
+		});
+
+		it('should infer undefined identifier as any (not a keyword in expression context)', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('undefinedProp')?.type).to.equal('any');
+		});
+
+		it('should infer array literal as Array<any>', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('arrLiteral')?.type).to.equal('Array<any>');
+		});
+
+		it('should infer object literal as object', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('objLiteral')?.type).to.equal('object');
+		});
+
+		it('should infer arithmetic binary expression as any', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('sum')?.type).to.equal('any');
+		});
+
+		it('should infer new CustomClass() using class name as type', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('instance')?.type).to.equal('LocalClass');
+		});
+
+		it('should infer unknown call expression as any', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('callResult')?.type).to.equal('any');
+		});
+
+		it('should infer non-Date.now property access call as any', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('floorVal')?.type).to.equal('any');
+		});
+	});
 });

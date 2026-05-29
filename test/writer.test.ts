@@ -10,6 +10,13 @@ describe('TypesWriter', () => {
 	const testDir = path.join(__dirname, '.test-mnemonica');
 	let writer: TypesWriter;
 
+	describe('default constructor', () => {
+		it('should use .tactica as default output directory', () => {
+			const defaultWriter = new TypesWriter();
+			expect(defaultWriter.getOutputDir()).to.equal('.tactica');
+		});
+	});
+
 	beforeEach(() => {
 		// Clean up test directory
 		if (fs.existsSync(testDir)) {
@@ -109,6 +116,111 @@ describe('TypesWriter', () => {
 
 			// Cleanup
 			fs.rmSync(nestedDir, { recursive: true, force: true });
+		});
+	});
+
+	describe('writeDefinitionsFile()', () => {
+		it('should write definitions.json with correct shape', () => {
+			const definitions = new Map([
+				['UserType', {
+					name: 'UserType',
+					location: 'src/users.ts:10:7',
+					kind: 'define' as const,
+					parent: null,
+					strictChain: true,
+					blockErrors: false,
+				}],
+			]);
+
+			const outputPath = writer.writeDefinitionsFile(definitions);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('definitions.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.definitions.UserType.name).to.equal('UserType');
+			expect(json.definitions.UserType.kind).to.equal('define');
+		});
+
+		it('should handle empty definitions map', () => {
+			const outputPath = writer.writeDefinitionsFile(new Map());
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.definitions).to.deep.equal({});
+		});
+	});
+
+	describe('writeUsagesFile()', () => {
+		it('should write usages.json with correct shape', () => {
+			const usages = new Map([
+				['UserType', [
+					{ location: 'src/main.ts:3:7', kind: 'instantiation' as const, code: 'new UserType({})' },
+				]],
+			]);
+
+			const outputPath = writer.writeUsagesFile(usages);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('usages.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.usages.UserType).to.have.length(1);
+			expect(json.usages.UserType[0].kind).to.equal('instantiation');
+		});
+
+		it('should handle empty usages map', () => {
+			const outputPath = writer.writeUsagesFile(new Map());
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.usages).to.deep.equal({});
+		});
+	});
+
+	describe('writeEDSFile()', () => {
+		it('should write eds.json with correct shape', () => {
+			const eds = new Map([
+				['UserEntity', [
+					{ location: 'src/queue.ts:45:12', kind: 'wrap' as const, code: 'wrap(process)', targetType: 'UserEntity' },
+				]],
+			]);
+
+			const outputPath = writer.writeEDSFile(eds);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('eds.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.eds.UserEntity).to.have.length(1);
+			expect(json.eds.UserEntity[0].kind).to.equal('wrap');
+		});
+
+		it('should handle empty eds map', () => {
+			const outputPath = writer.writeEDSFile(new Map());
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.eds).to.deep.equal({});
+		});
+	});
+
+	describe('writeFlowFile()', () => {
+		it('should write flow.json with correct shape', () => {
+			const flow = new Map([
+				['UserType', [
+					{ location: 'src/main.ts:7:5', kind: 'propertyRead' as const, code: 'user.name' },
+				]],
+			]);
+
+			const outputPath = writer.writeFlowFile(flow);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('flow.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.flow.UserType).to.have.length(1);
+			expect(json.flow.UserType[0].kind).to.equal('propertyRead');
+		});
+
+		it('should handle empty flow map', () => {
+			const outputPath = writer.writeFlowFile(new Map());
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.flow).to.deep.equal({});
 		});
 	});
 });

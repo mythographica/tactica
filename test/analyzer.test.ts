@@ -933,4 +933,41 @@ describe('MnemonicaAnalyzer', () => {
 				expect(usages.has('Parent.Child')).to.be.true;
 			});
 		});
+
+		describe('extractConstructorParams', () => {
+			it('should extract constructor params with generic type args (Array<string>, Map<K,V>)', () => {
+				const source = `
+					import { define } from 'mnemonica';
+
+					const UserType = define('UserType', function (
+						this: any,
+						items: Array<string>,
+						mapping: Map<string, number>
+					) {
+						this.items = items;
+						this.mapping = mapping;
+					});
+				`;
+
+				analyzer.analyzeSource(source);
+				const graph = analyzer.getGraph();
+				const userType = graph.findType('UserType');
+				expect(userType).to.exist;
+				const params = userType!.constructorParams;
+				expect(params).to.be.an('array');
+				const itemsParam = params!.find(p => p.name === 'items');
+				expect(itemsParam?.type).to.equal('Array<string>');
+			});
+		});
+
+		describe('addTopologicaType()', () => {
+			it('should inject an external type node into the graph', () => {
+				const { TypeGraphImpl } = require('../src/graph');
+				const node = TypeGraphImpl.createNode('External', undefined, 'external.ts', 1, 1);
+				node.properties.set('x', { name: 'x', type: 'number', optional: false });
+				analyzer.addTopologicaType('External', node);
+				const graph = analyzer.getGraph();
+				expect(graph.findType('External')).to.exist;
+			});
+		});
 	});
