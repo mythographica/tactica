@@ -1,7 +1,7 @@
 {
 	"name": "@mnemonica/tactica",
 	"version": "0.1.0",
-	"description": "TypeScript Language Service Plugin for Mnemonica - generates types for nested constructors",
+	"description": "Type definition generator for Mnemonica — statically analyzes define() calls and emits .tactica/ types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
 	"bin": {
@@ -26,15 +26,12 @@
 	"keywords": [
 		"mnemonica",
 		"typescript",
-		"language-service",
-		"plugin",
+		"codegen",
 		"types",
-		"intellisense"
+		"type-generator",
+		"ast"
 	],
 	"author": "went.out@gmail.com",
-	"contributors": [
-		"Roo AI <ai-assistant@example.com>"
-	],
 	"repository": {
 		"type": "git",
 		"url": "git+https://github.com/mythographica/tactica.git"
