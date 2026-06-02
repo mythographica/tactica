@@ -1,6 +1,6 @@
 {
 	"name": "@mnemonica/tactica",
-	"version": "0.1.0",
+	"version": "0.1.1",
 	"description": "Type definition generator for Mnemonica — statically analyzes define() calls and emits .tactica/ types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
@@ -20,7 +20,7 @@
 		"test:coverage": "npx nyc npm test",
 		"test:coverage:html": "npx nyc --reporter=html npm test",
 		"lint": "npx eslint --fix ./src",
-		"use:public": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='latest';p.devDependencies.mnemonica='latest';p.devDependencies.typeomatica='latest';p.dependencies.mnemonica='latest';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to PUBLIC npm dependencies (latest)');\" && rm -rf node_modules package-lock.json && npm install",
+		"use:public": "rm -rf node_modules package-lock.json && npm install mnemonica@latest typeomatica@latest --save && npm install mnemonica@latest --save-dev && npm install mnemonica@latest --save-peer && echo 'Switched to PUBLIC npm dependencies (latest)'",
 		"use:local": "node -e \"const fs=require('fs'),p=JSON.parse(fs.readFileSync('package.json','utf8'));p.peerDependencies.mnemonica='file:../core';p.devDependencies.mnemonica='file:../core';p.devDependencies.typeomatica='file:../typeomatica';p.dependencies.mnemonica='file:../core';fs.writeFileSync('package.json',JSON.stringify(p,null,'\\t')+'\\n');console.log('Switched to LOCAL file: dependencies');\""
 	},
 	"keywords": [
@@ -38,25 +38,25 @@
 	},
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "latest",
+		"mnemonica": "^1.0.1",
 		"typescript": "^5.0.0"
 	},
 	"devDependencies": {
 		"@istanbuljs/nyc-config-typescript": "^1.0.2",
-		"@types/chai": "^4.3.0",
-		"@types/mocha": "^10.0.0",
-		"@types/node": "^20.0.0",
-		"chai": "^4.3.10",
-		"mocha": "^10.2.0",
+		"@types/chai": "^4.3.20",
+		"@types/mocha": "^10.0.10",
+		"@types/node": "^20.19.41",
+		"chai": "^4.5.0",
+		"mnemonica": "^1.0.1",
+		"mocha": "^10.8.2",
 		"nyc": "^17.1.0",
-		"ts-node": "^10.9.0",
-		"typeomatica": "latest",
-		"typescript": "^5.3.0",
-		"mnemonica": "latest"
+		"ts-node": "^10.9.2",
+		"typeomatica": "^0.3.57",
+		"typescript": "^5.9.3"
 	},
 	"dependencies": {
-		"@types/chokidar": "^2.1.0",
-		"chokidar": "^3.5.0",
-		"mnemonica": "latest"
+		"@types/chokidar": "^2.1.7",
+		"chokidar": "^3.6.0",
+		"mnemonica": "^1.0.1"
 	}
 }
