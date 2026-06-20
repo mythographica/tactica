@@ -272,21 +272,21 @@ export class TypesGenerator {
 	}
 
 	/**
-		 * Generate TypeRegistry interface for type-safe lookupTyped() function
-		 * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
+		 * Generate TypeRegistry interface for type-safe lookup() function
+		 * Augment mnemonica's TypeRegistry so lookup('TypeName') returns the typed constructor
 		 */
 	generateTypeRegistry(): GeneratedTypes {
 		const lines: string[] = [];
 		const generatedTypes: string[] = [];
 
 		// Header
-		lines.push('// Generated TypeRegistry for type-safe mnemonica.lookupTyped<TypeRegistry>()');
-		lines.push('// Import this interface and use with lookupTyped from mnemonica');
+		lines.push('// Generated TypeRegistry for type-safe mnemonica.lookup()');
+		lines.push('// This file augments mnemonica\'s TypeRegistry via declaration merging.');
 		lines.push('//');
 		lines.push('// Usage:');
-		lines.push("//   import { lookupTyped } from 'mnemonica';");
-		lines.push("//   import { TypeRegistry } from './.tactica/registry';");
-		lines.push("//   const Sentience = lookupTyped<TypeRegistry>('Sentience');");
+		lines.push("//   import { lookup } from 'mnemonica';");
+		lines.push("//   import './.tactica/registry';  // applies the augmentation");
+		lines.push("//   const Sentience = lookup('Sentience');");
 		lines.push('//   // TypeScript knows: Sentience is a constructor for SentienceInstance');
 		lines.push("//   const instance = new Sentience({ purpose: 'AI' });");
 		lines.push('//   // instance has full intellisense for Consciousness, Memory, etc.');
@@ -307,9 +307,9 @@ export class TypesGenerator {
 		// Generate module augmentation for mnemonica TypeRegistry
 		lines.push('/**');
 		lines.push(' * Type registry augmenting mnemonica\'s TypeRegistry interface');
-		lines.push(' * This enables type-safe lookupTyped() without explicit type arguments');
+		lines.push(' * This enables type-safe lookup() without explicit type arguments');
 		lines.push(' *');
-		lines.push(' * Usage: const SomeType = lookupTyped(\'SomeType\'); // Fully typed!');
+		lines.push(' * Usage: const SomeType = lookup(\'SomeType\'); // Fully typed!');
 		lines.push(' */');
 		lines.push('declare module \'mnemonica\' {');
 		lines.push('	interface TypeRegistry {');

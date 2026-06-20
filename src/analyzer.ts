@@ -371,15 +371,15 @@ export class MnemonicaAnalyzer {
 		}
 	
 	/**
-		* Track variable assignments from lookupTyped() calls
-		* e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
+		* Track variable assignments from lookup() calls
+		* e.g., const SentienceConstructor = lookup('Sentience') maps "SentienceConstructor" -> "Sentience"
 		*/
-	private trackLookupTypedAssignment(call: ts.CallExpression, typePath: string): void {
+	private trackLookupAssignment(call: ts.CallExpression, typePath: string): void {
 		// Walk up the tree to find VariableDeclaration
 		let current: ts.Node | undefined = call.parent;
 		while (current) {
 			if (ts.isVariableDeclaration(current)) {
-				// Found: const X = lookupTyped(...)
+				// Found: const X = lookup(...)
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
 					this.variableToTypeMap.set(varName, typePath);
@@ -1569,10 +1569,10 @@ export class MnemonicaAnalyzer {
 				}
 			}
 	
-			// Check for lookupTyped('TypeName') calls
+			// Check for lookup('TypeName') calls
 			if (ts.isCallExpression(node) && node.expression) {
 				const funcName = this.getFunctionName(node.expression);
-				if (funcName === 'lookupTyped' && node.arguments.length > 0) {
+				if (funcName === 'lookup' && node.arguments.length > 0) {
 					const firstArg = node.arguments[0];
 					if (ts.isStringLiteral(firstArg) || ts.isNoSubstitutionTemplateLiteral(firstArg)) {
 						const typePath = firstArg.text;
@@ -1585,8 +1585,8 @@ export class MnemonicaAnalyzer {
 							kind: 'lookup',
 							code: node.getText(sourceFile).slice(0, 100),
 						});
-						// Track variable assignment from lookupTyped for instantiation tracking
-						this.trackLookupTypedAssignment(node, typePath);
+						// Track variable assignment from lookup for instantiation tracking
+						this.trackLookupAssignment(node, typePath);
 					}
 				}
 			}
@@ -2118,7 +2118,7 @@ export class MnemonicaAnalyzer {
 		private getTypeNameFromExpression(expr: ts.Expression): string | undefined {
 			if (ts.isIdentifier(expr)) {
 				const name = expr.text;
-				// Check if this identifier is a variable mapped to a type (e.g., from lookupTyped)
+				// Check if this identifier is a variable mapped to a type (e.g., from lookup)
 				const mappedType = this.variableToTypeMap.get(name);
 				if (mappedType) {
 					return mappedType;

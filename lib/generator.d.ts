@@ -45,8 +45,8 @@ export declare class TypesGenerator {
          */
     generateSingleType(node: TypeNode): string;
     /**
-         * Generate TypeRegistry interface for type-safe lookupTyped() function
-         * Import this interface and pass it to lookupTyped<TypeRegistry>() from mnemonica
+         * Generate TypeRegistry interface for type-safe lookup() function
+         * Augment mnemonica's TypeRegistry so lookup('TypeName') returns the typed constructor
          */
     generateTypeRegistry(): GeneratedTypes;
     /**

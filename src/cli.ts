@@ -423,7 +423,7 @@ function run(options: CLIOptions): void {
 		generatedTypes = generator.generateTypesFile();
 		outputPath = writer.writeTypesFile(generatedTypes);
 
-		// Generate registry.ts for type-safe lookupTyped<TypeRegistry>() function
+		// Generate registry.ts for type-safe lookup() function
 		const registryTypes = generator.generateTypeRegistry();
 		const registryPath = writer.writeTo('registry.ts', registryTypes.content);
 

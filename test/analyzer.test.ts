@@ -838,8 +838,8 @@ describe('MnemonicaAnalyzer', () => {
 			});
 		});
 	
-		describe('lookupTyped() usage detection', () => {
-			it('should detect lookupTyped() calls with string literal', () => {
+		describe('lookup() usage detection', () => {
+			it('should detect lookup() calls with string literal', () => {
 				const defineSource = `
 					import { define } from 'mnemonica';
 					const UserType = define('UserType', function () {
@@ -848,8 +848,8 @@ describe('MnemonicaAnalyzer', () => {
 				`;
 	
 				const source = `
-					import { lookupTyped } from 'mnemonica';
-					const User = lookupTyped('UserType');
+					import { lookup } from 'mnemonica';
+					const User = lookup('UserType');
 				`;
 	
 				analyzer.analyzeSource(defineSource);
@@ -860,10 +860,10 @@ describe('MnemonicaAnalyzer', () => {
 				const userTypeUsages = usages.get('UserType');
 				expect(userTypeUsages).to.have.length(1);
 				expect(userTypeUsages![0].kind).to.equal('lookup');
-				expect(userTypeUsages![0].code).to.include("lookupTyped('UserType')");
+				expect(userTypeUsages![0].code).to.include("lookup('UserType')");
 			});
 	
-			it('should detect lookupTyped() for nested types', () => {
+			it('should detect lookup() for nested types', () => {
 				const defineSource = `
 					import { define } from 'mnemonica';
 					const Parent = define('Parent', function () {});
@@ -871,8 +871,8 @@ describe('MnemonicaAnalyzer', () => {
 				`;
 	
 				const source = `
-					import { lookupTyped } from 'mnemonica';
-					const ChildType = lookupTyped('Parent.Child');
+					import { lookup } from 'mnemonica';
+					const ChildType = lookup('Parent.Child');
 				`;
 	
 				analyzer.analyzeSource(defineSource);
@@ -885,7 +885,7 @@ describe('MnemonicaAnalyzer', () => {
 				expect(childUsages![0].kind).to.equal('lookup');
 			});
 	
-			it('should track instantiation via lookupTyped result', () => {
+			it('should track instantiation via lookup result', () => {
 				const defineSource = `
 					import { define } from 'mnemonica';
 					const UserType = define('UserType', function () {
@@ -894,8 +894,8 @@ describe('MnemonicaAnalyzer', () => {
 				`;
 	
 				const source = `
-					import { lookupTyped } from 'mnemonica';
-					const UserType2 = lookupTyped('UserType');
+					import { lookup } from 'mnemonica';
+					const UserType2 = lookup('UserType');
 					const user = new UserType2();
 				`;
 	
@@ -904,7 +904,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 				const usages = analyzer.getUsages();
 				const userTypeUsages = usages.get('UserType');
-				// Both lookupTyped('UserType') and new UserType2() are now tracked
+				// Both lookup('UserType') and new UserType2() are now tracked
 				// via variable flow analysis
 				expect(userTypeUsages).to.have.length(2);
 				expect(userTypeUsages![0].kind).to.equal('lookup');
@@ -919,8 +919,8 @@ describe('MnemonicaAnalyzer', () => {
 				`;
 	
 				const source = `
-					import { lookupTyped } from 'mnemonica';
-					const ParentType = lookupTyped('Parent');
+					import { lookup } from 'mnemonica';
+					const ParentType = lookup('Parent');
 					const parent = new ParentType();
 					const child = new parent.Child();
 				`;

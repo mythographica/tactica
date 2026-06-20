@@ -7,7 +7,7 @@ Tactica is a CLI tool and Node library that statically analyzes TypeScript / Jav
 Output lives in `.tactica/` and is consumed by:
 
 - **`tsc`** — so TypeScript can understand `user.AdminType` after `UserType.define('AdminType', …)`.
-- **`mnemonica.lookupTyped<K>()`** — type-safe runtime lookup via the generated `TypeRegistry` module augmentation.
+- **`mnemonica.lookup<K>()`** — type-safe runtime lookup via the generated `TypeRegistry` module augmentation.
 - **[mnemographica](https://github.com/mythographica/mnemographica)** (VS Code extension) — for Go to Definition, Find References, and the type-hierarchy graph view.
 
 ## The Problem
@@ -100,7 +100,7 @@ After running `npx tactica`, add `.tactica` to your `tsconfig.json` so the gener
 }
 ```
 
-Then use `lookupTyped` for type-safe access (see "Type-Safe Lookup" below).
+Then use `lookup` for type-safe access (see "Type-Safe Lookup" below).
 
 You should commit `.tactica/` if you want type information to flow through CI without re-running tactica; alternatively, add `.tactica/` to `.gitignore` and regenerate as part of your build. Tactica does **not** modify `.gitignore` for you.
 
@@ -130,7 +130,7 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | File | When | Purpose |
 |---|---|---|
 | `types.ts` | default mode | Exportable type aliases — one per discovered type. Uses `ProtoFlat<Parent, Self>` for nested types. |
-| `registry.ts` | default mode | `declare module 'mnemonica' { interface TypeRegistry { … } }` augmentation — powers `lookupTyped<K>()`. |
+| `registry.ts` | default mode | `declare module 'mnemonica' { interface TypeRegistry { … } }` augmentation — powers `lookup<K>()`. |
 | `index.ts` | default mode | Re-exports everything from `types.ts` and `registry.ts`. |
 | `index.d.ts` | with `--module-augmentation` | Single global-augmentation file (legacy mode). |
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
@@ -176,9 +176,9 @@ Emits one `.tactica/index.d.ts` whose contents live inside `declare global { …
 
 or by adding `./.tactica` to `compilerOptions.typeRoots`. Kept for backwards compatibility with older tactica integrations.
 
-## Type-Safe Lookup with `lookupTyped()`
+## Type-Safe Lookup with `lookup()`
 
-Mnemonica core exposes `lookupTyped<K>()` against an empty `TypeRegistry` interface. Tactica's `registry.ts` augments that interface with all of your discovered types:
+Mnemonica core exposes `lookup<K>()` against an empty `TypeRegistry` interface. Tactica's `registry.ts` augments that interface with all of your discovered types:
 
 ```ts
 // .tactica/registry.ts  (generated)
@@ -193,17 +193,17 @@ declare module 'mnemonica' {
 Once `registry.ts` is in your `tsc` compilation, the lookup is fully typed:
 
 ```ts
-import { lookupTyped } from 'mnemonica';
+import { lookup } from 'mnemonica';
 import './.tactica/registry'; // or via tsconfig "include"
 
-const UserType  = lookupTyped('UserType');
-const AdminType = lookupTyped('UserType.AdminType');
+const UserType  = lookup('UserType');
+const AdminType = lookup('UserType.AdminType');
 
 const user  = new UserType({ name: 'John', email: 'j@x.dev' });
 const admin = new user.AdminType({ role: 'admin' });
 ```
 
-No `as unknown as` casts required. See [`docs/lookupTyped-pattern.md`](docs/lookupTyped-pattern.md) for the consumer-side guide.
+No `as unknown as` casts required. See [`docs/lookup-pattern.md`](docs/lookup-pattern.md) for the consumer-side guide.
 
 ## What Gets Analyzed
 
@@ -466,7 +466,7 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 ## How It Works
 
 1. **Parse** — load `tsconfig.json`, build a `ts.Program`, walk each source file's AST.
-2. **Detect** — find `define()` and `@decorate()` calls, plus `lookupTyped` lookups, `new` expressions, and EDS / flow patterns.
+2. **Detect** — find `define()` and `@decorate()` calls, plus `lookup` lookups, `new` expressions, and EDS / flow patterns.
 3. **Graph** — build a Trie of types in `TypeGraphImpl`, with parent links via the chain of `.define()` calls and `@decorate(Parent)` references.
 4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json`, `flow.json`, and optionally `eds.json`.
 5. **Write** — files land in the output directory (default `.tactica/`).
@@ -527,7 +527,7 @@ The analyzer does not use `ts.Program.getTypeChecker()` for resolution, so cross
 
 **Generated types are missing properties** — make sure the constructor function has either an explicit `this:` type annotation, or that the data parameter has an inline / aliased type (`{ id: string }` or `Foo` where `type Foo = { id: string }`). Property inference walks one level of indirection.
 
-**`new user.AdminType()` shows red squiggles** — confirm `.tactica/types.ts` is in your `tsconfig.json` `include`. If you use `lookupTyped`, also import `.tactica/registry.ts` somewhere.
+**`new user.AdminType()` shows red squiggles** — confirm `.tactica/types.ts` is in your `tsconfig.json` `include`. If you use `lookup`, also import `.tactica/registry.ts` somewhere.
 
 **`mnemographica` (VS Code extension) shows no graph** — confirm `.tactica/definitions.json` and `.tactica/types.ts` exist; run `npx tactica --verbose` to see what was discovered.
 

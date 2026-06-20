@@ -29,7 +29,7 @@ The chosen approach: parse the source statically, build a Trie of types, generat
 ## What actually shipped
 
 - **CLI + library:** see [`README.md`](./README.md). `npx tactica` parses the project, emits `.tactica/types.ts` + `.tactica/registry.ts` + a set of JSON metadata files.
-- **TypeRegistry pattern:** `lookupTyped<K>()` in mnemonica core is augmented by the generated `registry.ts`, giving fully-typed runtime lookups without casts.
+- **TypeRegistry pattern:** `lookup()` in mnemonica core is augmented by the generated `registry.ts`, giving fully-typed runtime lookups without casts.
 - **Topologica integration:** scans directory hierarchies (`ai-types/`, `types/`, `topologica-types/`) and reads `index.ts/.js/.mjs` handlers.
 - **EDS tracking:** detects `wrap`, `link`, `getLastContext`, hook attachment, and framework adapter calls when `@mnemonica/dive` is in dependencies.
 - **Flow tracking:** native-instance flow patterns (property access, method calls, destructures, etc.) emitted to `flow.json`.
@@ -44,7 +44,7 @@ The chosen approach: parse the source statically, build a Trie of types, generat
 
 Mnemographica (VS Code extension) provides:
 
-- `MnemonicaDefinitionProvider` — reads `.tactica/definitions.json` for Go to Definition on `lookupTyped('Foo')` strings.
+- `MnemonicaDefinitionProvider` — reads `.tactica/definitions.json` for Go to Definition on `lookup('Foo')` strings.
 - `MnemonicaReferenceProvider` — reads `.tactica/usages.json` for Find All References.
 - Graph view, tree view, and registry inspector — all built on tactica's generated metadata.
 

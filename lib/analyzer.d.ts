@@ -83,10 +83,10 @@ export declare class MnemonicaAnalyzer {
         */
     private trackVariableAssignment;
     /**
-        * Track variable assignments from lookupTyped() calls
-        * e.g., const SentienceConstructor = lookupTyped('Sentience') maps "SentienceConstructor" -> "Sentience"
+        * Track variable assignments from lookup() calls
+        * e.g., const SentienceConstructor = lookup('Sentience') maps "SentienceConstructor" -> "Sentience"
         */
-    private trackLookupTypedAssignment;
+    private trackLookupAssignment;
     /**
         * Track variable assignments from new Type() calls
         * e.g., const user = new UserType() maps "user" -> "UserType"
