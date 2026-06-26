@@ -289,6 +289,9 @@ After changing analyzer behavior:
 
 - `define('TypeName', handler)` — root or nested via `Parent.define(…)` or chained `define(…).define(…)`.
 - `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
+  - `Parent` is resolved through the variable map, so aliases work: `const User = define('UserEntity', …); @decorate(User)` produces `UserEntity.<ClassName>`.
+  - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
+  - Constructor parameters are extracted from decorated classes and emitted in `registry.ts` / `types.ts` signatures.
 - `Object.assign(this, data)` (extracts from `data`'s type annotation).
 - Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`).
 - Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback.

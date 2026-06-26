@@ -313,4 +313,133 @@ const MnemonicaType = define('MnemonicaType', function(this: any) {
 			expect(result.types.map(t => t.name)).to.include('MnemonicaType');
 		});
 	});
+
+	describe('@decorate() argument analysis', () => {
+		it('should extract config options from @decorate({ ... })', () => {
+			const code = `
+import { decorate } from 'mnemonica';
+
+@decorate({ blockErrors: true, strictChain: false })
+class Configurable {
+	value: string = '';
+}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			expect(result.errors).to.have.length(0);
+			const def = analyzer.getDefinitions().get('Configurable');
+			expect(def?.strictChain).to.equal(false);
+			expect(def?.blockErrors).to.equal(true);
+		});
+
+		it('should extract config options from @decorate(Parent, { ... })', () => {
+			const code = `
+import { decorate } from 'mnemonica';
+
+@decorate()
+class ParentType {
+	id: string = '';
+}
+
+@decorate(ParentType, { blockErrors: true })
+class ChildType {
+	name: string = '';
+}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			expect(result.errors).to.have.length(0);
+			const def = analyzer.getDefinitions().get('ParentType.ChildType');
+			expect(def?.parent).to.equal('ParentType');
+			expect(def?.blockErrors).to.equal(true);
+			expect(def?.strictChain).to.equal(true);
+		});
+
+		it('should extract constructor parameters from decorated classes', () => {
+			const code = `
+import { decorate } from 'mnemonica';
+
+@decorate()
+class Order {
+	orderId: string;
+	constructor(data: { orderId: string; total: number }) {
+		this.orderId = data.orderId;
+	}
+}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			expect(result.errors).to.have.length(0);
+			const orderType = result.types.find(t => t.name === 'Order');
+			expect(orderType?.constructorParams).to.have.length(1);
+			expect(orderType?.constructorParams?.[0].name).to.equal('data');
+			expect(orderType?.constructorParams?.[0].type).to.equal('{ orderId: string; total: number }');
+		});
+
+		it('should resolve aliased parent variables in @decorate(Parent)', () => {
+			const code = `
+import { define, decorate } from 'mnemonica';
+
+const User = define('UserEntity', function(this: any) {
+	this.id = '';
+});
+
+@decorate(User)
+class AdminType {
+	role: string = 'admin';
+}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			expect(result.errors).to.have.length(0);
+			expect(result.types.map(t => t.fullPath)).to.include.members([
+				'UserEntity',
+				'UserEntity.AdminType'
+			]);
+			const adminDef = analyzer.getDefinitions().get('UserEntity.AdminType');
+			expect(adminDef?.parent).to.equal('UserEntity');
+		});
+
+		it('should report an error for multiple parent references', () => {
+			const code = `
+import { decorate } from 'mnemonica';
+
+@decorate()
+class A {}
+
+@decorate()
+class B {}
+
+@decorate(A, B)
+class C {}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			const parentErrors = result.errors.filter(e =>
+				e.message.includes('only one parent reference')
+			);
+			expect(parentErrors).to.have.length(1);
+		});
+
+		it('should report an error for multiple config objects', () => {
+			const code = `
+import { decorate } from 'mnemonica';
+
+@decorate({ blockErrors: true }, { strictChain: false })
+class A {}
+`;
+			const analyzer = new MnemonicaAnalyzer();
+			const result = analyzer.analyzeSource(code, 'test.ts');
+
+			const configErrors = result.errors.filter(e =>
+				e.message.includes('only one config object')
+			);
+			expect(configErrors).to.have.length(1);
+		});
+	});
 });

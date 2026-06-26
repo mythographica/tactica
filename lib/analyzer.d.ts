@@ -65,6 +65,10 @@ export declare class MnemonicaAnalyzer {
      */
     private isDefineCall;
     /**
+        * Extract config options from an object literal
+        */
+    private extractConfigFromObjectLiteral;
+    /**
         * Extract config options from define() call
         */
     private extractConfig;
@@ -108,6 +112,12 @@ export declare class MnemonicaAnalyzer {
         * Find a parent type by its name, searching in the graph
         */
     private findParentTypeByName;
+    /**
+        * Find a parent type from an identifier reference.
+        * Handles both aliased variables (const User = define('UserEntity', ...))
+        * and direct class/type names.
+        */
+    private findParentTypeByIdentifier;
     /**
         * Get property chain from nested access
         */
@@ -254,6 +264,15 @@ export declare class MnemonicaAnalyzer {
          * Check if a name looks like a type (starts with uppercase)
          */
     private isLikelyTypeName;
+    /**
+         * Resolve a constructor parameter type, expanding inline object literals
+         * and type aliases where possible.
+         */
+    private resolveConstructorParamType;
+    /**
+         * Extract constructor parameters from a class-like node.
+         */
+    private extractClassConstructorParams;
     /**
          * Extract constructor parameters from define() call
          * This is used for TypeRegistry constructor signatures

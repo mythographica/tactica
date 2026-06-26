@@ -203,16 +203,12 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-		* Extract config options from define() call
+		* Extract config options from an object literal
 		*/
-	private extractConfig(call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
+	private extractConfigFromObjectLiteral(
+		configArg: ts.ObjectLiteralExpression
+	): { strictChain?: boolean; blockErrors?: boolean } {
 		const config: { strictChain?: boolean; blockErrors?: boolean } = {};
-
-		// Config is the third argument: define('Name', handler, config)
-		const configArg = call.arguments[2];
-		if (!configArg || !ts.isObjectLiteralExpression(configArg)) {
-			return config;
-		}
 
 		for (const prop of configArg.properties) {
 			if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
@@ -230,6 +226,20 @@ export class MnemonicaAnalyzer {
 		}
 
 		return config;
+	}
+
+	/**
+		* Extract config options from define() call
+		*/
+	private extractConfig(call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
+		// Config is the third argument: define('Name', handler, config)
+		const configArg = call.arguments[2];
+		if (!configArg || !ts.isObjectLiteralExpression(configArg)) {
+			return {};
+		}
+
+		const configResult = this.extractConfigFromObjectLiteral(configArg);
+		return configResult;
 	}
 
 	/**
@@ -442,27 +452,52 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
-		// Try to find parent type from decorator arguments
+		// Parse decorator arguments: @decorate(), @decorate(Parent),
+		// @decorate({ ... }), @decorate(Parent, { ... })
 		let parentNode: TypeNode | undefined;
 		let parentFullPath: string | null = null;
+		let decoratorConfig: { strictChain?: boolean; blockErrors?: boolean } = {};
+
 		if (ts.isCallExpression(decorator.expression)) {
 			const args = decorator.expression.arguments;
-			if (args.length > 0 && ts.isIdentifier(args[0])) {
-				const parentName = args[0].text;
-				// First try exact match
-				parentNode = this.graph.findType(parentName);
-				// Then search through all types for one with matching name
-				if (!parentNode) {
-					for (const type of this.graph.getAllTypes()) {
-						if (type.name === parentName) {
-							parentNode = type;
-							break;
-						}
+			let parentArg: ts.Identifier | undefined;
+			let configArg: ts.ObjectLiteralExpression | undefined;
+
+			for (const arg of args) {
+				if (ts.isIdentifier(arg)) {
+					if (parentArg) {
+						this.errors.push({
+							message: '@decorate() accepts only one parent reference',
+							file: sourceFile.fileName,
+							line: line + 1,
+							column: character + 1,
+						});
+					} else {
+						parentArg = arg;
+					}
+				} else if (ts.isObjectLiteralExpression(arg)) {
+					if (configArg) {
+						this.errors.push({
+							message: '@decorate() accepts only one config object',
+							file: sourceFile.fileName,
+							line: line + 1,
+							column: character + 1,
+						});
+					} else {
+						configArg = arg;
 					}
 				}
+			}
+
+			if (parentArg) {
+				parentNode = this.findParentTypeByIdentifier(parentArg.text);
 				if (parentNode) {
 					parentFullPath = parentNode.fullPath;
 				}
+			}
+
+			if (configArg) {
+				decoratorConfig = this.extractConfigFromObjectLiteral(configArg);
 			}
 		}
 
@@ -475,8 +510,8 @@ export class MnemonicaAnalyzer {
 			location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
 			kind: 'decorate',
 			parent: parentFullPath,
-			strictChain: true, // decorate uses strict defaults
-			blockErrors: false,
+			strictChain: decoratorConfig.strictChain ?? true,
+			blockErrors: decoratorConfig.blockErrors ?? false,
 		};
 		this.definitions.set(fullPath, definition);
 
@@ -489,8 +524,9 @@ export class MnemonicaAnalyzer {
 			character + 1
 		);
 
-		// Extract properties from class members
+		// Extract properties and constructor parameters from class members
 		node.properties = this.extractClassProperties(classDecl);
+		node.constructorParams = this.extractClassConstructorParams(classDecl);
 
 		// Add to graph
 		if (parentNode) {
@@ -617,6 +653,23 @@ export class MnemonicaAnalyzer {
 		}
 
 		return undefined;
+	}
+
+	/**
+		* Find a parent type from an identifier reference.
+		* Handles both aliased variables (const User = define('UserEntity', ...))
+		* and direct class/type names.
+		*/
+	private findParentTypeByIdentifier(name: string): TypeNode | undefined {
+		// First check variable mapping: const User = define('UserEntity', ...)
+		const mappedFullPath = this.variableToTypeMap.get(name);
+		if (mappedFullPath) {
+			const mappedNode = this.graph.findType(mappedFullPath);
+			if (mappedNode) return mappedNode;
+		}
+
+		const parentNode = this.findParentTypeByName(name);
+		return parentNode;
 	}
 
 	/**
@@ -2164,6 +2217,78 @@ export class MnemonicaAnalyzer {
 		}
 	
 		/**
+			 * Resolve a constructor parameter type, expanding inline object literals
+			 * and type aliases where possible.
+			 */
+		private resolveConstructorParamType(typeNode: ts.TypeNode | undefined): string | undefined {
+			if (!typeNode) return undefined;
+
+			// Direct inline type literal: { prop: type }
+			if (ts.isTypeLiteralNode(typeNode)) {
+				const props: string[] = [];
+				for (const member of typeNode.members) {
+					if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+						const propName = member.name.text;
+						const optional = member.questionToken ? '?' : '';
+						const type = this.inferType(member.type);
+						props.push(`${propName}${optional}: ${type}`);
+					}
+				}
+				return `{ ${props.join('; ')} }`;
+			}
+
+			// Type reference: usage, UserData, etc. - recursively expand
+			if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+				const typeName = typeNode.typeName.text;
+				const aliasedType = this.typeAliases.get(typeName);
+				if (aliasedType) {
+					const expanded = this.resolveConstructorParamType(aliasedType);
+					if (expanded) return expanded;
+				}
+				// If not an object type alias, return the type name with args
+				if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
+					const args = typeNode.typeArguments.map(arg => this.inferType(arg));
+					return typeName + '<' + args.join(', ') + '>';
+				}
+				return typeName;
+			}
+
+			return undefined;
+		}
+
+		/**
+			 * Extract constructor parameters from a class-like node.
+			 */
+		private extractClassConstructorParams(
+			classLike: ts.ClassDeclaration | ts.ClassExpression
+		): ConstructorParamInfo[] {
+			const params: ConstructorParamInfo[] = [];
+
+			for (const member of classLike.members) {
+				if (!ts.isConstructorDeclaration(member)) {
+					continue;
+				}
+
+				for (const param of member.parameters) {
+					if (!param.name || !ts.isIdentifier(param.name)) continue;
+					if (!param.type) continue;
+
+					const paramName = param.name.text;
+					const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
+
+					params.push({
+						name: paramName,
+						type: expandedType,
+						optional: !!param.questionToken || !!param.initializer
+					});
+				}
+				break; // Only process first constructor
+			}
+
+			return params;
+		}
+
+		/**
 			 * Extract constructor parameters from define() call
 			 * This is used for TypeRegistry constructor signatures
 			 * Preserves parameter names and expands object types to their structure
@@ -2173,43 +2298,6 @@ export class MnemonicaAnalyzer {
 	
 			const handlerArg = call.arguments[1];
 			if (!handlerArg) return params;
-	
-			// Helper to resolve type alias and extract properties
-			const resolveTypeAndExtract = (typeNode: ts.TypeNode | undefined): string | undefined => {
-				if (!typeNode) return undefined;
-	
-				// Direct inline type literal: { prop: type }
-				if (ts.isTypeLiteralNode(typeNode)) {
-					const props: string[] = [];
-					for (const member of typeNode.members) {
-						if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
-							const propName = member.name.text;
-							const optional = member.questionToken ? '?' : '';
-							const type = this.inferType(member.type);
-							props.push(`${propName}${optional}: ${type}`);
-						}
-					}
-					return `{ ${props.join('; ')} }`;
-				}
-	
-				// Type reference: usage, UserData, etc. - recursively expand
-				if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
-					const typeName = typeNode.typeName.text;
-					const aliasedType = this.typeAliases.get(typeName);
-					if (aliasedType) {
-						const expanded = resolveTypeAndExtract(aliasedType);
-						if (expanded) return expanded;
-					}
-					// If not an object type alias, return the type name with args
-					if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
-						const args = typeNode.typeArguments.map(arg => this.inferType(arg));
-						return typeName + '<' + args.join(', ') + '>';
-					}
-					return typeName;
-				}
-	
-				return undefined;
-			};
 	
 			// Handle function expression or arrow function
 			if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
@@ -2226,7 +2314,7 @@ export class MnemonicaAnalyzer {
 	
 					// Get parameter name and expand its type
 					const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
-					const expandedType = resolveTypeAndExtract(param.type) || this.inferType(param.type);
+					const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
 					
 					params.push({
 						name: paramName,
@@ -2236,29 +2324,14 @@ export class MnemonicaAnalyzer {
 				}
 			}
 	
-		// Handle class expression - check constructor method
-		if (ts.isClassExpression(handlerArg)) {
-			for (const member of handlerArg.members) {
-				if (ts.isConstructorDeclaration(member)) {
-					for (const param of member.parameters) {
-						if (!param.name || !ts.isIdentifier(param.name)) continue;
-
-						if (param.type) {
-							const paramName = param.name.text;
-							const expandedType = resolveTypeAndExtract(param.type) || this.inferType(param.type);
-
-							params.push({
-								name: paramName,
-								type: expandedType,
-								optional: !!param.questionToken || !!param.initializer
-							});
-						}
-					}
-					break; // Only process first constructor
+			// Handle class expression - check constructor method
+			if (ts.isClassExpression(handlerArg)) {
+				const classParams = this.extractClassConstructorParams(handlerArg);
+				for (const param of classParams) {
+					params.push(param);
 				}
 			}
-		}
 
-		return params;
-	}
+			return params;
+		}
 }

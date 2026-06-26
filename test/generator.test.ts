@@ -157,6 +157,34 @@ describe('TypesGenerator', () => {
 		});
 	});
 
+	describe('decorated-class constructor signatures', () => {
+		it('should use constructorParams in registry for a class-like node', () => {
+			const node = TypeGraphImpl.createNode('Order', undefined, 'test.ts', 1, 1);
+			node.constructorParams = [
+				{ name: 'data', type: '{ orderId: string; total: number }', optional: false }
+			];
+			graph.addRoot(node);
+
+			const result = generator.generateTypeRegistry();
+
+			expect(result.content).to.include("'Order': new (data: { orderId: string; total: number }) => Order");
+		});
+
+		it('should use constructorParams in types.ts for a nested class-like node', () => {
+			const parent = TypeGraphImpl.createNode('Order', undefined, 'test.ts', 1, 1);
+			const child = TypeGraphImpl.createNode('LineItem', parent, 'test.ts', 5, 1);
+			child.constructorParams = [
+				{ name: 'data', type: '{ sku: string; qty: number }', optional: false }
+			];
+			graph.addRoot(parent);
+			graph.addChild(parent, child);
+
+			const result = generator.generateTypesFile();
+
+			expect(result.content).to.include('LineItem: new (data: { sku: string; qty: number }) => Order_LineItem');
+		});
+	});
+
 	describe('ESM mode', () => {
 		it('should append .js extension to imports in ESM mode', () => {
 			const esmGenerator = new TypesGenerator(graph, true);
