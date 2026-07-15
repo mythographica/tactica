@@ -1,4 +1,4 @@
-import { TypeNode, TypeGraph } from './types';
+import { TypeNode, TypeGraph, HierarchyNode } from './types';
 /**
  * Trie-based type graph for storing Mnemonica type hierarchy
  */
@@ -26,4 +26,12 @@ export declare class TypeGraphImpl implements TypeGraph {
      * Traverse the graph in depth-first order
      */
     dfs(node?: TypeNode, visited?: Set<string>): Generator<TypeNode>;
+    /**
+     * Convert the graph to a structured hierarchy suitable for JSON output.
+     */
+    toHierarchy(): HierarchyNode[];
+    /**
+     * Recursively convert a TypeNode to a HierarchyNode.
+     */
+    private nodeToHierarchy;
 }

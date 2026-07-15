@@ -2,7 +2,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson } from './types';
 
 /**
  * Writes generated types to file system
@@ -151,7 +151,7 @@ export class TypesWriter {
 	/**
 	 * Write flow.json file
 	 */
-	writeFlowFile(flow: Map<string, FlowInfo[]>): string {
+	writeFlowFile (flow: Map<string, FlowInfo[]>): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'flow.json');
 
@@ -161,10 +161,27 @@ export class TypesWriter {
 			flowObj[key] = value;
 		}
 
-		const json = {
+		const json: FlowJson = {
 			version: '1.0',
 			generatedAt: new Date().toISOString(),
 			flow: flowObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write hierarchy.json file
+	 */
+	writeHierarchyFile (roots: HierarchyNode[]): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'hierarchy.json');
+
+		const json: HierarchyJson = {
+			version: '1.0',
+			generatedAt: new Date().toISOString(),
+			roots,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');

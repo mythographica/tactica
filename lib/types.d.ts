@@ -180,3 +180,24 @@ export interface FlowJson {
     generatedAt: string;
     flow: Record<string, FlowInfo[]>;
 }
+/**
+ * JSON output for hierarchy.json
+ */
+export interface HierarchyJson {
+    version: string;
+    generatedAt: string;
+    roots: HierarchyNode[];
+}
+/**
+ * Structured hierarchy node for machine consumption.
+ */
+export interface HierarchyNode {
+    /** Type name (e.g., "AdminType") */
+    name: string;
+    /** Full dotted path (e.g., "UserType.AdminType") */
+    fullPath: string;
+    /** Location in source: file.ts:Line:Col */
+    location: string;
+    /** Child types in the Trie */
+    children: HierarchyNode[];
+}

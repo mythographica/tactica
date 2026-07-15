@@ -179,30 +179,41 @@ function loadProgram(tsconfigPath: string): ts.Program {
 }
 
 /**
- * Print type hierarchy as a tree
+ * Render type hierarchy as an ASCII tree string.
  */
-function printTypeHierarchy(graph: TypeGraphImpl): void {
-	console.log('\nType Hierarchy (Trie):');
-	
-	function printNode(node: TypeNode, prefix = '', isLast = true): void {
+function renderTypeHierarchy (graph: TypeGraphImpl): string {
+	const lines: string[] = ['Type Hierarchy (Trie):'];
+
+	function renderNode (node: TypeNode, prefix = '', isLast = true): void {
 		const connector = isLast ? '└── ' : '├── ';
 		// Use node.fullPath directly and convert dots to underscores
 		const instanceName = node.fullPath.replace(/\./g, '_');
-		console.log(`${prefix}${connector}${instanceName}`);
-		
+		lines.push(`${prefix}${connector}${instanceName}`);
+
 		const children = Array.from(node.children.values());
 		const newPrefix = prefix + (isLast ? '    ' : '│   ');
-		
+
 		for (let i = 0; i < children.length; i++) {
-			printNode(children[i], newPrefix, i === children.length - 1);
+			renderNode(children[i], newPrefix, i === children.length - 1);
 		}
 	}
-	
+
 	const roots = Array.from(graph.roots.values());
 	for (let i = 0; i < roots.length; i++) {
-		printNode(roots[i], '', i === roots.length - 1);
+		renderNode(roots[i], '', i === roots.length - 1);
 	}
-	console.log(); // Empty line at end
+	lines.push(''); // Empty line at end
+
+	const result = lines.join('\n');
+	return result;
+}
+
+/**
+ * Print type hierarchy to the console.
+ */
+function printTypeHierarchy (graph: TypeGraphImpl): void {
+	const output = renderTypeHierarchy(graph);
+	console.log(output);
 }
 
 /**
@@ -492,6 +503,16 @@ export * from './registry${options.esm ? '.js' : ''}';
 	if (options.verbose) {
 		const flowCount = Array.from(flow.values()).reduce((sum, arr) => sum + arr.length, 0);
 		console.log(`Generated flow.json at: ${flowPath} (${flowCount} flow entries)`);
+	}
+
+	// Generate hierarchy.json (structured) and hierarchy.txt (ASCII tree) for the Trie
+	const hierarchyRoots = graph.toHierarchy();
+	const hierarchyJsonPath = writer.writeHierarchyFile(hierarchyRoots);
+	const hierarchyText = renderTypeHierarchy(graph);
+	const hierarchyTxtPath = writer.writeTo('hierarchy.txt', hierarchyText);
+	if (options.verbose) {
+		console.log(`Generated hierarchy.json at: ${hierarchyJsonPath}`);
+		console.log(`Generated hierarchy.txt at: ${hierarchyTxtPath}`);
 	}
 
 	if (options.verbose) {

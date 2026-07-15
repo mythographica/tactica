@@ -145,6 +145,38 @@ declare global {
 
 Single file; types are global. Consumed via triple-slash reference or `typeRoots`. Source: `TypesGenerator.generateGlobalAugmentation()` → `TypesWriter.writeGlobalAugmentation()`.
 
+### `hierarchy.json` (always)
+
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-05-22T…",
+    "roots": [
+        {
+            "name": "UserType",
+            "fullPath": "UserType",
+            "location": "/abs/path/src/users.ts:10:7",
+            "children": [
+                {
+                    "name": "AdminType",
+                    "fullPath": "UserType.AdminType",
+                    "location": "/abs/path/src/users.ts:20:7",
+                    "children": []
+                }
+            ]
+        }
+    ]
+}
+```
+
+- Structured Trie representation of the type graph. Each node carries the same `name`, `fullPath`, and `location` data as `definitions.json`, but organized as parent/children.
+- **Consumed by:** downstream graph visualizations and by agents that need to understand the mnemonica hierarchy without parsing ASCII art.
+- Source: `TypeGraphImpl.toHierarchy()` → `TypesWriter.writeHierarchyFile()`.
+
+### `hierarchy.txt` (always)
+
+ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Saved to disk so it can be read, diffed, or committed independently of terminal output.
+
 ### `definitions.json` (always)
 
 ```json
@@ -245,7 +277,7 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 Thin filesystem wrapper. One method per output file:
 
-- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeTo(filename, content)`.
+- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
 - `write(generated)` is a legacy alias for `writeTypesFile`.
 - `clean()` empties the output directory; `getOutputDir()` returns the configured path.
 

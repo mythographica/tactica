@@ -114,4 +114,38 @@ describe('TypeGraphImpl', () => {
 			expect(visited).to.have.length(3);
 		});
 	});
+
+	describe('toHierarchy()', () => {
+		it('should return empty array for empty graph', () => {
+			const result = graph.toHierarchy();
+			expect(result).to.deep.equal([]);
+		});
+
+		it('should return a single root with no children', () => {
+			const root = TypeGraphImpl.createNode('Root', undefined, 'test.ts', 1, 2);
+			graph.addRoot(root);
+
+			const result = graph.toHierarchy();
+			expect(result).to.have.length(1);
+			expect(result[0].name).to.equal('Root');
+			expect(result[0].fullPath).to.equal('Root');
+			expect(result[0].location).to.equal('test.ts:1:2');
+			expect(result[0].children).to.deep.equal([]);
+		});
+
+		it('should preserve nested children in order', () => {
+			const parent = TypeGraphImpl.createNode('Parent', undefined, 'test.ts', 1, 1);
+			const child = TypeGraphImpl.createNode('Child', parent, 'test.ts', 5, 1);
+			const grandChild = TypeGraphImpl.createNode('GrandChild', child, 'test.ts', 10, 1);
+			graph.addRoot(parent);
+			graph.addChild(parent, child);
+			graph.addChild(child, grandChild);
+
+			const result = graph.toHierarchy();
+			expect(result).to.have.length(1);
+			expect(result[0].fullPath).to.equal('Parent');
+			expect(result[0].children[0].fullPath).to.equal('Parent.Child');
+			expect(result[0].children[0].children[0].fullPath).to.equal('Parent.Child.GrandChild');
+		});
+	});
 });

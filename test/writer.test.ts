@@ -223,4 +223,40 @@ describe('TypesWriter', () => {
 			expect(json.flow).to.deep.equal({});
 		});
 	});
+
+	describe('writeHierarchyFile()', () => {
+		it('should write hierarchy.json with correct shape', () => {
+			const roots = [
+				{
+					name: 'UserType',
+					fullPath: 'UserType',
+					location: 'src/users.ts:10:7',
+					children: [
+						{
+							name: 'AdminType',
+							fullPath: 'UserType.AdminType',
+							location: 'src/users.ts:20:7',
+							children: [],
+						},
+					],
+				},
+			];
+
+			const outputPath = writer.writeHierarchyFile(roots);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('hierarchy.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.roots).to.have.length(1);
+			expect(json.roots[0].fullPath).to.equal('UserType');
+			expect(json.roots[0].children[0].fullPath).to.equal('UserType.AdminType');
+		});
+
+		it('should handle empty roots array', () => {
+			const outputPath = writer.writeHierarchyFile([]);
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.roots).to.deep.equal([]);
+		});
+	});
 });

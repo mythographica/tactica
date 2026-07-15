@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode } from './types';
 /**
  * Writes generated types to file system
  */
@@ -49,4 +49,8 @@ export declare class TypesWriter {
      * Write flow.json file
      */
     writeFlowFile(flow: Map<string, FlowInfo[]>): string;
+    /**
+     * Write hierarchy.json file
+     */
+    writeHierarchyFile(roots: HierarchyNode[]): string;
 }

@@ -1,6 +1,6 @@
 'use strict';
 
-import { TypeNode, TypeGraph } from './types';
+import { TypeNode, TypeGraph, HierarchyNode } from './types';
 
 /**
  * Trie-based type graph for storing Mnemonica type hierarchy
@@ -92,7 +92,7 @@ export class TypeGraphImpl implements TypeGraph {
 	/**
 	 * Traverse the graph in depth-first order
 	 */
-	*dfs(node?: TypeNode, visited = new Set<string>()): Generator<TypeNode> {
+	*dfs (node?: TypeNode, visited = new Set<string>()): Generator<TypeNode> {
 		const startNode = node || this.roots.values().next().value;
 		if (!startNode || visited.has(startNode.fullPath)) {
 			return;
@@ -104,5 +104,30 @@ export class TypeGraphImpl implements TypeGraph {
 		for (const child of startNode.children.values()) {
 			yield* this.dfs(child, visited);
 		}
+	}
+
+	/**
+	 * Convert the graph to a structured hierarchy suitable for JSON output.
+	 */
+	toHierarchy (): HierarchyNode[] {
+		const roots = Array.from(this.roots.values());
+		const result = roots.map(root => this.nodeToHierarchy(root));
+		return result;
+	}
+
+	/**
+	 * Recursively convert a TypeNode to a HierarchyNode.
+	 */
+	private nodeToHierarchy (node: TypeNode): HierarchyNode {
+		const children = Array.from(node.children.values()).map(child =>
+			this.nodeToHierarchy(child)
+		);
+		const result: HierarchyNode = {
+			name: node.name,
+			fullPath: node.fullPath,
+			location: `${node.sourceFile}:${node.line}:${node.column}`,
+			children,
+		};
+		return result;
 	}
 }
