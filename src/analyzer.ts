@@ -1,8 +1,18 @@
 'use strict';
 
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError, DefinitionInfo, UsageInfo, ConstructorParamInfo, EDSInfo, FlowInfo } from './types';
+import {
+	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
+	DefinitionInfo, UsageInfo, ConstructorParamInfo,
+	EDSInfo, FlowInfo
+} from './types';
 import { TypeGraphImpl } from './graph';
+
+interface CollectionInfo {
+	variableName: string;
+	sourceFile: string;
+	registryInterfaceName?: string;
+}
 
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -17,8 +27,17 @@ export class MnemonicaAnalyzer {
 	private typeAliases = new Map<string, ts.TypeNode>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
+	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
+	private moduleObjectVariables = new Set<string>();
+	// Track imported aliases of createTypesCollection (e.g., import { createTypesCollection as ctc })
+	private createTypesCollectionVariables = new Set<string>();
+	// Track custom collection variables: variableName -> collectionId
+	private collectionVariables = new Map<string, string>();
+	// Track custom collection metadata for Option B registry emission
+	private collectionInfo = new Map<string, CollectionInfo>();
+	private collectionCounter = 0;
 
-	constructor(program?: ts.Program) {
+	constructor (program?: ts.Program) {
 		// Store program for future use (currently unused but kept for extensibility)
 		void program;
 	}
@@ -27,32 +46,34 @@ export class MnemonicaAnalyzer {
 	 * Reset usage-related state for a fresh pass.
 	 * Call before the usage-collection pass to avoid duplicates from definition pass.
 	 */
-	resetUsages(): void {
+	resetUsages (): void {
 		this.usages.clear();
 		this.edsUsages.clear();
 		this.flowUsages.clear();
 		this.variableToTypeMap.clear();
+		// Note: moduleObjectVariables and collectionVariables intentionally persist
+		// across definition and usage passes.
 	}
 
 	/**
 	 * Analyze a source file for Mnemonica type definitions
 	 */
-	analyzeFile(sourceFile: ts.SourceFile): AnalyzeResult {
+	analyzeFile (sourceFile: ts.SourceFile): AnalyzeResult {
 		this.errors = [];
 		// Ensure parent nodes are set for AST traversal
 		this.setParentNodesInSourceFile(sourceFile);
 		this.visitNode(sourceFile, sourceFile);
 
 		return {
-			types: this.graph.getAllTypes(),
-			errors: this.errors,
+			types  : this.graph.getAllTypes(),
+			errors : this.errors,
 		};
 	}
 
 	/**
 	 * Analyze source code string
 	 */
-	analyzeSource(sourceCode: string, fileName = 'temp.ts'): AnalyzeResult {
+	analyzeSource (sourceCode: string, fileName = 'temp.ts'): AnalyzeResult {
 		const sourceFile = ts.createSourceFile(
 			fileName,
 			sourceCode,
@@ -65,35 +86,35 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Get the type graph
 	 */
-	getGraph(): TypeGraphImpl {
+	getGraph (): TypeGraphImpl {
 		return this.graph;
 	}
 
 	/**
 	 * Get collected definitions
 	 */
-	getDefinitions(): Map<string, DefinitionInfo> {
+	getDefinitions (): Map<string, DefinitionInfo> {
 		return this.definitions;
 	}
 
 	/**
 	 * Get collected usages
 	 */
-	getUsages(): Map<string, UsageInfo[]> {
+	getUsages (): Map<string, UsageInfo[]> {
 		return this.usages;
 	}
 
 	/**
 	 * Get collected EDS usages
 	 */
-	getEDSUsages(): Map<string, EDSInfo[]> {
+	getEDSUsages (): Map<string, EDSInfo[]> {
 		return this.edsUsages;
 	}
 
 	/**
 	 * Get collected flow usages
 	 */
-	getFlowUsages(): Map<string, FlowInfo[]> {
+	getFlowUsages (): Map<string, FlowInfo[]> {
 		return this.flowUsages;
 	}
 
@@ -101,7 +122,7 @@ export class MnemonicaAnalyzer {
 	 * Add a topologica type to the analyzer for usage tracking.
 	 * This allows the analyzer to recognize topologica types when collecting usages.
 	 */
-	addTopologicaType(fullPath: string, node: import('./types').TypeNode): void {
+	addTopologicaType (fullPath: string, node: import('./types').TypeNode): void {
 		// Skip if already exists
 		if (this.graph.allTypes.has(fullPath)) {
 			return;
@@ -118,12 +139,12 @@ export class MnemonicaAnalyzer {
 
 		// Also add to definitions so it's recognized as a known type
 		const definition: DefinitionInfo = {
-			name: node.name,
-			location: `${node.sourceFile}:${node.line}:${node.column}`,
-			kind: 'define',
-			parent: node.parent ? node.parent.fullPath : null,
-			strictChain: true,
-			blockErrors: false
+			name        : node.name,
+			location    : `${node.sourceFile}:${node.line}:${node.column}`,
+			kind        : 'define',
+			parent      : node.parent ? node.parent.fullPath : null,
+			strictChain : true,
+			blockErrors : false
 		};
 		this.definitions.set(fullPath, definition);
 	}
@@ -131,7 +152,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Set parent nodes in a source file to enable AST traversal up
 	 */
-	private setParentNodesInSourceFile(sourceFile: ts.SourceFile): void {
+	private setParentNodesInSourceFile (sourceFile: ts.SourceFile): void {
 		const setParent = (node: ts.Node, parent?: ts.Node) => {
 			// TypeScript doesn't expose parent as writable, but we need it
 			// eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -144,10 +165,21 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Visit a node in the AST
 	 */
-	private visitNode(node: ts.Node, sourceFile: ts.SourceFile, currentClass?: ts.ClassDeclaration): void {
+	private visitNode (node: ts.Node, sourceFile: ts.SourceFile, currentClass?: ts.ClassDeclaration): void {
+		// Track mnemonica module-object aliases and custom collection variables
+		// before processing define()/lookup() calls so source resolution works.
+		this.trackImports(node);
+		this.trackModuleObjectAliases(node);
+		this.trackCollectionAliases(node, sourceFile);
+
 		// Check for define() calls
 		if (this.isDefineCall(node)) {
 			this.processDefineCall(node as ts.CallExpression, sourceFile);
+		}
+
+		// Check for lazy() calls
+		if (this.isLazyCall(node)) {
+			this.processLazyCall(node as ts.CallExpression, sourceFile);
 		}
 
 		// Check for decorate() decorator
@@ -180,14 +212,210 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Track imports from 'mnemonica' so aliases of the module object and
+	 * createTypesCollection are recognized without relying on the type checker.
+	 */
+	private trackImports (node: ts.Node): void {
+		if (!ts.isImportDeclaration(node)) {
+			return;
+		}
+
+		const { moduleSpecifier } = node;
+		if (!ts.isStringLiteral(moduleSpecifier) || moduleSpecifier.text !== 'mnemonica') {
+			return;
+		}
+
+		const clause = node.importClause;
+		if (!clause) {
+			return;
+		}
+
+		// import { mnemonica, createTypesCollection } from 'mnemonica'
+		if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+			for (const element of clause.namedBindings.elements) {
+				const localName = element.name.text;
+				const importedName = element.propertyName
+					? element.propertyName.text
+					: localName;
+				if (importedName === 'mnemonica') {
+					this.moduleObjectVariables.add(localName);
+				}
+				if (importedName === 'createTypesCollection') {
+					this.createTypesCollectionVariables.add(localName);
+				}
+			}
+		}
+
+		// import * as mnemonica from 'mnemonica'
+		if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+			this.moduleObjectVariables.add(clause.namedBindings.name.text);
+		}
+
+		// import mnemonica from 'mnemonica' (default import) — treat as module object too
+		if (clause.name) {
+			this.moduleObjectVariables.add(clause.name.text);
+		}
+	}
+
+	/**
+	 * Track aliases of the mnemonica module object, e.g.:
+	 *   const m = mnemonica;
+	 *   const App = m;
+	 */
+	private trackModuleObjectAliases (node: ts.Node): void {
+		if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) {
+			return;
+		}
+
+		const { initializer } = node;
+		if (!initializer) {
+			return;
+		}
+
+		if (ts.isIdentifier(initializer) && this.moduleObjectVariables.has(initializer.text)) {
+			this.moduleObjectVariables.add(node.name.text);
+		}
+	}
+
+	/**
+	 * Track custom collection variables, e.g.:
+	 *   const MyCollection = createTypesCollection();
+	 *   const Other = MyCollection;
+	 *
+	 * Also detects Option B user-provided registry interfaces:
+	 *   export interface MyCollectionRegistry {}
+	 *   const MyCollection = createTypesCollection<MyCollectionRegistry>();
+	 */
+	private trackCollectionAliases (node: ts.Node, sourceFile: ts.SourceFile): void {
+		if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) {
+			return;
+		}
+
+		const { initializer } = node;
+		if (!initializer) {
+			return;
+		}
+
+		// Direct createTypesCollection() call
+		if (this.isCreateTypesCollectionCall(initializer)) {
+			const collectionId = this.nextCollectionId();
+			this.collectionVariables.set(node.name.text, collectionId);
+
+			const registryInterfaceName = this.extractRegistryInterfaceName(
+				initializer as ts.CallExpression,
+				sourceFile
+			);
+			this.collectionInfo.set(collectionId, {
+				variableName          : node.name.text,
+				sourceFile            : sourceFile.fileName,
+				registryInterfaceName : registryInterfaceName
+			});
+			return;
+		}
+
+		// Alias of another collection variable
+		if (ts.isIdentifier(initializer)) {
+			const existing = this.collectionVariables.get(initializer.text);
+			if (existing) {
+				this.collectionVariables.set(node.name.text, existing);
+			}
+		}
+	}
+
+	/**
+	 * Extract the registry interface name from createTypesCollection<Registry>()
+	 * when the interface is declared in the same source file.
+	 */
+	private extractRegistryInterfaceName (
+		call: ts.CallExpression,
+		sourceFile: ts.SourceFile
+	): string | undefined {
+		const typeArgs = call.typeArguments;
+		if (!typeArgs || typeArgs.length === 0) {
+			return undefined;
+		}
+
+		const firstTypeArg = typeArgs[ 0 ];
+		if (!ts.isTypeReferenceNode(firstTypeArg) || !ts.isIdentifier(firstTypeArg.typeName)) {
+			return undefined;
+		}
+
+		const name = firstTypeArg.typeName.text;
+
+		// Confirm the interface exists in the same source file.
+		for (const statement of sourceFile.statements) {
+			if (
+				ts.isInterfaceDeclaration(statement) &&
+				statement.name.text === name
+			) {
+				return name;
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Get the registry interface name for a collection id.
+	 */
+	private getRegistryInterfaceName (collectionId?: string): string | undefined {
+		if (!collectionId) {
+			return undefined;
+		}
+		return this.collectionInfo.get(collectionId)?.registryInterfaceName;
+	}
+
+	/**
+	 * Check if an expression is a createTypesCollection() call.
+	 * Handles:
+	 *   createTypesCollection()
+	 *   ctc() // aliased import
+	 *   mnemonica.createTypesCollection() // module object method
+	 *   m.createTypesCollection() // aliased module object
+	 */
+	private isCreateTypesCollectionCall (node: ts.Node): node is ts.CallExpression {
+		if (!ts.isCallExpression(node)) {
+			return false;
+		}
+		const expr = node.expression;
+
+		// Direct call or aliased import: createTypesCollection() / ctc()
+		if (ts.isIdentifier(expr)) {
+			return expr.text === 'createTypesCollection' ||
+				this.createTypesCollectionVariables.has(expr.text);
+		}
+
+		// Module object method: mnemonica.createTypesCollection()
+		if (
+			ts.isPropertyAccessExpression(expr) &&
+			expr.name.text === 'createTypesCollection' &&
+			ts.isIdentifier(expr.expression) &&
+			this.moduleObjectVariables.has(expr.expression.text)
+		) {
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Generate a unique collection identifier.
+	 */
+	private nextCollectionId (): string {
+		this.collectionCounter++;
+		const result = `collection_${this.collectionCounter}`;
+		return result;
+	}
+
+	/**
 	 * Check if a node is a define() call
 	 */
-	private isDefineCall(node: ts.Node): node is ts.CallExpression {
+	private isDefineCall (node: ts.Node): node is ts.CallExpression {
 		if (!ts.isCallExpression(node)) {
 			return false;
 		}
 
-		const expression = node.expression;
+		const { expression } = node;
 
 		// Check for direct call: define('TypeName', ...)
 		if (ts.isIdentifier(expression) && expression.text === 'define') {
@@ -203,11 +431,33 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Check if a node is a lazy() call
+	 */
+	private isLazyCall (node: ts.Node): node is ts.CallExpression {
+		if (!ts.isCallExpression(node)) {
+			return false;
+		}
+
+		const { expression } = node;
+
+		// Check for direct call: lazy('TypeName', getter, ...)
+		if (ts.isIdentifier(expression) && expression.text === 'lazy') {
+			return true;
+		}
+
+		// Check for method call: SomeType.lazy('SubType', getter, ...)
+		if (ts.isPropertyAccessExpression(expression)) {
+			return expression.name?.text === 'lazy';
+		}
+
+		return false;
+	}
+
+	/**
 		* Extract config options from an object literal
 		*/
-	private extractConfigFromObjectLiteral(
-		configArg: ts.ObjectLiteralExpression
-	): { strictChain?: boolean; blockErrors?: boolean } {
+	private extractConfigFromObjectLiteral (configArg: ts.ObjectLiteralExpression):
+		{ strictChain?: boolean; blockErrors?: boolean } {
 		const config: { strictChain?: boolean; blockErrors?: boolean } = {};
 
 		for (const prop of configArg.properties) {
@@ -231,9 +481,9 @@ export class MnemonicaAnalyzer {
 	/**
 		* Extract config options from define() call
 		*/
-	private extractConfig(call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
+	private extractConfig (call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
 		// Config is the third argument: define('Name', handler, config)
-		const configArg = call.arguments[2];
+		const configArg = call.arguments[ 2 ];
 		if (!configArg || !ts.isObjectLiteralExpression(configArg)) {
 			return {};
 		}
@@ -245,12 +495,12 @@ export class MnemonicaAnalyzer {
 	/**
 		* Check if a node is a @decorate() decorator
 		*/
-	private isDecorateDecorator(node: ts.Node): node is ts.Decorator {
+	private isDecorateDecorator (node: ts.Node): node is ts.Decorator {
 		if (!ts.isDecorator(node)) {
 			return false;
 		}
 
-		const expression = node.expression;
+		const { expression } = node;
 
 		// Check for @decorate
 		if (ts.isIdentifier(expression) && expression.text === 'decorate') {
@@ -263,28 +513,49 @@ export class MnemonicaAnalyzer {
 			if (ts.isIdentifier(fnName) && fnName.text === 'decorate') {
 				return true;
 			}
+
+			// Check for @MyCollection.decorate() where MyCollection is a custom collection
+			if (
+				ts.isPropertyAccessExpression(fnName) &&
+				fnName.name.text === 'decorate' &&
+				ts.isIdentifier(fnName.expression) &&
+				this.collectionVariables.has(fnName.expression.text)
+			) {
+				return true;
+			}
 		}
 
 		return false;
 	}
 
 	/**
+	 * Mark a call expression as processed and return whether it already was.
+	 */
+	private markProcessed (call: ts.CallExpression): boolean {
+		const marked = call as unknown as { __tactica_processed?: boolean };
+		if (marked.__tactica_processed) {
+			return true;
+		}
+		marked.__tactica_processed = true;
+		return false;
+	}
+
+	/**
 	 * Process a define() call
 	 */
-	private processDefineCall(call: ts.CallExpression, sourceFile: ts.SourceFile): void {
+	private processDefineCall (call: ts.CallExpression, sourceFile: ts.SourceFile): void {
 		// Check if this exact call has already been processed (prevents duplicates from chained calls)
-		if ((call as any).__tactica_processed) {
+		if (this.markProcessed(call)) {
 			return;
 		}
-		(call as any).__tactica_processed = true;
 
-		// Get the type name from arguments
-		const typeName = this.extractTypeName(call);
-		
+		// Get the type name and source context from arguments
+		const defineContext = this.extractDefineContext(call);
+
 		// For chained calls like define('A').define('B'), we want the position of the .define('B') part
 		// not the start of the entire expression
 		let positionNode: ts.Node = call;
-		
+
 		// If this is a chained call, get the position of the property access expression
 		// which is the .define part
 		if (ts.isPropertyAccessExpression(call.expression)) {
@@ -292,48 +563,39 @@ export class MnemonicaAnalyzer {
 			// We want the position of just the .define part
 			positionNode = call.expression.name; // This is the 'define' identifier
 		}
-		
+
 		const startPos = positionNode.getStart(sourceFile);
 		const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, startPos);
 
-		if (!typeName) {
+		if (!defineContext.typeName) {
 			this.errors.push({
-				message: 'Could not extract type name from define() call',
-				file: sourceFile.fileName,
-				line: line + 1,
-				column: character + 1,
+				message : 'Could not extract type name from define() call',
+				file    : sourceFile.fileName,
+				line    : line + 1,
+				column  : character + 1,
 			});
 			return;
 		}
 
-		// Determine parent type
-		const parentNode = this.findParentType(call, sourceFile);
+		const { typeName } = defineContext;
 
-		// Build full path
-		const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
+		// Determine parent type and collection based on the call source.
+		const parentNode = defineContext.parentType;
+		const { collectionId } = defineContext;
 
 		// Extract config options
 		const config = this.extractConfig(call);
 
-		// Create definition info
-		const definition: DefinitionInfo = {
-			name: typeName,
-			location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-			kind: 'define',
-			parent: parentNode ? parentNode.fullPath : null,
-			strictChain: config.strictChain ?? true,
-			blockErrors: config.blockErrors ?? false,
-		};
-		this.definitions.set(fullPath, definition);
-
-		// Create type node
+		// Create type node first so its internal fullPath (including any collection prefix) is resolved.
 		const node = TypeGraphImpl.createNode(
 			typeName,
 			parentNode,
 			sourceFile.fileName,
 			line + 1,
-			character + 1
+			character + 1,
+			collectionId
 		);
+		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
 
 		// Extract properties from constructor function
 		node.properties = this.extractProperties(call);
@@ -348,9 +610,393 @@ export class MnemonicaAnalyzer {
 			this.graph.addRoot(node);
 		}
 
+		// Create definition info using the node's resolved fullPath
+		const definition: DefinitionInfo = {
+			name        : typeName,
+			location    : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind        : 'define',
+			parent      : parentNode ? parentNode.fullPath : null,
+			strictChain : config.strictChain ?? true,
+			blockErrors : config.blockErrors ?? false,
+		};
+		this.definitions.set(node.fullPath, definition);
+
 		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
 		// For chained calls like const X = define('A').define('B'), we want to map X -> A (the root)
-		this.trackVariableAssignment(call, parentNode, fullPath);
+		this.trackVariableAssignment(call, parentNode, node.fullPath);
+	}
+
+	/**
+	 * Process a lazy() call
+	 */
+	private processLazyCall (call: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		// Check if this exact call has already been processed (prevents duplicates from chained calls)
+		if (this.markProcessed(call)) {
+			return;
+		}
+
+		// Get the type name and source context from arguments
+		const lazyContext = this.extractLazyContext(call, sourceFile);
+
+		// For chained calls like define('A').lazy('B'), we want the position of the .lazy('B') part
+		// not the start of the entire expression
+		let positionNode: ts.Node = call;
+
+		// If this is a chained call, get the position of the property access expression
+		// which is the .lazy part
+		if (ts.isPropertyAccessExpression(call.expression)) {
+			// The expression is the property access: (define('RootAsync', ...)).lazy
+			// We want the position of just the .lazy part
+			positionNode = call.expression.name; // This is the 'lazy' identifier
+		}
+
+		const startPos = positionNode.getStart(sourceFile);
+		const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, startPos);
+
+		if (!lazyContext.typeName) {
+			this.errors.push({
+				message : 'Could not extract type name from lazy() call',
+				file    : sourceFile.fileName,
+				line    : line + 1,
+				column  : character + 1,
+			});
+			return;
+		}
+
+		const { typeName } = lazyContext;
+
+		// Determine parent type and collection based on the call source.
+		const parentNode = lazyContext.parentType;
+		const { collectionId } = lazyContext;
+
+		// Extract config options
+		const config = this.extractLazyConfig(call);
+
+		// Create type node first so its internal fullPath (including any collection prefix) is resolved.
+		const node = TypeGraphImpl.createNode(
+			typeName,
+			parentNode,
+			sourceFile.fileName,
+			line + 1,
+			character + 1,
+			collectionId
+		);
+		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
+
+		// Extract properties from the constructor returned by the lazy getter
+		node.properties = this.extractProperties(call);
+
+		// Extract constructor parameters for TypeRegistry signature
+		node.constructorParams = this.extractConstructorParams(call);
+
+		// Add to graph
+		if (parentNode) {
+			this.graph.addChild(parentNode, node);
+		} else {
+			this.graph.addRoot(node);
+		}
+
+		// Create definition info using the node's resolved fullPath
+		const definition: DefinitionInfo = {
+			name        : typeName,
+			location    : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind        : 'define',
+			parent      : parentNode ? parentNode.fullPath : null,
+			strictChain : config.strictChain ?? true,
+			blockErrors : config.blockErrors ?? false,
+		};
+		this.definitions.set(node.fullPath, definition);
+
+		// Track variable assignment: const LazyType = lazy('LazyType', ...) -> map "LazyType" -> "LazyType"
+		// For chained calls like const X = lazy('A').define('B'), we want to map X -> A (the root)
+		this.trackVariableAssignment(call, parentNode, node.fullPath);
+	}
+
+	/**
+	 * Extract lazy() call arguments into a normalized shape.
+	 * Handles named/unnamed and explicit-source forms, both as free calls
+	 * and as method calls.
+	 */
+	private extractLazyCallArgs (call: ts.CallExpression): {
+		source?: ts.Expression;
+		name?: string;
+		getter: ts.Expression;
+		config?: ts.Expression;
+	} | undefined {
+		const args = call.arguments;
+		const isMethodCall = ts.isPropertyAccessExpression(call.expression);
+
+		if (isMethodCall) {
+			// Source is the object of the property access: Type.lazy(...)
+			const source = call.expression.expression;
+			if (args.length === 0) {
+				return undefined;
+			}
+			const methodFirstArg = args[ 0 ];
+			if (ts.isStringLiteral(methodFirstArg)) {
+				// Type.lazy('Name', getter, config?)
+				if (args.length < 2) {
+					return undefined;
+				}
+				return {
+					source,
+					name   : methodFirstArg.text,
+					getter : args[ 1 ],
+					config : args[ 2 ],
+				};
+			}
+			// Type.lazy(getter, config?)
+			return {
+				source,
+				getter : methodFirstArg,
+				config : args[ 1 ],
+			};
+		}
+
+		// Free call: lazy(...)
+		if (args.length === 0) {
+			return undefined;
+		}
+
+		const firstArg = args[ 0 ];
+
+		// Explicit-source form: lazy(source, 'Name', getter, config?)
+		// or lazy(source, getter, config?)
+		if (args.length >= 2 && ts.isIdentifier(firstArg)) {
+			const secondArg = args[ 1 ];
+			if (ts.isStringLiteral(secondArg)) {
+				// lazy(source, 'Name', getter, config?)
+				if (args.length < 3) {
+					return undefined;
+				}
+				return {
+					source : firstArg,
+					name   : secondArg.text,
+					getter : args[ 2 ],
+					config : args[ 3 ],
+				};
+			}
+			// lazy(source, getter, config?)
+			return {
+				source : firstArg,
+				getter : secondArg,
+				config : args[ 2 ],
+			};
+		}
+
+		// Named root form: lazy('Name', getter, config?)
+		if (ts.isStringLiteral(firstArg)) {
+			if (args.length < 2) {
+				return undefined;
+			}
+			return {
+				name   : firstArg.text,
+				getter : args[ 1 ],
+				config : args[ 2 ],
+			};
+		}
+
+		// Unnamed root form: lazy(getter, config?)
+		return {
+			getter : firstArg,
+			config : args[ 1 ],
+		};
+	}
+
+	/**
+	 * Unwrap the constructor returned by a lazy getter.
+	 * Supports:
+	 *   () => class Name {}
+	 *   () => function Name() {}
+	 *   () => { return class Name {}; }
+	 *   function () { return function Name() {}; }
+	 */
+	private unwrapLazyGetter (getterExpr: ts.Expression): ts.Expression | undefined {
+		if (ts.isArrowFunction(getterExpr)) {
+			const { body } = getterExpr;
+			if (!ts.isBlock(body)) {
+				return body;
+			}
+			for (const stmt of body.statements) {
+				if (ts.isReturnStatement(stmt) && stmt.expression) {
+					return stmt.expression;
+				}
+			}
+			return undefined;
+		}
+
+		if (ts.isFunctionExpression(getterExpr)) {
+			const { body } = getterExpr;
+			for (const stmt of body.statements) {
+				if (ts.isReturnStatement(stmt) && stmt.expression) {
+					return stmt.expression;
+				}
+			}
+			return undefined;
+		}
+
+		// Not a recognized getter pattern
+		return undefined;
+	}
+
+	/**
+	 * Extract a constructor name from a class expression, class declaration,
+	 * or named function expression.
+	 */
+	private extractConstructorName (constructorExpr: ts.Expression): string | undefined {
+		if (ts.isClassExpression(constructorExpr) && constructorExpr.name) {
+			return constructorExpr.name.text;
+		}
+		if (ts.isClassDeclaration(constructorExpr) && constructorExpr.name) {
+			return constructorExpr.name.text;
+		}
+		if (ts.isFunctionExpression(constructorExpr) && constructorExpr.name) {
+			return constructorExpr.name.text;
+		}
+		return undefined;
+	}
+
+	/**
+	 * Extract the type name from either a define() or lazy() call.
+	 */
+	private extractMnemonicaTypeName (call: ts.CallExpression): string | undefined {
+		if (this.isDefineCall(call)) {
+			return this.extractTypeName(call);
+		}
+		if (this.isLazyCall(call)) {
+			const args = this.extractLazyCallArgs(call);
+			if (!args) {
+				return undefined;
+			}
+			if (args.name) {
+				return args.name;
+			}
+			const constructorExpr = this.unwrapLazyGetter(args.getter);
+			if (constructorExpr) {
+				return this.extractConstructorName(constructorExpr);
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Extract the full lazy() call context: type name, parent type, and collection.
+	 * Handles direct calls, property-access calls, chained calls, and the
+	 * explicit-source form `lazy(source, 'TypeName', getter)`.
+	 */
+	private extractLazyContext (call: ts.CallExpression, sourceFile: ts.SourceFile): {
+		typeName?: string;
+		parentType?: TypeNode;
+		collectionId?: string;
+	} {
+		const args = this.extractLazyCallArgs(call);
+		if (!args) {
+			return {};
+		}
+
+		let typeName: string | undefined = args.name;
+		if (!typeName) {
+			const constructorExpr = this.unwrapLazyGetter(args.getter);
+			if (constructorExpr) {
+				typeName = this.extractConstructorName(constructorExpr);
+			}
+		}
+		if (!typeName) {
+			return {};
+		}
+
+		const { expression } = call;
+
+		// Direct call: lazy('TypeName', ...) or lazy(source, 'TypeName', getter)
+		if (ts.isIdentifier(expression) && expression.text === 'lazy') {
+			if (args.source && ts.isIdentifier(args.source)) {
+				const sourceContext = this.resolveDefineSource(args.source.text);
+				return {
+					typeName,
+					parentType   : sourceContext.parentType,
+					collectionId : sourceContext.collectionId,
+				};
+			}
+			// Plain root lazy in default collection
+			return { typeName };
+		}
+
+		// Property access: X.lazy('TypeName', ...)
+		if (ts.isPropertyAccessExpression(expression) && expression.name.text === 'lazy') {
+			const obj = expression.expression;
+
+			if (ts.isIdentifier(obj)) {
+				const sourceContext = this.resolveDefineSource(obj.text);
+				return {
+					typeName,
+					parentType   : sourceContext.parentType,
+					collectionId : sourceContext.collectionId,
+				};
+			}
+
+			if (ts.isPropertyAccessExpression(obj)) {
+				// Nested access: instance.Type.lazy - try to resolve
+				const chain = this.getPropertyChain(obj);
+				if (chain.length > 0) {
+					const parentNode = this.graph.findType(chain.join('.'));
+					return { typeName, parentType : parentNode };
+				}
+			}
+
+			if (ts.isCallExpression(obj)) {
+				// Determine the collection context from the root of the chain so that
+				// custom-collection types do not get confused with default-collection types.
+				const rootId = this.getRootIdentifier(obj.expression);
+				const expectedCollectionId = rootId
+					? this.resolveDefineSource(rootId.text).collectionId
+					: undefined;
+
+				// Chained call: define('A').lazy('B') or lazy('A').lazy('B')
+				if (this.isDefineCall(obj)) {
+					this.processDefineCall(obj, sourceFile);
+					const parentTypeName = this.extractMnemonicaTypeName(obj);
+					if (parentTypeName) {
+						const parentNode = this.findParentTypeByName(parentTypeName, expectedCollectionId);
+						return { typeName, parentType : parentNode, collectionId : parentNode?.collectionId };
+					}
+				}
+
+				if (this.isLazyCall(obj)) {
+					this.processLazyCall(obj, sourceFile);
+					const parentTypeName = this.extractMnemonicaTypeName(obj);
+					if (parentTypeName) {
+						const parentNode = this.findParentTypeByName(parentTypeName, expectedCollectionId);
+						return { typeName, parentType : parentNode, collectionId : parentNode?.collectionId };
+					}
+				}
+
+				// Builder lookup chain: App.lookup('User').lazy('Admin')
+				if (this.isLookupCall(obj)) {
+					const lookedUpPath = this.resolveLookupPath(obj);
+					if (lookedUpPath) {
+						const parentNode = this.graph.findType(lookedUpPath);
+						if (parentNode) {
+							return { typeName, parentType : parentNode, collectionId : parentNode.collectionId };
+						}
+					}
+				}
+			}
+		}
+
+		return { typeName };
+	}
+
+	/**
+	 * Extract config options from lazy() call
+	 */
+	private extractLazyConfig (call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
+		const args = this.extractLazyCallArgs(call);
+		if (!args || !args.config || !ts.isObjectLiteralExpression(args.config)) {
+			return {};
+		}
+
+		const configResult = this.extractConfigFromObjectLiteral(args.config);
+		return configResult;
 	}
 
 	/**
@@ -358,7 +1004,11 @@ export class MnemonicaAnalyzer {
 		* e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
 		* For chained calls like const X = define('A').define('B'), we map X -> A (the root type)
 		*/
-	private trackVariableAssignment(call: ts.CallExpression, parentNode: TypeNode | undefined, fullPath: string): void {
+	private trackVariableAssignment (
+		call: ts.CallExpression,
+		parentNode: TypeNode | undefined,
+		fullPath: string
+	): void {
 		// Check if this call is the right-hand side of a variable declaration
 		// Walk up the tree to find VariableDeclaration
 		let current: ts.Node | undefined = call.parent;
@@ -377,14 +1027,14 @@ export class MnemonicaAnalyzer {
 				return;
 			}
 			current = current.parent;
-			}
 		}
+	}
 	
 	/**
 		* Track variable assignments from lookup() calls
 		* e.g., const SentienceConstructor = lookup('Sentience') maps "SentienceConstructor" -> "Sentience"
 		*/
-	private trackLookupAssignment(call: ts.CallExpression, typePath: string): void {
+	private trackLookupAssignment (call: ts.CallExpression, typePath: string): void {
 		// Walk up the tree to find VariableDeclaration
 		let current: ts.Node | undefined = call.parent;
 		while (current) {
@@ -404,7 +1054,7 @@ export class MnemonicaAnalyzer {
 		* Track variable assignments from new Type() calls
 		* e.g., const user = new UserType() maps "user" -> "UserType"
 		*/
-	private trackNewAssignment(newExpr: ts.NewExpression, typePath: string): void {
+	private trackNewAssignment (newExpr: ts.NewExpression, typePath: string): void {
 		// Walk up the tree to find VariableDeclaration
 		let current: ts.Node | undefined = newExpr.parent;
 		while (current) {
@@ -423,7 +1073,11 @@ export class MnemonicaAnalyzer {
 	/**
 		* Process a @decorate() decorator
 	 */
-	private processDecorateDecorator(decorator: ts.Decorator, sourceFile: ts.SourceFile, classDeclParam?: ts.ClassDeclaration): void {
+	private processDecorateDecorator (
+		decorator: ts.Decorator,
+		sourceFile: ts.SourceFile,
+		classDeclParam?: ts.ClassDeclaration
+	): void {
 		const { line, character } = ts.getLineAndCharacterOfPosition(
 			sourceFile,
 			decorator.getStart(sourceFile)
@@ -433,10 +1087,10 @@ export class MnemonicaAnalyzer {
 		const classDecl = decorator.parent as ts.ClassDeclaration | undefined || classDeclParam;
 		if (!classDecl || !classDecl.name) {
 			this.errors.push({
-				message: 'Decorated class has no name',
-				file: sourceFile.fileName,
-				line: line + 1,
-				column: character + 1,
+				message : 'Decorated class has no name',
+				file    : sourceFile.fileName,
+				line    : line + 1,
+				column  : character + 1,
 			});
 			return;
 		}
@@ -444,60 +1098,79 @@ export class MnemonicaAnalyzer {
 		const typeName = classDecl.name.text;
 		if (!typeName) {
 			this.errors.push({
-				message: 'Decorated class has no name',
-				file: sourceFile.fileName,
-				line: line + 1,
-				column: character + 1,
+				message : 'Decorated class has no name',
+				file    : sourceFile.fileName,
+				line    : line + 1,
+				column  : character + 1,
 			});
 			return;
 		}
 
 		// Parse decorator arguments: @decorate(), @decorate(Parent),
-		// @decorate({ ... }), @decorate(Parent, { ... })
+		// @decorate({ ... }), @decorate(Parent, { ... }),
+		// @MyCollection.decorate(), @MyCollection.decorate({ ... })
 		let parentNode: TypeNode | undefined;
 		let parentFullPath: string | null = null;
+		let collectionId: string | undefined;
 		let decoratorConfig: { strictChain?: boolean; blockErrors?: boolean } = {};
 
 		if (ts.isCallExpression(decorator.expression)) {
-			const args = decorator.expression.arguments;
-			let parentArg: ts.Identifier | undefined;
-			let configArg: ts.ObjectLiteralExpression | undefined;
+			const callExpr = decorator.expression;
+			const callee = callExpr.expression;
 
-			for (const arg of args) {
-				if (ts.isIdentifier(arg)) {
-					if (parentArg) {
-						this.errors.push({
-							message: '@decorate() accepts only one parent reference',
-							file: sourceFile.fileName,
-							line: line + 1,
-							column: character + 1,
-						});
-					} else {
-						parentArg = arg;
-					}
-				} else if (ts.isObjectLiteralExpression(arg)) {
-					if (configArg) {
-						this.errors.push({
-							message: '@decorate() accepts only one config object',
-							file: sourceFile.fileName,
-							line: line + 1,
-							column: character + 1,
-						});
-					} else {
-						configArg = arg;
+			// Check for @MyCollection.decorate() where MyCollection is a custom collection.
+			// The decorated class becomes a root type in that collection.
+			if (
+				ts.isPropertyAccessExpression(callee) &&
+				callee.name.text === 'decorate' &&
+				ts.isIdentifier(callee.expression) &&
+				this.collectionVariables.has(callee.expression.text)
+			) {
+				collectionId = this.collectionVariables.get(callee.expression.text);
+				if (callExpr.arguments.length === 1 && ts.isObjectLiteralExpression(callExpr.arguments[ 0 ])) {
+					decoratorConfig = this.extractConfigFromObjectLiteral(callExpr.arguments[ 0 ]);
+				}
+			} else {
+				const args = callExpr.arguments;
+				let parentArg: ts.Identifier | undefined;
+				let configArg: ts.ObjectLiteralExpression | undefined;
+
+				for (const arg of args) {
+					if (ts.isIdentifier(arg)) {
+						if (parentArg) {
+							this.errors.push({
+								message : '@decorate() accepts only one parent reference',
+								file    : sourceFile.fileName,
+								line    : line + 1,
+								column  : character + 1,
+							});
+						} else {
+							parentArg = arg;
+						}
+					} else if (ts.isObjectLiteralExpression(arg)) {
+						if (configArg) {
+							this.errors.push({
+								message : '@decorate() accepts only one config object',
+								file    : sourceFile.fileName,
+								line    : line + 1,
+								column  : character + 1,
+							});
+						} else {
+							configArg = arg;
+						}
 					}
 				}
-			}
 
-			if (parentArg) {
-				parentNode = this.findParentTypeByIdentifier(parentArg.text);
-				if (parentNode) {
-					parentFullPath = parentNode.fullPath;
+				if (parentArg) {
+					parentNode = this.findParentTypeByIdentifier(parentArg.text);
+					if (parentNode) {
+						parentFullPath = parentNode.fullPath;
+					}
 				}
-			}
 
-			if (configArg) {
-				decoratorConfig = this.extractConfigFromObjectLiteral(configArg);
+				if (configArg) {
+					decoratorConfig = this.extractConfigFromObjectLiteral(configArg);
+				}
 			}
 		}
 
@@ -506,12 +1179,12 @@ export class MnemonicaAnalyzer {
 
 		// Create definition info for decorate
 		const definition: DefinitionInfo = {
-			name: typeName,
-			location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-			kind: 'decorate',
-			parent: parentFullPath,
-			strictChain: decoratorConfig.strictChain ?? true,
-			blockErrors: decoratorConfig.blockErrors ?? false,
+			name        : typeName,
+			location    : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind        : 'decorate',
+			parent      : parentFullPath,
+			strictChain : decoratorConfig.strictChain ?? true,
+			blockErrors : decoratorConfig.blockErrors ?? false,
 		};
 		this.definitions.set(fullPath, definition);
 
@@ -521,8 +1194,10 @@ export class MnemonicaAnalyzer {
 			parentNode,
 			sourceFile.fileName,
 			line + 1,
-			character + 1
+			character + 1,
+			collectionId
 		);
+		node.registryInterfaceName = this.getRegistryInterfaceName(node.collectionId);
 
 		// Extract properties and constructor parameters from class members
 		node.properties = this.extractClassProperties(classDecl);
@@ -537,17 +1212,26 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Extract type name from define() call arguments
+	 * Extract type name from define() call arguments.
+	 * Handles:
+	 *   define('TypeName', handler)
+	 *   define(source, 'TypeName', handler)   // explicit-source form
+	 *   define(function TypeName() {})
+	 *   define(() => class TypeName {})
 	 */
-	private extractTypeName(call: ts.CallExpression): string | undefined {
+	private extractTypeName (call: ts.CallExpression): string | undefined {
 		const args = call.arguments;
 
-		// define('TypeName', handler) or define(() => class)
 		if (args.length === 0) {
 			return undefined;
 		}
 
-		const firstArg = args[0];
+		const firstArg = args[ 0 ];
+
+		// Explicit-source form: define(source, 'TypeName', handler)
+		if (args.length >= 2 && ts.isIdentifier(firstArg) && ts.isStringLiteral(args[ 1 ])) {
+			return args[ 1 ].text;
+		}
 
 		// String literal: define('TypeName', ...)
 		if (ts.isStringLiteral(firstArg)) {
@@ -561,7 +1245,7 @@ export class MnemonicaAnalyzer {
 
 		// Arrow function returning class: define(() => class TypeName {})
 		if (ts.isArrowFunction(firstArg)) {
-			const body = firstArg.body;
+			const { body } = firstArg;
 			if (ts.isClassExpression(body) && body.name) {
 				return body.name.text;
 			}
@@ -571,83 +1255,246 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Find parent type node for nested define calls
+	 * Extract the full define() call context: type name, parent type, and collection.
+	 * Handles direct calls, property-access calls, chained calls, and the
+	 * explicit-source form `define(source, 'TypeName', handler)`.
 	 */
-	private findParentType(call: ts.CallExpression, _sourceFile: ts.SourceFile): TypeNode | undefined {
-		const expression = call.expression;
+	private extractDefineContext (call: ts.CallExpression): {
+		typeName?: string;
+		parentType?: TypeNode;
+		collectionId?: string;
+	} {
+		const typeName = this.extractTypeName(call);
+		if (!typeName) {
+			return {};
+		}
 
-		// Check for method call: SomeType.define('SubType', ...)
-		if (!ts.isPropertyAccessExpression(expression)) {
+		const { expression } = call;
+
+		// Direct call: define('TypeName', ...) or define(source, 'TypeName', handler)
+		if (ts.isIdentifier(expression) && expression.text === 'define') {
+			// Explicit-source form: define(source, 'TypeName', handler)
+			if (call.arguments.length >= 2 && ts.isIdentifier(call.arguments[ 0 ])) {
+				const sourceName = call.arguments[ 0 ].text;
+				const sourceContext = this.resolveDefineSource(sourceName);
+				return {
+					typeName,
+					parentType   : sourceContext.parentType,
+					collectionId : sourceContext.collectionId,
+				};
+			}
+
+			// Plain root define in default collection
+			return { typeName };
+		}
+
+		// Property access: X.define('TypeName', ...)
+		if (ts.isPropertyAccessExpression(expression) && expression.name.text === 'define') {
+			const obj = expression.expression;
+
+			if (ts.isIdentifier(obj)) {
+				const sourceContext = this.resolveDefineSource(obj.text);
+				return {
+					typeName,
+					parentType   : sourceContext.parentType,
+					collectionId : sourceContext.collectionId,
+				};
+			}
+
+			if (ts.isPropertyAccessExpression(obj)) {
+				// Nested access: instance.Type.define - try to resolve
+				const chain = this.getPropertyChain(obj);
+				if (chain.length > 0) {
+					const parentNode = this.graph.findType(chain.join('.'));
+					return { typeName, parentType : parentNode };
+				}
+			}
+
+			if (ts.isCallExpression(obj)) {
+				// Determine the collection context from the root of the chain so that
+				// custom-collection types do not get confused with default-collection types.
+				const rootId = this.getRootIdentifier(obj.expression);
+				const expectedCollectionId = rootId
+					? this.resolveDefineSource(rootId.text).collectionId
+					: undefined;
+
+				// Chained call: define('A').define('B') or mnemonica.define('A').define('B')
+				if (this.isDefineCall(obj)) {
+					this.processDefineCall(obj, call.getSourceFile());
+					const parentTypeName = this.extractTypeName(obj);
+					if (parentTypeName) {
+						const parentNode = this.findParentTypeByName(parentTypeName, expectedCollectionId);
+						// Inherit collection from the parent type (if any)
+						return { typeName, parentType : parentNode, collectionId : parentNode?.collectionId };
+					}
+				}
+
+				// Chained lazy call: lazy('A').define('B') or Type.lazy('A').define('B')
+				if (this.isLazyCall(obj)) {
+					this.processLazyCall(obj, call.getSourceFile());
+					const parentTypeName = this.extractMnemonicaTypeName(obj);
+					if (parentTypeName) {
+						const parentNode = this.findParentTypeByName(parentTypeName, expectedCollectionId);
+						return { typeName, parentType : parentNode, collectionId : parentNode?.collectionId };
+					}
+				}
+
+				// Builder lookup chain: App.lookup('User').define('Admin')
+				if (this.isLookupCall(obj)) {
+					const lookedUpPath = this.resolveLookupPath(obj);
+					if (lookedUpPath) {
+						const parentNode = this.graph.findType(lookedUpPath);
+						if (parentNode) {
+							return { typeName, parentType : parentNode, collectionId : parentNode.collectionId };
+						}
+					}
+				}
+			}
+		}
+
+		return { typeName };
+	}
+
+	/**
+	 * Prefix a dotted type path with a collection identifier so custom-collection
+	 * types do not collide with default-collection types in the graph.
+	 */
+	private prefixCollectionPath (path: string, collectionId: string): string {
+		return `${collectionId}::${path}`;
+	}
+
+	/**
+	 * Resolve a define() source identifier to either a parent type, a collection,
+	 * or the default (module object) collection.
+	 */
+	private resolveDefineSource (sourceName: string): {
+		parentType?: TypeNode;
+		collectionId?: string;
+	} {
+		// Module object aliases -> root in default collection
+		if (this.moduleObjectVariables.has(sourceName)) {
+			return {};
+		}
+
+		// Collection variables -> root in that collection
+		const collectionId = this.collectionVariables.get(sourceName);
+		if (collectionId) {
+			return { collectionId };
+		}
+
+		// Otherwise treat as a type variable reference
+		const parentNode = this.findParentTypeByIdentifier(sourceName);
+		return { parentType : parentNode, collectionId : parentNode?.collectionId };
+	}
+
+	/**
+	 * Check if a call expression is a lookup() call.
+	 */
+	private isLookupCall (node: ts.CallExpression): boolean {
+		const expr = node.expression;
+		if (ts.isIdentifier(expr) && expr.text === 'lookup') {
+			return true;
+		}
+		if (ts.isPropertyAccessExpression(expr) && expr.name.text === 'lookup') {
+			return true;
+		}
+		return false;
+	}
+
+	/**
+	 * Resolve a lookup() call to a dotted type path (best effort).
+	 * Handles:
+	 *   lookup('User')
+	 *   lookup(source, 'User')
+	 *   App.lookup('User')
+	 *   collection.lookup('User.Admin')
+	 */
+	private resolveLookupPath (call: ts.CallExpression): string | undefined {
+		const args = call.arguments;
+		if (args.length === 0) {
 			return undefined;
 		}
 
-		// Get the object being called on (SomeType in SomeType.define)
-		const obj = expression.expression;
-
-		if (ts.isIdentifier(obj)) {
-			// Direct reference to parent type - search by simple name
-			const name = obj.text;
-
-			// First check variable mapping: const User = define('UserEntity', ...)
-			// In this case, name is "User" but we need to find "UserEntity"
-			const mappedFullPath = this.variableToTypeMap.get(name);
-			if (mappedFullPath) {
-				const mappedNode = this.graph.findType(mappedFullPath);
-				if (mappedNode) return mappedNode;
-			}
-
-			// First try exact match
-			const exact = this.graph.findType(name);
-			if (exact) return exact;
-
-			// Then search through all types for one with matching name
-			for (const type of this.graph.getAllTypes()) {
-				if (type.name === name) {
-					return type;
+		// Single-arg lookup: lookup('User') or App.lookup('User')
+		if (args.length === 1) {
+			const arg = args[ 0 ];
+			if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
+				const path = arg.text;
+				// If this is a method call on a source, resolve relative to that source.
+				if (ts.isPropertyAccessExpression(call.expression)) {
+					const sourceExpr = call.expression.expression;
+					if (ts.isIdentifier(sourceExpr)) {
+						const sourceName = sourceExpr.text;
+						const sourceContext = this.resolveDefineSource(sourceName);
+						if (sourceContext.collectionId) {
+							// Collection lookup: prefix path with the collection id
+							return this.prefixCollectionPath(path, sourceContext.collectionId);
+						}
+						if (sourceContext.parentType) {
+							// Type lookup: relative first, then root fallback
+							const relativePath = `${sourceContext.parentType.fullPath}.${path}`;
+							if (this.graph.findType(relativePath)) {
+								return relativePath;
+							}
+							return path;
+						}
+					}
 				}
+				return path;
 			}
 			return undefined;
 		}
 
-		if (ts.isPropertyAccessExpression(obj)) {
-			// Nested access: instance.Type.define - try to resolve
-			const chain = this.getPropertyChain(obj);
-			if (chain.length > 0) {
-				return this.graph.findType(chain.join('.'));
+		// Two-arg lookup: lookup(source, 'User')
+		if (args.length >= 2) {
+			const sourceArg = args[ 0 ];
+			const pathArg = args[ 1 ];
+			if (!ts.isIdentifier(sourceArg) || !ts.isStringLiteral(pathArg)) {
+				return undefined;
 			}
-		}
-
-		// Handle chained define: define('UserEntity', ...).define('UserResponse', ...)
-		if (ts.isCallExpression(obj)) {
-			// This is a chained call - the object is itself a define() call
-			// Check if the parent call is a define() that hasn't been processed yet
-			if (this.isDefineCall(obj)) {
-				// Process the parent define() call first to create its type node
-				// Use the sourceFile from the current context
-				this.processDefineCall(obj, _sourceFile);
-				
-				// Now find and return the newly created parent type
-				const parentTypeName = this.extractTypeName(obj);
-				if (parentTypeName) {
-					return this.findParentTypeByName(parentTypeName);
+			const sourceName = sourceArg.text;
+			const path = pathArg.text;
+			const sourceContext = this.resolveDefineSource(sourceName);
+			if (sourceContext.collectionId) {
+				return this.prefixCollectionPath(path, sourceContext.collectionId);
+			}
+			if (sourceContext.parentType) {
+				const relativePath = `${sourceContext.parentType.fullPath}.${path}`;
+				if (this.graph.findType(relativePath)) {
+					return relativePath;
 				}
+				return path;
 			}
+			return path;
 		}
 
 		return undefined;
 	}
 
 	/**
-		* Find a parent type by its name, searching in the graph
+		* Find a parent type by its name, searching in the graph.
+		* When collectionId is provided, only types from that collection are considered.
 		*/
-	private findParentTypeByName(name: string): TypeNode | undefined {
-		// First try exact match
-		const exact = this.graph.findType(name);
-		if (exact) return exact;
+	private findParentTypeByName (
+		name: string,
+		collectionId?: string
+	): TypeNode | undefined {
+		const matchesCollection = (type: TypeNode): boolean => {
+			if (collectionId === undefined) {
+				return type.collectionId === undefined;
+			}
+			return type.collectionId === collectionId;
+		};
 
-		// Then search through all types for one with matching name
+		// First try exact match (default-collection types use the plain dotted path)
+		const exact = this.graph.findType(name);
+		if (exact && matchesCollection(exact)) {
+			return exact;
+		}
+
+		// Then search through all types for one with matching name and collection
 		for (const type of this.graph.getAllTypes()) {
-			if (type.name === name) {
+			if (type.name === name && matchesCollection(type)) {
 				return type;
 			}
 		}
@@ -660,7 +1507,7 @@ export class MnemonicaAnalyzer {
 		* Handles both aliased variables (const User = define('UserEntity', ...))
 		* and direct class/type names.
 		*/
-	private findParentTypeByIdentifier(name: string): TypeNode | undefined {
+	private findParentTypeByIdentifier (name: string): TypeNode | undefined {
 		// First check variable mapping: const User = define('UserEntity', ...)
 		const mappedFullPath = this.variableToTypeMap.get(name);
 		if (mappedFullPath) {
@@ -673,9 +1520,24 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Get the leftmost identifier of a property-access chain.
+	 * For `App.define('User').define('Admin')` this returns the `App` identifier.
+	 */
+	private getRootIdentifier (expr: ts.Expression): ts.Identifier | undefined {
+		let current: ts.Expression = expr;
+		while (ts.isPropertyAccessExpression(current)) {
+			current = current.expression;
+		}
+		if (ts.isIdentifier(current)) {
+			return current;
+		}
+		return undefined;
+	}
+
+	/**
 		* Get property chain from nested access
 		*/
-	private getPropertyChain(expr: ts.PropertyAccessExpression | ts.Identifier): string[] {
+	private getPropertyChain (expr: ts.PropertyAccessExpression | ts.Identifier): string[] {
 		const chain: string[] = [];
 
 		let current: ts.Expression = expr;
@@ -694,27 +1556,70 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Extract properties from constructor function
+	 * Determine the constructor expression for either a define() or lazy() call.
+	 * For define() this is the construct handler; for lazy() it is the value
+	 * returned by the lazy getter.
 	 */
-	private extractProperties(call: ts.CallExpression): Map<string, PropertyInfo> {
-		const properties = new Map<string, PropertyInfo>();
+	private extractConstructorExpression (call: ts.CallExpression): ts.Expression | undefined {
+		const expr = call.expression;
+		const name = ts.isIdentifier(expr)
+			? expr.text
+			: ts.isPropertyAccessExpression(expr)
+				? expr.name.text
+				: '';
 
-		const handlerArg = call.arguments[1];
-		if (!handlerArg) {
-			return properties;
+		if (name === 'lazy') {
+			const lazyArgs = this.extractLazyCallArgs(call);
+			if (!lazyArgs) {
+				return undefined;
+			}
+			return this.unwrapLazyGetter(lazyArgs.getter);
 		}
 
+		// define() call
+		const args = call.arguments;
+		if (args.length === 0) {
+			return undefined;
+		}
+
+		// Modern form: define('Name', handler, config?)
+		if (ts.isStringLiteral(args[ 0 ])) {
+			return args[ 1 ];
+		}
+
+		// Legacy form: define(function Name() {}) or define(() => class Name {})
+		return args[ 0 ];
+	}
+
+	/**
+	 * Extract properties from constructor function
+	 */
+	private extractProperties (call: ts.CallExpression): Map<string, PropertyInfo> {
+		const constructorExpr = this.extractConstructorExpression(call);
+		if (!constructorExpr) {
+			return new Map<string, PropertyInfo>();
+		}
+		const result = this.extractPropertiesFromConstructor(constructorExpr);
+		return result;
+	}
+
+	/**
+	 * Extract properties from a constructor expression (function, arrow, or class).
+	 */
+	private extractPropertiesFromConstructor (constructorExpr: ts.Expression): Map<string, PropertyInfo> {
+		const properties = new Map<string, PropertyInfo>();
+
 		// Build type map from data parameter (for this.x = data.x patterns)
-		const dataTypeMap = this.buildDataTypeMap(handlerArg);
+		const dataTypeMap = this.buildDataTypeMap(constructorExpr);
 
 		// Handle function expression
-		if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
-			const body = handlerArg.body;
+		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr)) {
+			const { body } = constructorExpr;
 
 			// First, extract properties from `this` parameter type annotation
 			// This handles patterns like: function(this: SomeType, data: SomeType) { }
-			const thisParamProperties = this.extractThisParamProperties(handlerArg);
-			for (const [name, propInfo] of thisParamProperties) {
+			const thisParamProperties = this.extractThisParamProperties(constructorExpr);
+			for (const [ name, propInfo ] of thisParamProperties) {
 				properties.set(name, propInfo);
 			}
 
@@ -729,19 +1634,19 @@ export class MnemonicaAnalyzer {
 		}
 
 		// Handle class expression
-		if (ts.isClassExpression(handlerArg)) {
+		if (ts.isClassExpression(constructorExpr)) {
 			// First pass: collect all property types for method inference
-			const classPropertyTypes = this.extractClassPropertyTypes(handlerArg);
+			const classPropertyTypes = this.extractClassPropertyTypes(constructorExpr);
 
-			for (const member of handlerArg.members) {
+			for (const member of constructorExpr.members) {
 				// Handle property declarations
 				if (ts.isPropertyDeclaration(member) && member.name) {
 					// Skip private and protected properties
 					if (member.modifiers) {
-						const hasPrivateOrProtected = member.modifiers.some(
-							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-							     m.kind === ts.SyntaxKind.ProtectedKeyword
-						);
+						const hasPrivateOrProtected = member.modifiers.some(m => {
+							return m.kind === ts.SyntaxKind.PrivateKeyword ||
+								m.kind === ts.SyntaxKind.ProtectedKeyword;
+						});
 						if (hasPrivateOrProtected) {
 							continue;
 						}
@@ -751,8 +1656,8 @@ export class MnemonicaAnalyzer {
 					if (name) {
 						properties.set(name, {
 							name,
-							type: this.inferType(member.type),
-							optional: !!member.questionToken,
+							type     : this.inferType(member.type),
+							optional : !!member.questionToken,
 						});
 					}
 				}
@@ -761,10 +1666,10 @@ export class MnemonicaAnalyzer {
 				if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
 					// Skip private and protected methods
 					if (member.modifiers) {
-						const hasPrivateOrProtected = member.modifiers.some(
-							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-							     m.kind === ts.SyntaxKind.ProtectedKeyword
-						);
+						const hasPrivateOrProtected = member.modifiers.some(m => {
+							return m.kind === ts.SyntaxKind.PrivateKeyword ||
+								m.kind === ts.SyntaxKind.ProtectedKeyword;
+						});
 						if (hasPrivateOrProtected) {
 							continue;
 						}
@@ -775,7 +1680,7 @@ export class MnemonicaAnalyzer {
 					properties.set(name, {
 						name,
 						type,
-						optional: false,
+						optional : false,
 					});
 				}
 
@@ -783,10 +1688,10 @@ export class MnemonicaAnalyzer {
 				if (ts.isGetAccessor(member) && member.name && ts.isIdentifier(member.name)) {
 					// Skip private and protected getters
 					if (member.modifiers) {
-						const hasPrivateOrProtected = member.modifiers.some(
-							m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-							     m.kind === ts.SyntaxKind.ProtectedKeyword
-						);
+						const hasPrivateOrProtected = member.modifiers.some(m => {
+							return m.kind === ts.SyntaxKind.PrivateKeyword ||
+								m.kind === ts.SyntaxKind.ProtectedKeyword;
+						});
 						if (hasPrivateOrProtected) {
 							continue;
 						}
@@ -801,8 +1706,8 @@ export class MnemonicaAnalyzer {
 					properties.set(name, {
 						name,
 						type,
-						optional: false,
-						readonly: true,
+						optional : false,
+						readonly : true,
 					});
 				}
 			}
@@ -815,7 +1720,7 @@ export class MnemonicaAnalyzer {
 	 * Build a type map from all parameters with inline object type annotations
 	 * Returns a map of "paramName.propertyName" -> type
 	 */
-	private buildDataTypeMap(handlerArg: ts.Expression): Map<string, string> {
+	private buildDataTypeMap (handlerArg: ts.Expression): Map<string, string> {
 		const typeMap = new Map<string, string>();
 
 		if (!ts.isFunctionExpression(handlerArg) && !ts.isArrowFunction(handlerArg)) {
@@ -859,7 +1764,7 @@ export class MnemonicaAnalyzer {
 	 * Extract property access chain (e.g., "dataRenamed.id" from dataRenamed.id)
 	 * Handles fallbacks like: data.permissions || []
 	 */
-	private getPropertyAccessChain(expr: ts.Expression): string | undefined {
+	private getPropertyAccessChain (expr: ts.Expression): string | undefined {
 		// Handle identifier: data
 		if (ts.isIdentifier(expr)) {
 			return expr.text;
@@ -883,7 +1788,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Extract property assignment from statement
 	 */
-	private extractPropertyFromStatement(
+	private extractPropertyFromStatement (
 		expr: ts.Expression,
 		properties: Map<string, PropertyInfo>,
 		dataTypeMap: Map<string, string> = new Map()
@@ -891,7 +1796,7 @@ export class MnemonicaAnalyzer {
 		// Handle: this.property = value
 		if (ts.isBinaryExpression(expr) &&
 			expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-			const left = expr.left;
+			const { left } = expr;
 
 			if (ts.isPropertyAccessExpression(left)) {
 				// Check if accessing 'this' (ThisKeyword)
@@ -916,7 +1821,7 @@ export class MnemonicaAnalyzer {
 							properties.set(name, {
 								name,
 								type,
-								optional: false,
+								optional : false,
 							});
 						}
 					}
@@ -932,17 +1837,17 @@ export class MnemonicaAnalyzer {
 				ts.isIdentifier(fn.expression) &&
 				fn.expression.text === 'Object') {
 				const args = expr.arguments;
-				if (args.length >= 2 && args[0].kind === ts.SyntaxKind.ThisKeyword) {
+				if (args.length >= 2 && args[ 0 ].kind === ts.SyntaxKind.ThisKeyword) {
 					// Extract properties from the second argument
-					const propsArg = args[1];
+					const propsArg = args[ 1 ];
 					if (ts.isObjectLiteralExpression(propsArg)) {
 						for (const prop of propsArg.properties) {
 							if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
 								const name = prop.name.text;
 								properties.set(name, {
 									name,
-									type: this.inferTypeFromInitializer(prop.initializer),
-									optional: false,
+									type     : this.inferTypeFromInitializer(prop.initializer),
+									optional : false,
 								});
 							}
 						}
@@ -955,7 +1860,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Extract properties from class declaration (including methods and getters)
 	 */
-	private extractClassProperties(classDecl: ts.ClassDeclaration): Map<string, PropertyInfo> {
+	private extractClassProperties (classDecl: ts.ClassDeclaration): Map<string, PropertyInfo> {
 		const properties = new Map<string, PropertyInfo>();
 
 		for (const member of classDecl.members) {
@@ -963,10 +1868,8 @@ export class MnemonicaAnalyzer {
 			if (ts.isPropertyDeclaration(member) && member.name) {
 				// Skip private and protected properties
 				if (member.modifiers) {
-					const hasPrivateOrProtected = member.modifiers.some(
-						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-						     m.kind === ts.SyntaxKind.ProtectedKeyword
-					);
+					const hasPrivateOrProtected = member.modifiers.some(m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword);
 					if (hasPrivateOrProtected) {
 						continue;
 					}
@@ -982,7 +1885,7 @@ export class MnemonicaAnalyzer {
 					properties.set(name, {
 						name,
 						type,
-						optional: !!member.questionToken,
+						optional : !!member.questionToken,
 					});
 				}
 			}
@@ -991,10 +1894,8 @@ export class MnemonicaAnalyzer {
 			if (ts.isMethodDeclaration(member) && member.name && ts.isIdentifier(member.name)) {
 				// Skip private and protected methods
 				if (member.modifiers) {
-					const hasPrivateOrProtected = member.modifiers.some(
-						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-						     m.kind === ts.SyntaxKind.ProtectedKeyword
-					);
+					const hasPrivateOrProtected = member.modifiers.some(m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword);
 					if (hasPrivateOrProtected) {
 						continue;
 					}
@@ -1005,7 +1906,7 @@ export class MnemonicaAnalyzer {
 				properties.set(name, {
 					name,
 					type,
-					optional: false,
+					optional : false,
 				});
 			}
 
@@ -1013,10 +1914,8 @@ export class MnemonicaAnalyzer {
 			if (ts.isGetAccessor(member) && member.name && ts.isIdentifier(member.name)) {
 				// Skip private and protected getters
 				if (member.modifiers) {
-					const hasPrivateOrProtected = member.modifiers.some(
-						m => m.kind === ts.SyntaxKind.PrivateKeyword ||
-						     m.kind === ts.SyntaxKind.ProtectedKeyword
-					);
+					const hasPrivateOrProtected = member.modifiers.some(m => m.kind === ts.SyntaxKind.PrivateKeyword ||
+						     m.kind === ts.SyntaxKind.ProtectedKeyword);
 					if (hasPrivateOrProtected) {
 						continue;
 					}
@@ -1031,8 +1930,8 @@ export class MnemonicaAnalyzer {
 				properties.set(name, {
 					name,
 					type,
-					optional: false,
-					readonly: true,
+					optional : false,
+					readonly : true,
 				});
 			}
 		}
@@ -1045,7 +1944,7 @@ export class MnemonicaAnalyzer {
 	 * Maps property names to their TypeScript type strings
 	 * Note: Includes private/protected properties for method inference
 	 */
-	private extractClassPropertyTypes(classDecl: ts.ClassExpression): Map<string, string> {
+	private extractClassPropertyTypes (classDecl: ts.ClassExpression): Map<string, string> {
 		const propertyTypes = new Map<string, string>();
 
 		for (const member of classDecl.members) {
@@ -1065,7 +1964,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Infer method type from method declaration
 	 */
-	private inferMethodType(method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
+	private inferMethodType (method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
 		const params = method.parameters.map(param => {
 			const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
 			const paramType = this.inferType(param.type);
@@ -1084,7 +1983,8 @@ export class MnemonicaAnalyzer {
 		* Extract properties from `this` parameter type annotation
 		* Handles patterns like: function(this: SomeType, data: SomeType) { }
 		*/
-	private extractThisParamProperties (handlerArg: ts.FunctionExpression | ts.ArrowFunction): Map<string, PropertyInfo> {
+	private extractThisParamProperties (handlerArg: ts.FunctionExpression | ts.ArrowFunction):
+		Map<string, PropertyInfo> {
 		const properties = new Map<string, PropertyInfo>();
 
 		// Find the `this` parameter (if any)
@@ -1105,9 +2005,9 @@ export class MnemonicaAnalyzer {
 								const propName = member.name.text;
 								const type = this.inferType(member.type);
 								properties.set(propName, {
-									name: propName,
+									name     : propName,
 									type,
-									optional: !!member.questionToken,
+									optional : !!member.questionToken,
 								});
 							}
 						}
@@ -1120,9 +2020,9 @@ export class MnemonicaAnalyzer {
 							const propName = member.name.text;
 							const type = this.inferType(member.type);
 							properties.set(propName, {
-								name: propName,
+								name     : propName,
 								type,
-								optional: !!member.questionToken,
+								optional : !!member.questionToken,
 							});
 						}
 					}
@@ -1140,178 +2040,178 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Infer TypeScript type from type node
 	 */
-	private inferType(typeNode?: ts.TypeNode): string {
+	private inferType (typeNode?: ts.TypeNode): string {
 		if (!typeNode) {
 			return 'unknown';
 		}
 
 		switch (typeNode.kind) {
-			case ts.SyntaxKind.StringKeyword:
-				return 'string';
-			case ts.SyntaxKind.NumberKeyword:
-				return 'number';
-			case ts.SyntaxKind.BooleanKeyword:
-				return 'boolean';
-			case ts.SyntaxKind.UndefinedKeyword:
-				return 'undefined';
-			case ts.SyntaxKind.NullKeyword:
+		case ts.SyntaxKind.StringKeyword:
+			return 'string';
+		case ts.SyntaxKind.NumberKeyword:
+			return 'number';
+		case ts.SyntaxKind.BooleanKeyword:
+			return 'boolean';
+		case ts.SyntaxKind.UndefinedKeyword:
+			return 'undefined';
+		case ts.SyntaxKind.NullKeyword:
+			return 'null';
+		case ts.SyntaxKind.AnyKeyword:
+			return 'any';
+		case ts.SyntaxKind.UnknownKeyword:
+			return 'unknown';
+		case ts.SyntaxKind.VoidKeyword:
+			return 'void';
+		case ts.SyntaxKind.ArrayType:
+			return `Array<${  this.inferType((typeNode as ts.ArrayTypeNode).elementType)  }>`;
+		case ts.SyntaxKind.TypeLiteral: {
+			// Inline-expand type literals instead of collapsing to 'object'
+			const typeLit = typeNode as ts.TypeLiteralNode;
+			const props: string[] = [];
+			for (const member of typeLit.members) {
+				if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+					const propName = member.name.text;
+					const optional = member.questionToken ? '?' : '';
+					const type = this.inferType(member.type);
+					props.push(`${propName}${optional}: ${type}`);
+				}
+			}
+			return `{ ${props.join('; ')} }`;
+		}
+		case ts.SyntaxKind.LiteralType: {
+			// Handle string literal types like 'user', 'admin', etc.
+			const { literal } = (typeNode as ts.LiteralTypeNode);
+			if (ts.isStringLiteral(literal)) {
+				// Return the actual literal value (e.g., 'user' instead of string)
+				return `'${literal.text}'`;
+			}
+			if (ts.isNumericLiteral(literal)) {
+				return literal.text;
+			}
+			if (literal.kind === ts.SyntaxKind.TrueKeyword) {
+				return 'true';
+			}
+			if (literal.kind === ts.SyntaxKind.FalseKeyword) {
+				return 'false';
+			}
+			if (literal.kind === ts.SyntaxKind.NullKeyword) {
 				return 'null';
-			case ts.SyntaxKind.AnyKeyword:
-				return 'any';
-			case ts.SyntaxKind.UnknownKeyword:
-				return 'unknown';
-			case ts.SyntaxKind.VoidKeyword:
-				return 'void';
-			case ts.SyntaxKind.ArrayType:
-				return 'Array<' + this.inferType((typeNode as ts.ArrayTypeNode).elementType) + '>';
-			case ts.SyntaxKind.TypeLiteral: {
-				// Inline-expand type literals instead of collapsing to 'object'
-				const typeLit = typeNode as ts.TypeLiteralNode;
-				const props: string[] = [];
-				for (const member of typeLit.members) {
-					if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
-						const propName = member.name.text;
-						const optional = member.questionToken ? '?' : '';
-						const type = this.inferType(member.type);
-						props.push(`${propName}${optional}: ${type}`);
-					}
-				}
-				return `{ ${props.join('; ')} }`;
 			}
-			case ts.SyntaxKind.LiteralType: {
-				// Handle string literal types like 'user', 'admin', etc.
-				const literal = (typeNode as ts.LiteralTypeNode).literal;
-				if (ts.isStringLiteral(literal)) {
-					// Return the actual literal value (e.g., 'user' instead of string)
-					return `'${literal.text}'`;
-				}
-				if (ts.isNumericLiteral(literal)) {
-					return literal.text;
-				}
-				if (literal.kind === ts.SyntaxKind.TrueKeyword) {
-					return 'true';
-				}
-				if (literal.kind === ts.SyntaxKind.FalseKeyword) {
-					return 'false';
-				}
-				if (literal.kind === ts.SyntaxKind.NullKeyword) {
-					return 'null';
-				}
-				return 'unknown';
+			return 'unknown';
+		}
+		case ts.SyntaxKind.TypeReference: {
+			// Handle type references like Map<string, number>, PropertyInfo, etc.
+			const typeRef = typeNode as ts.TypeReferenceNode;
+			const typeName = ts.isIdentifier(typeRef.typeName)
+				? typeRef.typeName.text
+				: ts.isQualifiedName(typeRef.typeName)
+					? this.getQualifiedNameText(typeRef.typeName)
+					: 'unknown';
+
+			// Check if this is a type alias we can resolve
+			const aliasedType = this.typeAliases.get(typeName);
+			if (aliasedType) {
+				// Resolve the type alias
+				return this.inferType(aliasedType);
 			}
-			case ts.SyntaxKind.TypeReference: {
-				// Handle type references like Map<string, number>, PropertyInfo, etc.
-				const typeRef = typeNode as ts.TypeReferenceNode;
-				const typeName = ts.isIdentifier(typeRef.typeName)
-					? typeRef.typeName.text
-					: ts.isQualifiedName(typeRef.typeName)
-						? this.getQualifiedNameText(typeRef.typeName)
-						: 'unknown';
 
-				// Check if this is a type alias we can resolve
-				const aliasedType = this.typeAliases.get(typeName);
-				if (aliasedType) {
-					// Resolve the type alias
-					return this.inferType(aliasedType);
-				}
-
-				// Handle InstanceType<typeof X> pattern -> convert to Parent_X
-				if (typeName === 'InstanceType' && typeRef.typeArguments && typeRef.typeArguments.length === 1) {
-					const arg = typeRef.typeArguments[0];
-					if (arg.kind === ts.SyntaxKind.TypeQuery) {
-						const typeQuery = arg as ts.TypeQueryNode;
-						if (ts.isIdentifier(typeQuery.exprName)) {
-							const typeName = typeQuery.exprName.text;
-							// Look up the type in the graph to get full path
-							const typeNode = this.graph.findTypeByName(typeName);
-							if (typeNode) {
-								// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-								return typeNode.fullPath.replace(/\./g, '_');
-							}
-							// Fallback: just use the type name if not found in graph
-							return typeName;
+			// Handle InstanceType<typeof X> pattern -> convert to Parent_X
+			if (typeName === 'InstanceType' && typeRef.typeArguments && typeRef.typeArguments.length === 1) {
+				const arg = typeRef.typeArguments[ 0 ];
+				if (arg.kind === ts.SyntaxKind.TypeQuery) {
+					const typeQuery = arg as ts.TypeQueryNode;
+					if (ts.isIdentifier(typeQuery.exprName)) {
+						const queryTypeName = typeQuery.exprName.text;
+						// Look up the type in the graph to get full path
+						const matchedType = this.graph.findTypeByName(queryTypeName);
+						if (matchedType) {
+							// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
+							return matchedType.fullPath.replace(/\./g, '_');
 						}
+						// Fallback: just use the type name if not found in graph
+						return queryTypeName;
 					}
 				}
+			}
 
-				if (!typeRef.typeArguments || typeRef.typeArguments.length === 0) {
-					// Check if this type exists in our graph - convert to full path format
-					const typeNode = this.graph.findTypeByName(typeName);
-					if (typeNode) {
-						// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-						return typeNode.fullPath.replace(/\./g, "_");
-					}
-					return typeName;
+			if (!typeRef.typeArguments || typeRef.typeArguments.length === 0) {
+				// Check if this type exists in our graph - convert to full path format
+				const matchedType = this.graph.findTypeByName(typeName);
+				if (matchedType) {
+					// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
+					return matchedType.fullPath.replace(/\./g, '_');
 				}
+				return typeName;
+			}
 
-				// Build generic type arguments
-				const args = typeRef.typeArguments.map(arg => this.inferType(arg));
-				return `${typeName}<${args.join(', ')}>`;
-			}
-			case ts.SyntaxKind.UnionType: {
-				// Handle union types like 'a' | 'b' | 'c'
-				const unionType = typeNode as ts.UnionTypeNode;
-				const types = unionType.types.map(t => this.inferType(t));
-				return types.join(' | ');
-			}
-			case ts.SyntaxKind.IntersectionType: {
-				// Handle intersection types like TypeA & TypeB
-				const intersectionType = typeNode as ts.IntersectionTypeNode;
-				const types = intersectionType.types.map(t => this.inferType(t));
-				return types.join(' & ');
-			}
-			case ts.SyntaxKind.TupleType: {
-				// Handle tuple types like [string, number]
-				const tupleType = typeNode as ts.TupleTypeNode;
-				const elements = tupleType.elements.map(elem => this.inferType(elem as ts.TypeNode));
-				return `[${elements.join(', ')}]`;
-			}
-			case ts.SyntaxKind.OptionalType: {
-				// Handle optional element in tuple: string?
-				const optionalType = typeNode as ts.OptionalTypeNode;
-				return this.inferType(optionalType.type) + '?';
-			}
-			case ts.SyntaxKind.RestType: {
-				// Handle rest element: ...T
-				const restType = typeNode as ts.RestTypeNode;
-				return '...' + this.inferType(restType.type);
-			}
-			case ts.SyntaxKind.ParenthesizedType: {
-				// Handle parenthesized types: (A | B)
-				return this.inferType((typeNode as ts.ParenthesizedTypeNode).type);
-			}
-			case ts.SyntaxKind.IndexedAccessType: {
-				// Handle indexed access: T[K]
-				const indexed = typeNode as ts.IndexedAccessTypeNode;
-				let objectType = this.inferType(indexed.objectType);
-				const indexType = this.inferType(indexed.indexType);
-				// If objectType is 'object', try to resolve the underlying type alias
-				if (objectType === 'object' && ts.isTypeReferenceNode(indexed.objectType)) {
-					const refName = ts.isIdentifier(indexed.objectType.typeName) ? indexed.objectType.typeName.text : '';
-					const aliased = this.typeAliases.get(refName);
-					if (aliased) {
-						objectType = this.inferType(aliased);
-					}
+			// Build generic type arguments
+			const typeArgs = typeRef.typeArguments.map(arg => this.inferType(arg));
+			return `${typeName}<${typeArgs.join(', ')}>`;
+		}
+		case ts.SyntaxKind.UnionType: {
+			// Handle union types like 'a' | 'b' | 'c'
+			const unionType = typeNode as ts.UnionTypeNode;
+			const types = unionType.types.map(t => this.inferType(t));
+			return types.join(' | ');
+		}
+		case ts.SyntaxKind.IntersectionType: {
+			// Handle intersection types like TypeA & TypeB
+			const intersectionType = typeNode as ts.IntersectionTypeNode;
+			const types = intersectionType.types.map(t => this.inferType(t));
+			return types.join(' & ');
+		}
+		case ts.SyntaxKind.TupleType: {
+			// Handle tuple types like [string, number]
+			const tupleType = typeNode as ts.TupleTypeNode;
+			const elements = tupleType.elements.map(elem => this.inferType(elem as ts.TypeNode));
+			return `[${elements.join(', ')}]`;
+		}
+		case ts.SyntaxKind.OptionalType: {
+			// Handle optional element in tuple: string?
+			const optionalType = typeNode as ts.OptionalTypeNode;
+			return `${this.inferType(optionalType.type)  }?`;
+		}
+		case ts.SyntaxKind.RestType: {
+			// Handle rest element: ...T
+			const restType = typeNode as ts.RestTypeNode;
+			return `...${  this.inferType(restType.type)}`;
+		}
+		case ts.SyntaxKind.ParenthesizedType: {
+			// Handle parenthesized types: (A | B)
+			return this.inferType((typeNode as ts.ParenthesizedTypeNode).type);
+		}
+		case ts.SyntaxKind.IndexedAccessType: {
+			// Handle indexed access: T[K]
+			const indexed = typeNode as ts.IndexedAccessTypeNode;
+			let objectType = this.inferType(indexed.objectType);
+			const indexType = this.inferType(indexed.indexType);
+			// If objectType is 'object', try to resolve the underlying type alias
+			if (objectType === 'object' && ts.isTypeReferenceNode(indexed.objectType)) {
+				const refName = ts.isIdentifier(indexed.objectType.typeName) ? indexed.objectType.typeName.text : '';
+				const aliased = this.typeAliases.get(refName);
+				if (aliased) {
+					objectType = this.inferType(aliased);
 				}
-				return `${objectType}[${indexType}]`;
 			}
-			case ts.SyntaxKind.TypeOperator: {
-				// Handle keyof, readonly, unique operators
-				const typeOp = typeNode as ts.TypeOperatorNode;
-				const operator = ts.SyntaxKind[typeOp.operator];
-				return `${operator} ${this.inferType(typeOp.type)}`;
+			return `${objectType}[${indexType}]`;
+		}
+		case ts.SyntaxKind.TypeOperator: {
+			// Handle keyof, readonly, unique operators
+			const typeOp = typeNode as ts.TypeOperatorNode;
+			const operator = ts.SyntaxKind[ typeOp.operator ];
+			return `${operator} ${this.inferType(typeOp.type)}`;
+		}
+		case ts.SyntaxKind.TypeQuery: {
+			// Handle typeof expressions like `typeof UsageEntry`
+			const typeQuery = typeNode as ts.TypeQueryNode;
+			if (ts.isIdentifier(typeQuery.exprName)) {
+				return `typeof ${typeQuery.exprName.text}`;
 			}
-			case ts.SyntaxKind.TypeQuery: {
-				// Handle typeof expressions like `typeof UsageEntry`
-				const typeQuery = typeNode as ts.TypeQueryNode;
-				if (ts.isIdentifier(typeQuery.exprName)) {
-					return `typeof ${typeQuery.exprName.text}`;
-				}
-				return 'unknown';
-			}
-			default:
-				// For complex types, return the text representation
-				return 'unknown';
+			return 'unknown';
+		}
+		default:
+			// For complex types, return the text representation
+			return 'unknown';
 		}
 	}
 
@@ -1319,7 +2219,7 @@ export class MnemonicaAnalyzer {
 		* Infer return type from a method declaration
 		* Uses explicit return type annotation or infers from return statements
 		*/
-	private inferReturnType(method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
+	private inferReturnType (method: ts.MethodDeclaration, classPropertyTypes?: Map<string, string>): string {
 		// If method has explicit return type annotation, use it
 		if (method.type) {
 			return this.inferType(method.type);
@@ -1336,7 +2236,7 @@ export class MnemonicaAnalyzer {
 	/**
 		* Infer return type by analyzing return statements in the method body
 		*/
-	private inferReturnTypeFromBody(body: ts.Block, classPropertyTypes?: Map<string, string>): string {
+	private inferReturnTypeFromBody (body: ts.Block, classPropertyTypes?: Map<string, string>): string {
 		const returnTypes = new Set<string>();
 
 		const visit = (node: ts.Node): void => {
@@ -1355,7 +2255,7 @@ export class MnemonicaAnalyzer {
 			return 'void';
 		}
 		if (returnTypes.size === 1) {
-			return Array.from(returnTypes)[0];
+			return Array.from(returnTypes)[ 0 ];
 		}
 		return Array.from(returnTypes).join(' | ');
 	}
@@ -1363,7 +2263,7 @@ export class MnemonicaAnalyzer {
 	/**
 		* Get full text from a qualified name (e.g., Namespace.Type)
 		*/
-	private getQualifiedNameText(qualifiedName: ts.QualifiedName): string {
+	private getQualifiedNameText (qualifiedName: ts.QualifiedName): string {
 		const parts: string[] = [];
 		let current: ts.QualifiedName | ts.Identifier = qualifiedName;
 
@@ -1379,76 +2279,127 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Infer type from initializer
 	 */
-	private inferTypeFromInitializer(initializer: ts.Expression, dataTypeMap?: Map<string, string>, classPropertyTypes?: Map<string, string>): string {
+	private inferTypeFromInitializer (
+		initializer: ts.Expression,
+		dataTypeMap?: Map<string, string>,
+		classPropertyTypes?: Map<string, string>
+	): string {
 		switch (initializer.kind) {
-			case ts.SyntaxKind.StringLiteral:
-				return 'string';
-			case ts.SyntaxKind.NumericLiteral:
-				return 'number';
-			case ts.SyntaxKind.TrueKeyword:
-			case ts.SyntaxKind.FalseKeyword:
-				return 'boolean';
-			case ts.SyntaxKind.NullKeyword:
-				return 'null';
-			case ts.SyntaxKind.UndefinedKeyword:
-				return 'undefined';
-			case ts.SyntaxKind.ArrayLiteralExpression:
-				return 'Array<unknown>';
-			case ts.SyntaxKind.ObjectLiteralExpression:
-				return 'object';
-			case ts.SyntaxKind.NewExpression: {
-				// Handle new Date(), new Map(), etc.
-				const newExpr = initializer as ts.NewExpression;
-				if (ts.isIdentifier(newExpr.expression)) {
-					return newExpr.expression.text;
-				}
-				return 'object';
+		case ts.SyntaxKind.StringLiteral:
+			return 'string';
+		case ts.SyntaxKind.NumericLiteral:
+			return 'number';
+		case ts.SyntaxKind.TrueKeyword:
+		case ts.SyntaxKind.FalseKeyword:
+			return 'boolean';
+		case ts.SyntaxKind.NullKeyword:
+			return 'null';
+		case ts.SyntaxKind.UndefinedKeyword:
+			return 'undefined';
+		case ts.SyntaxKind.ArrayLiteralExpression:
+			return 'Array<unknown>';
+		case ts.SyntaxKind.ObjectLiteralExpression:
+			return 'object';
+		case ts.SyntaxKind.NewExpression: {
+			// Handle new Date(), new Map(), etc.
+			const newExpr = initializer as ts.NewExpression;
+			if (ts.isIdentifier(newExpr.expression)) {
+				return newExpr.expression.text;
 			}
-			case ts.SyntaxKind.BinaryExpression: {
-				// Handle arithmetic operations: a * b, a + b, a - b, a / b
-				const binaryExpr = initializer as ts.BinaryExpression;
-				const leftType = this.inferTypeFromInitializer(binaryExpr.left, dataTypeMap, classPropertyTypes);
-				const rightType = this.inferTypeFromInitializer(binaryExpr.right, dataTypeMap, classPropertyTypes);
+			return 'object';
+		}
+		case ts.SyntaxKind.BinaryExpression: {
+			// Handle arithmetic operations: a * b, a + b, a - b, a / b
+			const binaryExpr = initializer as ts.BinaryExpression;
+			const leftType = this.inferTypeFromInitializer(binaryExpr.left, dataTypeMap, classPropertyTypes);
+			const rightType = this.inferTypeFromInitializer(binaryExpr.right, dataTypeMap, classPropertyTypes);
 				
-				// Check if it's an arithmetic operator
-				const operator = binaryExpr.operatorToken.kind;
-				if (operator === ts.SyntaxKind.AsteriskToken ||
+			// Check if it's an arithmetic operator
+			const operator = binaryExpr.operatorToken.kind;
+			if (operator === ts.SyntaxKind.AsteriskToken ||
 				    operator === ts.SyntaxKind.SlashToken ||
 				    operator === ts.SyntaxKind.MinusToken ||
 				    operator === ts.SyntaxKind.PercentToken) {
-					// Arithmetic operations on numbers produce numbers
-					if ((leftType === 'number' || leftType === 'unknown') &&
+				// Arithmetic operations on numbers produce numbers
+				if ((leftType === 'number' || leftType === 'unknown') &&
 					    (rightType === 'number' || rightType === 'unknown')) {
-						return 'number';
-					}
+					return 'number';
 				}
-				if (operator === ts.SyntaxKind.PlusToken) {
-					// Plus can be addition or string concatenation
-					if (leftType === 'string' || rightType === 'string') {
-						return 'string';
-					}
-					if (leftType === 'number' && rightType === 'number') {
-						return 'number';
-					}
-				}
-				return 'unknown';
 			}
-			case ts.SyntaxKind.PropertyAccessExpression: {
-				// Handle property access like data.value, data.id
-				if (dataTypeMap) {
-					const accessChain = this.getPropertyAccessChain(initializer);
-					if (accessChain) {
-						const type = dataTypeMap.get(accessChain);
-						if (type) {
-							return type;
-						}
+			if (operator === ts.SyntaxKind.PlusToken) {
+				// Plus can be addition or string concatenation
+				if (leftType === 'string' || rightType === 'string') {
+					return 'string';
+				}
+				if (leftType === 'number' && rightType === 'number') {
+					return 'number';
+				}
+			}
+			return 'unknown';
+		}
+		case ts.SyntaxKind.PropertyAccessExpression: {
+			// Handle property access like data.value, data.id
+			if (dataTypeMap) {
+				const accessChain = this.getPropertyAccessChain(initializer);
+				if (accessChain) {
+					const type = dataTypeMap.get(accessChain);
+					if (type) {
+						return type;
 					}
 				}
-				// Handle this.map.size pattern (Map.size returns number)
-				const propAccess = initializer as ts.PropertyAccessExpression;
-				if (ts.isPropertyAccessExpression(propAccess.expression)) {
-					const outerProp = propAccess.expression;
-					// Check for this.map pattern
+			}
+			// Handle this.map.size pattern (Map.size returns number)
+			const propAccess = initializer as ts.PropertyAccessExpression;
+			if (ts.isPropertyAccessExpression(propAccess.expression)) {
+				const outerProp = propAccess.expression;
+				// Check for this.map pattern
+				let innerName = '';
+				if (outerProp.expression.kind === ts.SyntaxKind.ThisKeyword) {
+					innerName = 'this';
+				} else if (ts.isIdentifier(outerProp.expression)) {
+					innerName = outerProp.expression.text;
+				}
+				const mapProp = outerProp.name.text;
+				const finalProp = propAccess.name.text;
+				// this.map.size -> number
+				if (innerName === 'this' && mapProp === 'map' && finalProp === 'size') {
+					return 'number';
+				}
+			}
+			return 'unknown';
+		}
+		case ts.SyntaxKind.Identifier: {
+			// Handle identifier references if in dataTypeMap
+			if (dataTypeMap) {
+				const name = (initializer as ts.Identifier).text;
+				const type = dataTypeMap.get(name);
+				if (type) {
+					return type;
+				}
+			}
+			return 'unknown';
+		}
+		case ts.SyntaxKind.CallExpression: {
+			// Handle function calls like Date.now(), parseInt(), etc.
+			const callExpr = initializer as ts.CallExpression;
+			if (ts.isPropertyAccessExpression(callExpr.expression)) {
+				const methodName = callExpr.expression.name.text;
+				const objName = ts.isIdentifier(callExpr.expression.expression)
+					? callExpr.expression.expression.text
+					: '';
+					
+				// Date.now() -> number
+				if (objName === 'Date' && methodName === 'now') {
+					return 'number';
+				}
+				// String methods that return string
+				if (methodName === 'toString' || methodName === 'valueOf') {
+					return 'string';
+				}
+				// Handle Map property access on class instances (this.map.*)
+				if (ts.isPropertyAccessExpression(callExpr.expression.expression)) {
+					const outerProp = callExpr.expression.expression;
+					// Handle both 'this' keyword and identifier patterns
 					let innerName = '';
 					if (outerProp.expression.kind === ts.SyntaxKind.ThisKeyword) {
 						innerName = 'this';
@@ -1456,121 +2407,74 @@ export class MnemonicaAnalyzer {
 						innerName = outerProp.expression.text;
 					}
 					const mapProp = outerProp.name.text;
-					const finalProp = propAccess.name.text;
-					// this.map.size -> number
-					if (innerName === 'this' && mapProp === 'map' && finalProp === 'size') {
-						return 'number';
-					}
-				}
-				return 'unknown';
-			}
-			case ts.SyntaxKind.Identifier: {
-				// Handle identifier references if in dataTypeMap
-				if (dataTypeMap) {
-					const name = (initializer as ts.Identifier).text;
-					const type = dataTypeMap.get(name);
-					if (type) {
-						return type;
-					}
-				}
-				return 'unknown';
-			}
-			case ts.SyntaxKind.CallExpression: {
-				// Handle function calls like Date.now(), parseInt(), etc.
-				const callExpr = initializer as ts.CallExpression;
-				if (ts.isPropertyAccessExpression(callExpr.expression)) {
-					const methodName = callExpr.expression.name.text;
-					const objName = ts.isIdentifier(callExpr.expression.expression)
-						? callExpr.expression.expression.text
-						: '';
-					
-					// Date.now() -> number
-					if (objName === 'Date' && methodName === 'now') {
-						return 'number';
-					}
-					// String methods that return string
-					if (methodName === 'toString' || methodName === 'valueOf') {
-						return 'string';
-					}
-					// Handle Map property access on class instances (this.map.*)
-					if (ts.isPropertyAccessExpression(callExpr.expression.expression)) {
-						const outerProp = callExpr.expression.expression;
-						// Handle both 'this' keyword and identifier patterns
-						let innerName = '';
-						if (outerProp.expression.kind === ts.SyntaxKind.ThisKeyword) {
-							innerName = 'this';
-						} else if (ts.isIdentifier(outerProp.expression)) {
-							innerName = outerProp.expression.text;
-						}
-						const mapProp = outerProp.name.text;
-						// this.map.X() patterns
-						if (innerName === 'this' && mapProp === 'map') {
-							// Try to get the Map's value type from class properties
-							let mapValueType = 'unknown';
-							if (classPropertyTypes) {
-								const mapType = classPropertyTypes.get('map');
-								if (mapType && mapType.startsWith('Map<')) {
-									// Parse Map<K, V> to get V
-									const match = mapType.match(/Map<[^,]+,\s*(.+)>$/);
-									if (match) {
-										mapValueType = match[1];
-									}
+					// this.map.X() patterns
+					if (innerName === 'this' && mapProp === 'map') {
+						// Try to get the Map's value type from class properties
+						let mapValueType = 'unknown';
+						if (classPropertyTypes) {
+							const mapType = classPropertyTypes.get('map');
+							if (mapType && mapType.startsWith('Map<')) {
+								// Parse Map<K, V> to get V
+								const match = mapType.match(/Map<[^,]+,\s*(.+)>$/);
+								if (match) {
+									mapValueType = match[ 1 ];
 								}
 							}
-							if (methodName === 'has') return 'boolean';
-							if (methodName === 'set') return 'this';
-							if (methodName === 'get') return mapValueType;
-							if (methodName === 'delete') return 'boolean';
-							if (methodName === 'clear') return 'void';
-							if (methodName === 'values') return `IterableIterator<${mapValueType}>`;
-							if (methodName === 'keys') return 'IterableIterator<string>';
-							if (methodName === 'entries') return `IterableIterator<[string, ${mapValueType}]>`;
 						}
-					}
-					// Direct map.X() calls
-					if (objName === 'map' || objName === 'obj') {
 						if (methodName === 'has') return 'boolean';
 						if (methodName === 'set') return 'this';
-						if (methodName === 'get') return 'unknown';
+						if (methodName === 'get') return mapValueType;
 						if (methodName === 'delete') return 'boolean';
 						if (methodName === 'clear') return 'void';
-						if (methodName === 'values') return 'IterableIterator<unknown>';
+						if (methodName === 'values') return `IterableIterator<${mapValueType}>`;
 						if (methodName === 'keys') return 'IterableIterator<string>';
-						if (methodName === 'entries') return 'IterableIterator<[string, unknown]>';
+						if (methodName === 'entries') return `IterableIterator<[string, ${mapValueType}]>`;
 					}
 				}
-				// parseInt, parseFloat -> number
-				if (ts.isIdentifier(callExpr.expression)) {
-					const fnName = callExpr.expression.text;
-					if (fnName === 'parseInt' || fnName === 'parseFloat') {
-						return 'number';
-					}
-					if (fnName === 'String') {
-						return 'string';
-					}
-					if (fnName === 'Number') {
-						return 'number';
-					}
-					if (fnName === 'Boolean') {
-						return 'boolean';
-					}
+				// Direct map.X() calls
+				if (objName === 'map' || objName === 'obj') {
+					if (methodName === 'has') return 'boolean';
+					if (methodName === 'set') return 'this';
+					if (methodName === 'get') return 'unknown';
+					if (methodName === 'delete') return 'boolean';
+					if (methodName === 'clear') return 'void';
+					if (methodName === 'values') return 'IterableIterator<unknown>';
+					if (methodName === 'keys') return 'IterableIterator<string>';
+					if (methodName === 'entries') return 'IterableIterator<[string, unknown]>';
 				}
-				return 'unknown';
 			}
-			case ts.SyntaxKind.TemplateExpression:
-			case ts.SyntaxKind.NoSubstitutionTemplateLiteral: {
-				// Template literals like `${baseValue}-${extra}` always produce strings
-				return 'string';
+			// parseInt, parseFloat -> number
+			if (ts.isIdentifier(callExpr.expression)) {
+				const fnName = callExpr.expression.text;
+				if (fnName === 'parseInt' || fnName === 'parseFloat') {
+					return 'number';
+				}
+				if (fnName === 'String') {
+					return 'string';
+				}
+				if (fnName === 'Number') {
+					return 'number';
+				}
+				if (fnName === 'Boolean') {
+					return 'boolean';
+				}
 			}
-			default:
-				return 'unknown';
-			}
+			return 'unknown';
 		}
+		case ts.SyntaxKind.TemplateExpression:
+		case ts.SyntaxKind.NoSubstitutionTemplateLiteral: {
+			// Template literals like `${baseValue}-${extra}` always produce strings
+			return 'string';
+		}
+		default:
+			return 'unknown';
+		}
+	}
 	
-		/**
+	/**
 			* Collect usage information for type references
 			*/
-		private collectUsage(node: ts.Node, sourceFile: ts.SourceFile): void {
+	private collectUsage (node: ts.Node, sourceFile: ts.SourceFile): void {
 		// Check for new Type() instantiation
 		if (ts.isNewExpression(node) && node.expression) {
 			let typeName: string | undefined;
@@ -1585,83 +2489,82 @@ export class MnemonicaAnalyzer {
 					node.getStart(sourceFile)
 				);
 				this.addUsage(typeName, {
-					location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-					kind: 'instantiation',
-					code: node.getText(sourceFile).slice(0, 100),
+					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind     : 'instantiation',
+					code     : node.getText(sourceFile).slice(0, 100),
 				});
 				// Track variable assignment from new Type() for flow analysis
 				this.trackNewAssignment(node, typeName);
 				// Also record as flow event
 				this.addFlow(typeName, {
-					location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-					kind: 'instantiation',
-					code: node.getText(sourceFile).slice(0, 100),
-					context: 'new expression',
+					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind     : 'instantiation',
+					code     : node.getText(sourceFile).slice(0, 100),
+					context  : 'new expression',
 				});
 			}
 		}
 	
-			// Check for property access on instances (user.AdminType)
-			if (ts.isPropertyAccessExpression(node)) {
-				const propName = node.name.text;
-				// Check if this looks like a type access pattern
-				if (propName && this.isLikelyTypeName(propName)) {
+		// Check for property access on instances (user.AdminType)
+		if (ts.isPropertyAccessExpression(node)) {
+			const propName = node.name.text;
+			// Check if this looks like a type access pattern
+			if (propName && this.isLikelyTypeName(propName)) {
+				const { line, character } = ts.getLineAndCharacterOfPosition(
+					sourceFile,
+					node.getStart(sourceFile)
+				);
+					// Try to resolve full path
+				const fullPath = this.resolveTypePath(node);
+				if (fullPath) {
+					this.addUsage(fullPath, {
+						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+						kind     : 'propertyAccess',
+						code     : node.getText(sourceFile).slice(0, 100),
+					});
+				}
+			}
+		}
+	
+		// Check for lookup('TypeName') or lookup(source, 'TypeName') calls
+		if (ts.isCallExpression(node) && node.expression) {
+			const funcName = this.getFunctionName(node.expression);
+			if (funcName === 'lookup' && node.arguments.length > 0) {
+				const typePath = this.resolveLookupPath(node);
+				if (typePath) {
 					const { line, character } = ts.getLineAndCharacterOfPosition(
 						sourceFile,
 						node.getStart(sourceFile)
 					);
-					// Try to resolve full path
-					const fullPath = this.resolveTypePath(node);
-					if (fullPath) {
-						this.addUsage(fullPath, {
-							location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-							kind: 'propertyAccess',
-							code: node.getText(sourceFile).slice(0, 100),
-						});
-					}
-				}
-			}
-	
-			// Check for lookup('TypeName') calls
-			if (ts.isCallExpression(node) && node.expression) {
-				const funcName = this.getFunctionName(node.expression);
-				if (funcName === 'lookup' && node.arguments.length > 0) {
-					const firstArg = node.arguments[0];
-					if (ts.isStringLiteral(firstArg) || ts.isNoSubstitutionTemplateLiteral(firstArg)) {
-						const typePath = firstArg.text;
-						const { line, character } = ts.getLineAndCharacterOfPosition(
-							sourceFile,
-							node.getStart(sourceFile)
-						);
-						this.addUsage(typePath, {
-							location: `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-							kind: 'lookup',
-							code: node.getText(sourceFile).slice(0, 100),
-						});
-						// Track variable assignment from lookup for instantiation tracking
-						this.trackLookupAssignment(node, typePath);
-					}
+					this.addUsage(typePath, {
+						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+						kind     : 'lookup',
+						code     : node.getText(sourceFile).slice(0, 100),
+					});
+					// Track variable assignment from lookup for instantiation tracking
+					this.trackLookupAssignment(node, typePath);
 				}
 			}
 		}
+	}
 	
-		/**
+	/**
 			* Get function name from expression (identifier or property access)
 			*/
-		private getFunctionName(expr: ts.Expression): string | undefined {
-			if (ts.isIdentifier(expr)) {
-				return expr.text;
-			}
-			if (ts.isPropertyAccessExpression(expr)) {
-				return expr.name.text;
-			}
-			return undefined;
+	private getFunctionName (expr: ts.Expression): string | undefined {
+		if (ts.isIdentifier(expr)) {
+			return expr.text;
 		}
+		if (ts.isPropertyAccessExpression(expr)) {
+			return expr.name.text;
+		}
+		return undefined;
+	}
 	
-		/**
+	/**
 			* Add a usage to the collection
 			*/
-		private addUsage(typePath: string, usage: UsageInfo): void {
+	private addUsage (typePath: string, usage: UsageInfo): void {
 		// Only track usages of mnemonica-defined types
 		if (!this.definitions.has(typePath)) {
 			return;
@@ -1672,12 +2575,10 @@ export class MnemonicaAnalyzer {
 
 		// Check for duplicates based on location, code, and kind
 		const existingUsages = this.usages.get(typePath)!;
-		const isDuplicate = existingUsages.some(
-			existing =>
-				existing.location === usage.location &&
+		const isDuplicate = existingUsages.some(existing =>
+			existing.location === usage.location &&
 				existing.code === usage.code &&
-				existing.kind === usage.kind
-		);
+				existing.kind === usage.kind);
 
 		if (!isDuplicate) {
 			existingUsages.push(usage);
@@ -1687,7 +2588,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Collect EDS (Execution Data Storage) usage information
 	 */
-	private collectEDS(node: ts.Node, sourceFile: ts.SourceFile): void {
+	private collectEDS (node: ts.Node, sourceFile: ts.SourceFile): void {
 		if (!ts.isCallExpression(node) || !node.expression) {
 			return;
 		}
@@ -1706,24 +2607,24 @@ export class MnemonicaAnalyzer {
 
 		// wrap(fn), wrapArgs(fn), wrapInstanceMethods(obj)
 		if (funcName === 'wrap' || funcName === 'wrapArgs' || funcName === 'wrapInstanceMethods') {
-			const targetType = this.resolveEDSArgumentType(node.arguments[0]);
+			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
 			this.addEDS(targetType || 'unknown', {
 				location,
-				kind: 'wrap',
+				kind       : 'wrap',
 				code,
-				targetType: targetType || undefined,
+				targetType : targetType || undefined,
 			});
 			return;
 		}
 
 		// link(parent, child), runWithInstance(instance, fn)
 		if (funcName === 'link' || funcName === 'runWithInstance') {
-			const targetType = this.resolveEDSArgumentType(node.arguments[0]);
+			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
 			this.addEDS(targetType || 'unknown', {
 				location,
-				kind: 'link',
+				kind       : 'link',
 				code,
-				targetType: targetType || undefined,
+				targetType : targetType || undefined,
 			});
 			return;
 		}
@@ -1732,7 +2633,7 @@ export class MnemonicaAnalyzer {
 		if (funcName === 'getLastContext' || funcName === 'getErrorInstance') {
 			this.addEDS('unknown', {
 				location,
-				kind: 'contextConsume',
+				kind : 'contextConsume',
 				code,
 			});
 			return;
@@ -1741,47 +2642,51 @@ export class MnemonicaAnalyzer {
 		// enrichError(err, instance)
 		if (funcName === 'enrichError') {
 			const targetType = node.arguments.length > 1
-				? this.resolveEDSArgumentType(node.arguments[1])
+				? this.resolveEDSArgumentType(node.arguments[ 1 ])
 				: undefined;
 			this.addEDS(targetType || 'unknown', {
 				location,
-				kind: 'errorEnrich',
+				kind       : 'errorEnrich',
 				code,
-				targetType: targetType || undefined,
+				targetType : targetType || undefined,
 			});
 			return;
 		}
 
 		// attachHooks(types), attachHooks([A, B])
 		if (funcName === 'attachHooks' && node.arguments.length > 0) {
-			const arg = node.arguments[0];
+			const arg = node.arguments[ 0 ];
 			if (ts.isArrayLiteralExpression(arg)) {
 				for (const element of arg.elements) {
 					const targetType = this.resolveEDSArgumentType(element);
 					this.addEDS(targetType || 'unknown', {
 						location,
-						kind: 'hookAttach',
+						kind       : 'hookAttach',
 						code,
-						targetType: targetType || undefined,
+						targetType : targetType || undefined,
 					});
 				}
 			} else {
 				const targetType = this.resolveEDSArgumentType(arg);
 				this.addEDS(targetType || 'unknown', {
 					location,
-					kind: 'hookAttach',
+					kind       : 'hookAttach',
 					code,
-					targetType: targetType || undefined,
+					targetType : targetType || undefined,
 				});
 			}
 			return;
 		}
 
 		// Adapters: createDiveInterceptor, createDivePlugin, createDiveMiddleware
-		if (funcName === 'createDiveInterceptor' || funcName === 'createDivePlugin' || funcName === 'createDiveMiddleware') {
+		if (
+			funcName === 'createDiveInterceptor' ||
+			funcName === 'createDivePlugin' ||
+			funcName === 'createDiveMiddleware'
+		) {
 			this.addEDS('unknown', {
 				location,
-				kind: 'adapterUse',
+				kind : 'adapterUse',
 				code,
 			});
 			return;
@@ -1791,7 +2696,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Resolve type from EDS call argument (best effort)
 	 */
-	private resolveEDSArgumentType(arg: ts.Expression | undefined): string | undefined {
+	private resolveEDSArgumentType (arg: ts.Expression | undefined): string | undefined {
 		if (!arg) {
 			return undefined;
 		}
@@ -1825,15 +2730,17 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Add an EDS usage to the collection
 	 */
-	private addEDS(typePath: string, info: EDSInfo): void {
+	private addEDS (typePath: string, info: EDSInfo): void {
 		if (!this.edsUsages.has(typePath)) {
 			this.edsUsages.set(typePath, []);
 		}
 
 		const existing = this.edsUsages.get(typePath)!;
-		const isDuplicate = existing.some(
-			e => e.location === info.location && e.kind === info.kind && e.code === info.code
-		);
+		const isDuplicate = existing.some(e => {
+			return e.location === info.location &&
+				e.kind === info.kind &&
+				e.code === info.code;
+		});
 
 		if (!isDuplicate) {
 			existing.push(info);
@@ -1844,7 +2751,7 @@ export class MnemonicaAnalyzer {
 	 * Collect native flow patterns (instance usage after creation)
 	 * Phase 1: property access, method calls, arguments, return, destructuring, etc.
 	 */
-	private collectFlow(node: ts.Node, sourceFile: ts.SourceFile): void {
+	private collectFlow (node: ts.Node, sourceFile: ts.SourceFile): void {
 		// Property read: user.name or user?.name
 		if (ts.isPropertyAccessExpression(node)) {
 			this.collectFlowPropertyAccess(node, sourceFile);
@@ -1892,7 +2799,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Collect property access flow (read or conditional)
 	 */
-	private collectFlowPropertyAccess(node: ts.PropertyAccessExpression, sourceFile: ts.SourceFile): void {
+	private collectFlowPropertyAccess (node: ts.PropertyAccessExpression, sourceFile: ts.SourceFile): void {
 		const objectType = this.resolveExpressionType(node.expression);
 		if (!objectType) { return; }
 
@@ -1905,21 +2812,21 @@ export class MnemonicaAnalyzer {
 		const code = node.getText(sourceFile).slice(0, 100);
 
 		// Skip if this is a type constructor access (e.g., UserType.define)
-		if (propName === 'define') { return; }
+		if (propName === 'define' || propName === 'lazy') { return; }
 
 		this.addFlow(objectType, {
 			location,
-			kind: 'propertyRead',
+			kind         : 'propertyRead',
 			code,
-			propertyName: propName,
-			targetType: objectType
+			propertyName : propName,
+			targetType   : objectType
 		});
 	}
 
 	/**
 	 * Collect element access flow: user['name']
 	 */
-	private collectFlowElementAccess(node: ts.ElementAccessExpression, sourceFile: ts.SourceFile): void {
+	private collectFlowElementAccess (node: ts.ElementAccessExpression, sourceFile: ts.SourceFile): void {
 		const objectType = this.resolveExpressionType(node.expression);
 		if (!objectType) { return; }
 
@@ -1932,16 +2839,16 @@ export class MnemonicaAnalyzer {
 
 		this.addFlow(objectType, {
 			location,
-			kind: 'elementAccess',
+			kind       : 'elementAccess',
 			code,
-			targetType: objectType
+			targetType : objectType
 		});
 	}
 
 	/**
 	 * Collect assignment flow: user.name = value or user = other
 	 */
-	private collectFlowAssignment(node: ts.BinaryExpression, sourceFile: ts.SourceFile): void {
+	private collectFlowAssignment (node: ts.BinaryExpression, sourceFile: ts.SourceFile): void {
 		// Property write: user.name = value
 		if (ts.isPropertyAccessExpression(node.left)) {
 			const objectType = this.resolveExpressionType(node.left.expression);
@@ -1957,10 +2864,10 @@ export class MnemonicaAnalyzer {
 
 			this.addFlow(objectType, {
 				location,
-				kind: 'propertyWrite',
+				kind         : 'propertyWrite',
 				code,
-				propertyName: propName,
-				targetType: objectType
+				propertyName : propName,
+				targetType   : objectType
 			});
 			return;
 		}
@@ -1980,9 +2887,9 @@ export class MnemonicaAnalyzer {
 
 			this.addFlow(mappedType, {
 				location,
-				kind: 'reassignment',
+				kind       : 'reassignment',
 				code,
-				targetType: mappedType
+				targetType : mappedType
 			});
 		}
 	}
@@ -1990,7 +2897,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Collect method call flow: user.validate()
 	 */
-	private collectFlowMethodCall(node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+	private collectFlowMethodCall (node: ts.CallExpression, sourceFile: ts.SourceFile): void {
 		if (!ts.isPropertyAccessExpression(node.expression)) { return; }
 
 		const objectType = this.resolveExpressionType(node.expression.expression);
@@ -2005,23 +2912,23 @@ export class MnemonicaAnalyzer {
 		const code = node.getText(sourceFile).slice(0, 100);
 
 		// Skip if this is a type constructor call (e.g., new UserType())
-		if (methodName === 'define') { return; }
+		if (methodName === 'define' || methodName === 'lazy') { return; }
 
 		this.addFlow(objectType, {
 			location,
-			kind: 'methodCall',
+			kind         : 'methodCall',
 			code,
-			propertyName: methodName,
-			targetType: objectType
+			propertyName : methodName,
+			targetType   : objectType
 		});
 	}
 
 	/**
 	 * Collect argument passing flow: processUser(user)
 	 */
-	private collectFlowArgumentPass(node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+	private collectFlowArgumentPass (node: ts.CallExpression, sourceFile: ts.SourceFile): void {
 		for (let i = 0; i < node.arguments.length; i++) {
-			const arg = node.arguments[i];
+			const arg = node.arguments[ i ];
 			const argType = this.resolveExpressionType(arg);
 			if (!argType) { continue; }
 
@@ -2035,10 +2942,10 @@ export class MnemonicaAnalyzer {
 
 			this.addFlow(argType, {
 				location,
-				kind: 'passAsArg',
+				kind       : 'passAsArg',
 				code,
-				targetType: argType,
-				context: `arg ${i} to ${funcName}`
+				targetType : argType,
+				context    : `arg ${i} to ${funcName}`
 			});
 		}
 	}
@@ -2046,7 +2953,7 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Collect destructuring flow: const { name } = user
 	 */
-	private collectFlowDestructure(node: ts.VariableDeclaration, sourceFile: ts.SourceFile): void {
+	private collectFlowDestructure (node: ts.VariableDeclaration, sourceFile: ts.SourceFile): void {
 		if (!ts.isObjectBindingPattern(node.name)) { return; }
 
 		const sourceType = this.resolveExpressionType(node.initializer!);
@@ -2069,17 +2976,17 @@ export class MnemonicaAnalyzer {
 
 		this.addFlow(sourceType, {
 			location,
-			kind: 'destructureRead',
+			kind       : 'destructureRead',
 			code,
-			targetType: sourceType,
-			context: props.join(', ')
+			targetType : sourceType,
+			context    : props.join(', ')
 		});
 	}
 
 	/**
 	 * Collect return flow: return user
 	 */
-	private collectFlowReturn(node: ts.ReturnStatement, sourceFile: ts.SourceFile): void {
+	private collectFlowReturn (node: ts.ReturnStatement, sourceFile: ts.SourceFile): void {
 		const returnType = this.resolveExpressionType(node.expression!);
 		if (!returnType) { return; }
 
@@ -2092,16 +2999,16 @@ export class MnemonicaAnalyzer {
 
 		this.addFlow(returnType, {
 			location,
-			kind: 'return',
+			kind       : 'return',
 			code,
-			targetType: returnType
+			targetType : returnType
 		});
 	}
 
 	/**
 	 * Collect spread flow: { ...user }
 	 */
-	private collectFlowSpread(node: ts.SpreadElement, sourceFile: ts.SourceFile): void {
+	private collectFlowSpread (node: ts.SpreadElement, sourceFile: ts.SourceFile): void {
 		const spreadType = this.resolveExpressionType(node.expression);
 		if (!spreadType) { return; }
 
@@ -2114,16 +3021,16 @@ export class MnemonicaAnalyzer {
 
 		this.addFlow(spreadType, {
 			location,
-			kind: 'spread',
+			kind       : 'spread',
 			code,
-			targetType: spreadType
+			targetType : spreadType
 		});
 	}
 
 	/**
 	 * Resolve type from an expression (identifier, property access, etc.)
 	 */
-	private resolveExpressionType(expr: ts.Expression): string | undefined {
+	private resolveExpressionType (expr: ts.Expression): string | undefined {
 		// Identifier: user
 		if (ts.isIdentifier(expr)) {
 			return this.variableToTypeMap.get(expr.text);
@@ -2150,15 +3057,17 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Add a flow usage to the collection
 	 */
-	private addFlow(typePath: string, info: FlowInfo): void {
+	private addFlow (typePath: string, info: FlowInfo): void {
 		if (!this.flowUsages.has(typePath)) {
 			this.flowUsages.set(typePath, []);
 		}
 
 		const existing = this.flowUsages.get(typePath)!;
-		const isDuplicate = existing.some(
-			e => e.location === info.location && e.kind === info.kind && e.code === info.code
-		);
+		const isDuplicate = existing.some(e => {
+			return e.location === info.location &&
+				e.kind === info.kind &&
+				e.code === info.code;
+		});
 
 		if (!isDuplicate) {
 			existing.push(info);
@@ -2168,170 +3077,182 @@ export class MnemonicaAnalyzer {
 	/**
 			* Get type name from expression (identifier or property access)
 			*/
-		private getTypeNameFromExpression(expr: ts.Expression): string | undefined {
-			if (ts.isIdentifier(expr)) {
-				const name = expr.text;
-				// Check if this identifier is a variable mapped to a type (e.g., from lookup)
-				const mappedType = this.variableToTypeMap.get(name);
-				if (mappedType) {
-					return mappedType;
-				}
-				return name;
+	private getTypeNameFromExpression (expr: ts.Expression): string | undefined {
+		if (ts.isIdentifier(expr)) {
+			const name = expr.text;
+			// Check if this identifier is a variable mapped to a type (e.g., from lookup)
+			const mappedType = this.variableToTypeMap.get(name);
+			if (mappedType) {
+				return mappedType;
 			}
-			if (ts.isPropertyAccessExpression(expr)) {
-				const chain = this.getPropertyChain(expr);
-				return chain.join('.');
-			}
-			return undefined;
+			return name;
 		}
+		if (ts.isPropertyAccessExpression(expr)) {
+			const chain = this.getPropertyChain(expr);
+			return chain.join('.');
+		}
+		return undefined;
+	}
 	
-		/**
+	/**
 			* Resolve full type path from property access
 			*/
-		private resolveTypePath(expr: ts.PropertyAccessExpression): string | undefined {
-			const chain = this.getPropertyChain(expr);
-			if (chain.length === 0) return undefined;
+	private resolveTypePath (expr: ts.PropertyAccessExpression): string | undefined {
+		const chain = this.getPropertyChain(expr);
+		if (chain.length === 0) return undefined;
 	
-			// Check if this chain matches a known type
-			const fullPath = chain.join('.');
-			if (this.definitions.has(fullPath)) {
-				return fullPath;
-			}
-	
-			// Try just the property name
-			const propName = chain[chain.length - 1];
-			for (const [path] of this.definitions) {
-				if (path.endsWith(`.${propName}`) || path === propName) {
-					return path;
-				}
-			}
-	
+		// Check if this chain matches a known type
+		const fullPath = chain.join('.');
+		if (this.definitions.has(fullPath)) {
 			return fullPath;
 		}
 	
-		/**
-			 * Check if a name looks like a type (starts with uppercase)
-			 */
-		private isLikelyTypeName(name: string): boolean {
-			return name[0] >= 'A' && name[0] <= 'Z';
+		// Try just the property name
+		const propName = chain[ chain.length - 1 ];
+		for (const [ path ] of this.definitions) {
+			if (path.endsWith(`.${propName}`) || path === propName) {
+				return path;
+			}
 		}
 	
-		/**
+		return fullPath;
+	}
+	
+	/**
+			 * Check if a name looks like a type (starts with uppercase)
+			 */
+	private isLikelyTypeName (name: string): boolean {
+		return name[ 0 ] >= 'A' && name[ 0 ] <= 'Z';
+	}
+	
+	/**
 			 * Resolve a constructor parameter type, expanding inline object literals
 			 * and type aliases where possible.
 			 */
-		private resolveConstructorParamType(typeNode: ts.TypeNode | undefined): string | undefined {
-			if (!typeNode) return undefined;
+	private resolveConstructorParamType (typeNode: ts.TypeNode | undefined): string | undefined {
+		if (!typeNode) return undefined;
 
-			// Direct inline type literal: { prop: type }
-			if (ts.isTypeLiteralNode(typeNode)) {
-				const props: string[] = [];
-				for (const member of typeNode.members) {
-					if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
-						const propName = member.name.text;
-						const optional = member.questionToken ? '?' : '';
-						const type = this.inferType(member.type);
-						props.push(`${propName}${optional}: ${type}`);
-					}
+		// Direct inline type literal: { prop: type }
+		if (ts.isTypeLiteralNode(typeNode)) {
+			const props: string[] = [];
+			for (const member of typeNode.members) {
+				if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+					const propName = member.name.text;
+					const optional = member.questionToken ? '?' : '';
+					const type = this.inferType(member.type);
+					props.push(`${propName}${optional}: ${type}`);
 				}
-				return `{ ${props.join('; ')} }`;
 			}
-
-			// Type reference: usage, UserData, etc. - recursively expand
-			if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
-				const typeName = typeNode.typeName.text;
-				const aliasedType = this.typeAliases.get(typeName);
-				if (aliasedType) {
-					const expanded = this.resolveConstructorParamType(aliasedType);
-					if (expanded) return expanded;
-				}
-				// If not an object type alias, return the type name with args
-				if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
-					const args = typeNode.typeArguments.map(arg => this.inferType(arg));
-					return typeName + '<' + args.join(', ') + '>';
-				}
-				return typeName;
-			}
-
-			return undefined;
+			return `{ ${props.join('; ')} }`;
 		}
 
-		/**
+		// Type reference: usage, UserData, etc. - recursively expand
+		if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+			const typeName = typeNode.typeName.text;
+			const aliasedType = this.typeAliases.get(typeName);
+			if (aliasedType) {
+				const expanded = this.resolveConstructorParamType(aliasedType);
+				if (expanded) return expanded;
+			}
+			// If not an object type alias, return the type name with args
+			if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
+				const args = typeNode.typeArguments.map(arg => this.inferType(arg));
+				return `${typeName  }<${  args.join(', ')  }>`;
+			}
+			return typeName;
+		}
+
+		return undefined;
+	}
+
+	/**
 			 * Extract constructor parameters from a class-like node.
 			 */
-		private extractClassConstructorParams(
-			classLike: ts.ClassDeclaration | ts.ClassExpression
-		): ConstructorParamInfo[] {
-			const params: ConstructorParamInfo[] = [];
+	private extractClassConstructorParams (classLike: ts.ClassDeclaration | ts.ClassExpression):
+		ConstructorParamInfo[] {
+		const params: ConstructorParamInfo[] = [];
 
-			for (const member of classLike.members) {
-				if (!ts.isConstructorDeclaration(member)) {
-					continue;
-				}
-
-				for (const param of member.parameters) {
-					if (!param.name || !ts.isIdentifier(param.name)) continue;
-					if (!param.type) continue;
-
-					const paramName = param.name.text;
-					const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
-
-					params.push({
-						name: paramName,
-						type: expandedType,
-						optional: !!param.questionToken || !!param.initializer
-					});
-				}
-				break; // Only process first constructor
+		for (const member of classLike.members) {
+			if (!ts.isConstructorDeclaration(member)) {
+				continue;
 			}
 
-			return params;
+			for (const param of member.parameters) {
+				if (!param.name || !ts.isIdentifier(param.name)) continue;
+				if (!param.type) continue;
+
+				const paramName = param.name.text;
+				const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
+
+				params.push({
+					name     : paramName,
+					type     : expandedType,
+					optional : !!param.questionToken || !!param.initializer
+				});
+			}
+			break; // Only process first constructor
 		}
 
-		/**
+		return params;
+	}
+
+	/**
 			 * Extract constructor parameters from define() call
 			 * This is used for TypeRegistry constructor signatures
 			 * Preserves parameter names and expands object types to their structure
 			 */
-		private extractConstructorParams(call: ts.CallExpression): ConstructorParamInfo[] {
-			const params: ConstructorParamInfo[] = [];
-	
-			const handlerArg = call.arguments[1];
-			if (!handlerArg) return params;
-	
-			// Handle function expression or arrow function
-			if (ts.isFunctionExpression(handlerArg) || ts.isArrowFunction(handlerArg)) {
-				// Look for constructor parameters (second param after `this`)
-				// Patterns: function(this: Type, data: { ... }) or (this: Type, data: { ... }) =>
-				for (let i = 0; i < handlerArg.parameters.length; i++) {
-					const param = handlerArg.parameters[i];
-					if (!param.type) continue;
-	
-					// Skip `this` parameter (first param)
-					if (i === 0 && param.name.kind === ts.SyntaxKind.Identifier && (param.name as ts.Identifier).text === 'this') {
-						continue;
-					}
-	
-					// Get parameter name and expand its type
-					const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
-					const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
-					
-					params.push({
-						name: paramName,
-						type: expandedType,
-						optional: !!param.questionToken || !!param.initializer
-					});
-				}
-			}
-	
-			// Handle class expression - check constructor method
-			if (ts.isClassExpression(handlerArg)) {
-				const classParams = this.extractClassConstructorParams(handlerArg);
-				for (const param of classParams) {
-					params.push(param);
-				}
-			}
-
-			return params;
+	private extractConstructorParams (call: ts.CallExpression): ConstructorParamInfo[] {
+		const constructorExpr = this.extractConstructorExpression(call);
+		if (!constructorExpr) {
+			return [];
 		}
+		const result = this.extractConstructorParamsFromConstructor(constructorExpr);
+		return result;
+	}
+
+	/**
+			 * Extract constructor parameters from a constructor expression.
+			 */
+	private extractConstructorParamsFromConstructor (constructorExpr: ts.Expression): ConstructorParamInfo[] {
+		const params: ConstructorParamInfo[] = [];
+	
+		// Handle function expression or arrow function
+		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr)) {
+			// Look for constructor parameters (second param after `this`)
+			// Patterns: function(this: Type, data: { ... }) or (this: Type, data: { ... }) =>
+			for (let i = 0; i < constructorExpr.parameters.length; i++) {
+				const param = constructorExpr.parameters[ i ];
+				if (!param.type) continue;
+	
+				// Skip `this` parameter (first param)
+				if (
+					i === 0 &&
+					param.name.kind === ts.SyntaxKind.Identifier &&
+					(param.name as ts.Identifier).text === 'this'
+				) {
+					continue;
+				}
+	
+				// Get parameter name and expand its type
+				const paramName = ts.isIdentifier(param.name) ? param.name.text : 'arg';
+				const expandedType = this.resolveConstructorParamType(param.type) || this.inferType(param.type);
+					
+				params.push({
+					name     : paramName,
+					type     : expandedType,
+					optional : !!param.questionToken || !!param.initializer
+				});
+			}
+		}
+	
+		// Handle class expression - check constructor method
+		if (ts.isClassExpression(constructorExpr)) {
+			const classParams = this.extractClassConstructorParams(constructorExpr);
+			for (const param of classParams) {
+				params.push(param);
+			}
+		}
+
+		return params;
+	}
 }

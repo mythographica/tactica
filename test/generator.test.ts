@@ -3,7 +3,6 @@
 import { expect } from 'chai';
 import { TypeGraphImpl } from '../src/graph';
 import { TypesGenerator } from '../src/generator';
-import { TypeNode } from '../src/types';
 
 describe('TypesGenerator', () => {
 	let graph: TypeGraphImpl;
@@ -33,7 +32,7 @@ describe('TypesGenerator', () => {
 
 		it('should return types array', () => {
 			const node = TypeGraphImpl.createNode('User', undefined, 'test.ts', 1, 1);
-			node.properties.set('name', { name: 'name', type: 'string', optional: false });
+			node.properties.set('name', { name : 'name', type : 'string', optional : false });
 			graph.addRoot(node);
 
 			const result = generator.generateTypesFile();
@@ -92,14 +91,14 @@ describe('TypesGenerator', () => {
 	describe('generateTypeRegistry', () => {
 		it('should generate module augmentation for mnemonica TypeRegistry', () => {
 			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
-			node.properties.set('name', { name: 'name', type: 'string', optional: false });
+			node.properties.set('name', { name : 'name', type : 'string', optional : false });
 			graph.addRoot(node);
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("declare module 'mnemonica'");
+			expect(result.content).to.include('declare module \'mnemonica\'');
 			expect(result.content).to.include('interface TypeRegistry');
-			expect(result.content).to.include("'UserType':");
+			expect(result.content).to.include('\'UserType\':');
 		});
 
 		it('should include import for instance types', () => {
@@ -108,8 +107,8 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("import type {");
-			expect(result.content).to.include("UserType,");
+			expect(result.content).to.include('import type {');
+			expect(result.content).to.include('UserType,');
 		});
 
 		it('should re-export TypeRegistry for backward compatibility', () => {
@@ -118,7 +117,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("import type { TypeRegistry } from 'mnemonica'");
+			expect(result.content).to.include('import type { TypeRegistry } from \'mnemonica\'');
 			expect(result.content).to.include('export type { TypeRegistry }');
 		});
 
@@ -139,15 +138,15 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("'UserType':");
-			expect(result.content).to.include("'UserType.AdminType':");
+			expect(result.content).to.include('\'UserType\':');
+			expect(result.content).to.include('\'UserType.AdminType\':');
 		});
 	});
 
 	describe('generateSingleType', () => {
 		it('should return type text for a single node', () => {
 			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
-			node.properties.set('name', { name: 'name', type: 'string', optional: false });
+			node.properties.set('name', { name : 'name', type : 'string', optional : false });
 			graph.addRoot(node);
 
 			const result = generator.generateSingleType(node);
@@ -161,20 +160,20 @@ describe('TypesGenerator', () => {
 		it('should use constructorParams in registry for a class-like node', () => {
 			const node = TypeGraphImpl.createNode('Order', undefined, 'test.ts', 1, 1);
 			node.constructorParams = [
-				{ name: 'data', type: '{ orderId: string; total: number }', optional: false }
+				{ name : 'data', type : '{ orderId: string; total: number }', optional : false }
 			];
 			graph.addRoot(node);
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("'Order': new (data: { orderId: string; total: number }) => Order");
+			expect(result.content).to.include('\'Order\': new (data: { orderId: string; total: number }) => Order');
 		});
 
 		it('should use constructorParams in types.ts for a nested class-like node', () => {
 			const parent = TypeGraphImpl.createNode('Order', undefined, 'test.ts', 1, 1);
 			const child = TypeGraphImpl.createNode('LineItem', parent, 'test.ts', 5, 1);
 			child.constructorParams = [
-				{ name: 'data', type: '{ sku: string; qty: number }', optional: false }
+				{ name : 'data', type : '{ sku: string; qty: number }', optional : false }
 			];
 			graph.addRoot(parent);
 			graph.addChild(parent, child);
@@ -193,7 +192,7 @@ describe('TypesGenerator', () => {
 
 			const result = esmGenerator.generateTypeRegistry();
 
-			expect(result.content).to.include("from './types.js'");
+			expect(result.content).to.include('from \'./types.js\'');
 		});
 
 		it('should not append .js extension in default mode', () => {
@@ -202,8 +201,8 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include("from './types'");
-			expect(result.content).to.not.include("from './types.js'");
+			expect(result.content).to.include('from \'./types\'');
+			expect(result.content).to.not.include('from \'./types.js\'');
 		});
 	});
 });

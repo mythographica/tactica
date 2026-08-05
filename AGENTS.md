@@ -320,6 +320,9 @@ After changing analyzer behavior:
 ## Supported patterns (the analyzer recognizes these)
 
 - `define('TypeName', handler)` — root or nested via `Parent.define(…)` or chained `define(…).define(…)`.
+- Builder pattern on the imported `mnemonica` module object: `mnemonica.define('A').define('B')`, `const App = mnemonica; App.define('C')`, `App.lookup('A').define('D')`. Module object aliases from imports (`import { mnemonica as m }`, `import * as mnemonica`, default import) and variable aliases are tracked.
+- Explicit-source APIs: `define(source, 'TypeName', handler)` and `lookup(source, 'TypeName')`, where `source` is a module object, custom collection, or type variable.
+- Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection are emitted in `.tactica/types.ts` but are **not** added to the global `TypeRegistry` augmentation. Subtypes inherit the collection from their parent.
 - `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
   - `Parent` is resolved through the variable map, so aliases work: `const User = define('UserEntity', …); @decorate(User)` produces `UserEntity.<ClassName>`.
   - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
@@ -332,6 +335,11 @@ After changing analyzer behavior:
 - Typeomatica `@Strict` decorator alongside `@decorate`; `Object.setPrototypeOf(MyType.prototype, new BaseClass(…))`.
 
 Falls back to `unknown` when inference fails.
+
+## Known limitations
+
+- Rest/tuple parameters, deep nested property access, and `exposeInstanceMethods` parsing — see README.md.
+- Custom collections with identical root type names conflict in the single `.tactica/types.ts` output (last one wins).
 
 ## Common contribution patterns
 

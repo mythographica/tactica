@@ -16,7 +16,7 @@ export type usageEntry = InstanceType<typeof UsageEntry>;
 export const Usages = define('Usages', class {
 	createdAt: number;
 	private map: Map<string, object[]>;
-	constructor() {
+	constructor () {
 		this.createdAt = Date.now();
 		this.map = new Map();
 	}
@@ -36,7 +36,7 @@ export const Usages = define('Usages', class {
 
 const setProps = (to: object, from: object) => {
 	Object.defineProperties(to, Object.getOwnPropertyDescriptors(from));
-}
+};
 
 export const UsageEntry = Usages.define('UsageEntry', function (
 	this: usage,

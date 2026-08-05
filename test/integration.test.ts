@@ -6,7 +6,6 @@ import * as path from 'path';
 import { MnemonicaAnalyzer } from '../src/analyzer';
 import { TypesGenerator } from '../src/generator';
 import { TypesWriter } from '../src/writer';
-import { TypeGraphImpl } from '../src/graph';
 
 /**
  * Integration test based on core/test-ts/test-example.ts pattern
@@ -16,7 +15,7 @@ describe('Integration: core/test-ts/test-example.ts pattern', () => {
 
 	afterEach(() => {
 		if (fs.existsSync(testOutputDir)) {
-			fs.rmSync(testOutputDir, { recursive: true });
+			fs.rmSync(testOutputDir, { recursive : true });
 		}
 	});
 

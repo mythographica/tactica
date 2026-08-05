@@ -233,8 +233,8 @@ class UserEntity {
 }
 `;
 			const analyzer = new MnemonicaAnalyzer();
-			const result = analyzer.analyzeSource(code, 'test.ts');
-			
+			analyzer.analyzeSource(code, 'test.ts');
+
 			const graph = analyzer.getGraph();
 			const allTypes = graph.getAllTypes();
 			

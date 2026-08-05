@@ -33,7 +33,7 @@ describe('Class Property Extraction', () => {
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
 			
-			const usageType = result.types[0];
+			const usageType = result.types[ 0 ];
 			expect(usageType.name).to.equal('Usages');
 			// Now includes both createdAt property and has method
 			expect(usageType.properties.size).to.equal(2);
@@ -65,7 +65,7 @@ describe('Class Property Extraction', () => {
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
 			
-			const userType = result.types[0];
+			const userType = result.types[ 0 ];
 			expect(userType.name).to.equal('User');
 			expect(userType.properties.size).to.equal(3);
 			
@@ -90,7 +90,7 @@ describe('Class Property Extraction', () => {
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
 			
-			const profileType = result.types[0];
+			const profileType = result.types[ 0 ];
 			expect(profileType.properties.get('id')?.optional).to.be.false;
 			expect(profileType.properties.get('bio')?.optional).to.be.true;
 			expect(profileType.properties.get('avatar')?.optional).to.be.true;
@@ -111,7 +111,7 @@ describe('Class Property Extraction', () => {
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
 			
-			const containerType = result.types[0];
+			const containerType = result.types[ 0 ];
 			expect(containerType.properties.get('items')?.type).to.equal('Array<string>');
 			expect(containerType.properties.get('counts')?.type).to.equal('Array<number>');
 		});
@@ -129,7 +129,7 @@ describe('Class Property Extraction', () => {
 
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			expect(result.types[0].properties.size).to.equal(0);
+			expect(result.types[ 0 ].properties.size).to.equal(0);
 		});
 
 		it('should extract constructor params with typed parameters from class expression', () => {
@@ -148,7 +148,7 @@ describe('Class Property Extraction', () => {
 
 			const graph = analyzer.analyzeSource(source);
 			expect(graph.errors).to.have.length(0);
-			const userType = graph.types[0];
+			const userType = graph.types[ 0 ];
 			expect(userType.name).to.equal('UserType');
 			const params = userType.constructorParams;
 			expect(params).to.be.an('array');

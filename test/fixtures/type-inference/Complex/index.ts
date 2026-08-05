@@ -13,8 +13,8 @@ export function ComplexHandler (
 	score: number,
 	enabled: boolean,
 	items: string[],
-	options: { ref: LocalClass; flag: any; mode: string | number },
-	classInstance: LocalClass
+	_options: { ref: LocalClass; flag: any; mode: string | number },
+	_classInstance: LocalClass
 ) {
 	Object.assign(this, data);
 	this.tag = tag;

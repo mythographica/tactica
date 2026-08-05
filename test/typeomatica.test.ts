@@ -375,8 +375,8 @@ class Order {
 			expect(result.errors).to.have.length(0);
 			const orderType = result.types.find(t => t.name === 'Order');
 			expect(orderType?.constructorParams).to.have.length(1);
-			expect(orderType?.constructorParams?.[0].name).to.equal('data');
-			expect(orderType?.constructorParams?.[0].type).to.equal('{ orderId: string; total: number }');
+			expect(orderType?.constructorParams?.[ 0 ].name).to.equal('data');
+			expect(orderType?.constructorParams?.[ 0 ].type).to.equal('{ orderId: string; total: number }');
 		});
 
 		it('should resolve aliased parent variables in @decorate(Parent)', () => {

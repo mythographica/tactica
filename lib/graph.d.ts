@@ -17,7 +17,7 @@ export declare class TypeGraphImpl implements TypeGraph {
     /**
      * Create a new TypeNode
      */
-    static createNode(name: string, parent: TypeNode | undefined, sourceFile: string, line: number, column: number): TypeNode;
+    static createNode(name: string, parent: TypeNode | undefined, sourceFile: string, line: number, column: number, collectionId?: string): TypeNode;
     /**
      * Traverse the graph in breadth-first order
      */

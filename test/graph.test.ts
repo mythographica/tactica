@@ -87,7 +87,7 @@ describe('TypeGraphImpl', () => {
 			const root = TypeGraphImpl.createNode('Root', undefined, 'test.ts', 1, 1);
 			graph.addRoot(root);
 
-			const preVisited = new Set<string>(['Root']);
+			const preVisited = new Set<string>([ 'Root' ]);
 			const visited: string[] = [];
 			for (const node of graph.dfs(root, preVisited)) {
 				visited.push(node.fullPath);
@@ -127,10 +127,10 @@ describe('TypeGraphImpl', () => {
 
 			const result = graph.toHierarchy();
 			expect(result).to.have.length(1);
-			expect(result[0].name).to.equal('Root');
-			expect(result[0].fullPath).to.equal('Root');
-			expect(result[0].location).to.equal('test.ts:1:2');
-			expect(result[0].children).to.deep.equal([]);
+			expect(result[ 0 ].name).to.equal('Root');
+			expect(result[ 0 ].fullPath).to.equal('Root');
+			expect(result[ 0 ].location).to.equal('test.ts:1:2');
+			expect(result[ 0 ].children).to.deep.equal([]);
 		});
 
 		it('should preserve nested children in order', () => {
@@ -143,9 +143,9 @@ describe('TypeGraphImpl', () => {
 
 			const result = graph.toHierarchy();
 			expect(result).to.have.length(1);
-			expect(result[0].fullPath).to.equal('Parent');
-			expect(result[0].children[0].fullPath).to.equal('Parent.Child');
-			expect(result[0].children[0].children[0].fullPath).to.equal('Parent.Child.GrandChild');
+			expect(result[ 0 ].fullPath).to.equal('Parent');
+			expect(result[ 0 ].children[ 0 ].fullPath).to.equal('Parent.Child');
+			expect(result[ 0 ].children[ 0 ].children[ 0 ].fullPath).to.equal('Parent.Child.GrandChild');
 		});
 	});
 });

@@ -20,22 +20,22 @@ describe('TypesWriter', () => {
 	beforeEach(() => {
 		// Clean up test directory
 		if (fs.existsSync(testDir)) {
-			fs.rmSync(testDir, { recursive: true });
+			fs.rmSync(testDir, { recursive : true });
 		}
 		writer = new TypesWriter(testDir);
 	});
 
 	afterEach(() => {
 		if (fs.existsSync(testDir)) {
-			fs.rmSync(testDir, { recursive: true });
+			fs.rmSync(testDir, { recursive : true });
 		}
 	});
 
 	describe('write()', () => {
 		it('should create output directory', () => {
 			const generated: GeneratedTypes = {
-				content: '// test',
-				types: ['TestType'],
+				content : '// test',
+				types   : [ 'TestType' ],
 			};
 
 			writer.write(generated);
@@ -45,8 +45,8 @@ describe('TypesWriter', () => {
 
 		it('should write types.ts file', () => {
 			const generated: GeneratedTypes = {
-				content: '// test content',
-				types: ['TestType'],
+				content : '// test content',
+				types   : [ 'TestType' ],
 			};
 
 			const outputPath = writer.write(generated);
@@ -58,8 +58,8 @@ describe('TypesWriter', () => {
 
 		it('should return correct path', () => {
 			const generated: GeneratedTypes = {
-				content: '// test',
-				types: [],
+				content : '// test',
+				types   : [],
 			};
 
 			const outputPath = writer.write(generated);
@@ -71,8 +71,8 @@ describe('TypesWriter', () => {
 	describe('clean()', () => {
 		it('should remove all files in output directory', () => {
 			const generated: GeneratedTypes = {
-				content: '// test',
-				types: [],
+				content : '// test',
+				types   : [],
 			};
 
 			writer.write(generated);
@@ -94,8 +94,8 @@ describe('TypesWriter', () => {
 	describe('writeTo()', () => {
 		it('should write to custom filename', () => {
 			const generated: GeneratedTypes = {
-				content: '// custom content',
-				types: ['CustomType'],
+				content : '// custom content',
+				types   : [ 'CustomType' ],
 			};
 
 			const outputPath = writer.writeTo('custom.ts', generated.content);
@@ -115,21 +115,21 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(nestedDir)).to.be.true;
 
 			// Cleanup
-			fs.rmSync(nestedDir, { recursive: true, force: true });
+			fs.rmSync(nestedDir, { recursive : true, force : true });
 		});
 	});
 
 	describe('writeDefinitionsFile()', () => {
 		it('should write definitions.json with correct shape', () => {
 			const definitions = new Map([
-				['UserType', {
-					name: 'UserType',
-					location: 'src/users.ts:10:7',
-					kind: 'define' as const,
-					parent: null,
-					strictChain: true,
-					blockErrors: false,
-				}],
+				[ 'UserType', {
+					name        : 'UserType',
+					location    : 'src/users.ts:10:7',
+					kind        : 'define' as const,
+					parent      : null,
+					strictChain : true,
+					blockErrors : false,
+				} ],
 			]);
 
 			const outputPath = writer.writeDefinitionsFile(definitions);
@@ -152,9 +152,9 @@ describe('TypesWriter', () => {
 	describe('writeUsagesFile()', () => {
 		it('should write usages.json with correct shape', () => {
 			const usages = new Map([
-				['UserType', [
-					{ location: 'src/main.ts:3:7', kind: 'instantiation' as const, code: 'new UserType({})' },
-				]],
+				[ 'UserType', [
+					{ location : 'src/main.ts:3:7', kind : 'instantiation' as const, code : 'new UserType({})' },
+				] ],
 			]);
 
 			const outputPath = writer.writeUsagesFile(usages);
@@ -164,7 +164,7 @@ describe('TypesWriter', () => {
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.version).to.equal('1.0');
 			expect(json.usages.UserType).to.have.length(1);
-			expect(json.usages.UserType[0].kind).to.equal('instantiation');
+			expect(json.usages.UserType[ 0 ].kind).to.equal('instantiation');
 		});
 
 		it('should handle empty usages map', () => {
@@ -177,9 +177,9 @@ describe('TypesWriter', () => {
 	describe('writeEDSFile()', () => {
 		it('should write eds.json with correct shape', () => {
 			const eds = new Map([
-				['UserEntity', [
-					{ location: 'src/queue.ts:45:12', kind: 'wrap' as const, code: 'wrap(process)', targetType: 'UserEntity' },
-				]],
+				[ 'UserEntity', [
+					{ location : 'src/queue.ts:45:12', kind : 'wrap' as const, code : 'wrap(process)', targetType : 'UserEntity' },
+				] ],
 			]);
 
 			const outputPath = writer.writeEDSFile(eds);
@@ -189,7 +189,7 @@ describe('TypesWriter', () => {
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.version).to.equal('1.0');
 			expect(json.eds.UserEntity).to.have.length(1);
-			expect(json.eds.UserEntity[0].kind).to.equal('wrap');
+			expect(json.eds.UserEntity[ 0 ].kind).to.equal('wrap');
 		});
 
 		it('should handle empty eds map', () => {
@@ -202,9 +202,9 @@ describe('TypesWriter', () => {
 	describe('writeFlowFile()', () => {
 		it('should write flow.json with correct shape', () => {
 			const flow = new Map([
-				['UserType', [
-					{ location: 'src/main.ts:7:5', kind: 'propertyRead' as const, code: 'user.name' },
-				]],
+				[ 'UserType', [
+					{ location : 'src/main.ts:7:5', kind : 'propertyRead' as const, code : 'user.name' },
+				] ],
 			]);
 
 			const outputPath = writer.writeFlowFile(flow);
@@ -214,7 +214,7 @@ describe('TypesWriter', () => {
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.version).to.equal('1.0');
 			expect(json.flow.UserType).to.have.length(1);
-			expect(json.flow.UserType[0].kind).to.equal('propertyRead');
+			expect(json.flow.UserType[ 0 ].kind).to.equal('propertyRead');
 		});
 
 		it('should handle empty flow map', () => {
@@ -228,15 +228,15 @@ describe('TypesWriter', () => {
 		it('should write hierarchy.json with correct shape', () => {
 			const roots = [
 				{
-					name: 'UserType',
-					fullPath: 'UserType',
-					location: 'src/users.ts:10:7',
-					children: [
+					name     : 'UserType',
+					fullPath : 'UserType',
+					location : 'src/users.ts:10:7',
+					children : [
 						{
-							name: 'AdminType',
-							fullPath: 'UserType.AdminType',
-							location: 'src/users.ts:20:7',
-							children: [],
+							name     : 'AdminType',
+							fullPath : 'UserType.AdminType',
+							location : 'src/users.ts:20:7',
+							children : [],
 						},
 					],
 				},
@@ -249,8 +249,8 @@ describe('TypesWriter', () => {
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.version).to.equal('1.0');
 			expect(json.roots).to.have.length(1);
-			expect(json.roots[0].fullPath).to.equal('UserType');
-			expect(json.roots[0].children[0].fullPath).to.equal('UserType.AdminType');
+			expect(json.roots[ 0 ].fullPath).to.equal('UserType');
+			expect(json.roots[ 0 ].children[ 0 ].fullPath).to.equal('UserType.AdminType');
 		});
 
 		it('should handle empty roots array', () => {

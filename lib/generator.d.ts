@@ -6,7 +6,8 @@ import { TypeGraphImpl } from './graph';
 export declare class TypesGenerator {
     private graph;
     private esm;
-    constructor(graph: TypeGraphImpl, esm?: boolean);
+    private outputDir;
+    constructor(graph: TypeGraphImpl, esm?: boolean, outputDir?: string);
     /**
      * Get import path with optional .js extension for ESM NodeNext
      */
@@ -26,14 +27,14 @@ export declare class TypesGenerator {
          */
     private generateInstanceType;
     /**
-     * Generate class interface for TypeScript declaration merging
-     * This merges with the actual class to provide proper typing
-     */
+         * Generate class interface for TypeScript declaration merging
+         * This merges with the actual class to provide proper typing
+         */
     private generateClassInterface;
     /**
-* Generate a types.ts file with complete instance interfaces
-* This includes all properties extracted from the constructors
-*/
+        * Generate a types.ts file with complete instance interfaces
+        * This includes all properties extracted from the constructors
+        */
     generateTypesFile(): GeneratedTypes;
     /**
          * Generate a complete instance type alias with all properties
@@ -61,6 +62,7 @@ export declare class TypesGenerator {
     /**
      * Get the instance type name for a node
      * Uses full path with underscores: Usages.UsageEntry -> Usages_UsageEntry
+     * For Option B custom collections, prefixes with the registry interface name.
      */
     private getInstanceTypeName;
     /**
@@ -73,4 +75,14 @@ export declare class TypesGenerator {
      * Handles complex types like Array<UsageEntry>, Map<string, TypeEntry>, etc.
      */
     private resolveTypeInString;
+    /**
+     * Group collection type nodes by their registry interface name and source file.
+     * Returns a map keyed by `${registryInterfaceName}::${sourceFile}`.
+     */
+    private groupCollectionRegistryNodes;
+    /**
+     * Resolve a source file path to a module specifier relative to the output directory,
+     * suitable for use in a `declare module '...'` block.
+     */
+    private resolveModulePath;
 }

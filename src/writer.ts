@@ -2,7 +2,9 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson } from './types';
+import {
+	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson 
+} from './types';
 
 /**
  * Writes generated types to file system
@@ -56,7 +58,7 @@ export class TypesWriter {
 	 */
 	private ensureDirectory (): void {
 		if (!fs.existsSync(this.outputDir)) {
-			fs.mkdirSync(this.outputDir, { recursive: true });
+			fs.mkdirSync(this.outputDir, { recursive : true });
 		}
 	}
 
@@ -88,14 +90,14 @@ export class TypesWriter {
 
 		// Convert Map to plain object
 		const definitionsObj: Record<string, DefinitionInfo> = {};
-		for (const [key, value] of definitions) {
-			definitionsObj[key] = value;
+		for (const [ key, value ] of definitions) {
+			definitionsObj[ key ] = value;
 		}
 
 		const json = {
-			version: '1.0',
-			generatedAt: new Date().toISOString(),
-			definitions: definitionsObj,
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			definitions : definitionsObj,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
@@ -111,14 +113,14 @@ export class TypesWriter {
 
 		// Convert Map to plain object
 		const usagesObj: Record<string, UsageInfo[]> = {};
-		for (const [key, value] of usages) {
-			usagesObj[key] = value;
+		for (const [ key, value ] of usages) {
+			usagesObj[ key ] = value;
 		}
 
 		const json = {
-			version: '1.0',
-			generatedAt: new Date().toISOString(),
-			usages: usagesObj,
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			usages      : usagesObj,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
@@ -134,14 +136,14 @@ export class TypesWriter {
 
 		// Convert Map to plain object
 		const edsObj: Record<string, EDSInfo[]> = {};
-		for (const [key, value] of eds) {
-			edsObj[key] = value;
+		for (const [ key, value ] of eds) {
+			edsObj[ key ] = value;
 		}
 
 		const json = {
-			version: '1.0',
-			generatedAt: new Date().toISOString(),
-			eds: edsObj,
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			eds         : edsObj,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
@@ -157,14 +159,14 @@ export class TypesWriter {
 
 		// Convert Map to plain object
 		const flowObj: Record<string, FlowInfo[]> = {};
-		for (const [key, value] of flow) {
-			flowObj[key] = value;
+		for (const [ key, value ] of flow) {
+			flowObj[ key ] = value;
 		}
 
 		const json: FlowJson = {
-			version: '1.0',
-			generatedAt: new Date().toISOString(),
-			flow: flowObj,
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			flow        : flowObj,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
@@ -179,8 +181,8 @@ export class TypesWriter {
 		const filePath = path.join(this.outputDir, 'hierarchy.json');
 
 		const json: HierarchyJson = {
-			version: '1.0',
-			generatedAt: new Date().toISOString(),
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
 			roots,
 		};
 

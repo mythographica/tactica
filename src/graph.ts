@@ -1,6 +1,8 @@
 'use strict';
 
-import { TypeNode, TypeGraph, HierarchyNode } from './types';
+import {
+	TypeNode, TypeGraph, HierarchyNode 
+} from './types';
 
 /**
  * Trie-based type graph for storing Mnemonica type hierarchy
@@ -9,25 +11,25 @@ export class TypeGraphImpl implements TypeGraph {
 	roots: Map<string, TypeNode> = new Map();
 	allTypes: Map<string, TypeNode> = new Map();
 
-	addRoot(node: TypeNode): void {
+	addRoot (node: TypeNode): void {
 		this.roots.set(node.name, node);
 		this.allTypes.set(node.fullPath, node);
 	}
 
-	addChild(parent: TypeNode, child: TypeNode): void {
+	addChild (parent: TypeNode, child: TypeNode): void {
 		parent.children.set(child.name, child);
 		child.parent = parent;
 		this.allTypes.set(child.fullPath, child);
 	}
 
-	findType(fullPath: string): TypeNode | undefined {
+	findType (fullPath: string): TypeNode | undefined {
 		return this.allTypes.get(fullPath);
 	}
 
 	/**
 	 * Find a type by name (search through all types, return first match)
 	 */
-	findTypeByName(name: string): TypeNode | undefined {
+	findTypeByName (name: string): TypeNode | undefined {
 		for (const type of this.allTypes.values()) {
 			if (type.name === name) {
 				return type;
@@ -36,11 +38,11 @@ export class TypeGraphImpl implements TypeGraph {
 		return undefined;
 	}
 
-	getAllTypes(): TypeNode[] {
+	getAllTypes (): TypeNode[] {
 		return Array.from(this.allTypes.values());
 	}
 
-	clear(): void {
+	clear (): void {
 		this.roots.clear();
 		this.allTypes.clear();
 	}
@@ -48,30 +50,37 @@ export class TypeGraphImpl implements TypeGraph {
 	/**
 	 * Create a new TypeNode
 	 */
-	static createNode(
+	static createNode (
 		name: string,
 		parent: TypeNode | undefined,
 		sourceFile: string,
 		line: number,
-		column: number
+		column: number,
+		collectionId?: string
 	): TypeNode {
-		const fullPath = parent ? `${parent.fullPath}.${name}` : name;
+		const resolvedCollectionId = collectionId ?? parent?.collectionId;
+		const fullPath = parent
+			? `${parent.fullPath}.${name}`
+			: resolvedCollectionId
+				? `${resolvedCollectionId}::${name}`
+				: name;
 		return {
 			name,
 			fullPath,
-			properties: new Map(),
+			properties   : new Map(),
 			parent,
-			children: new Map(),
+			children     : new Map(),
 			sourceFile,
 			line,
 			column,
+			collectionId : resolvedCollectionId,
 		};
 	}
 
 	/**
 	 * Traverse the graph in breadth-first order
 	 */
-	*bfs(): Generator<TypeNode> {
+	*bfs (): Generator<TypeNode> {
 		const visited = new Set<string>();
 		const queue: TypeNode[] = Array.from(this.roots.values());
 
@@ -120,12 +129,11 @@ export class TypeGraphImpl implements TypeGraph {
 	 */
 	private nodeToHierarchy (node: TypeNode): HierarchyNode {
 		const children = Array.from(node.children.values()).map(child =>
-			this.nodeToHierarchy(child)
-		);
+			this.nodeToHierarchy(child));
 		const result: HierarchyNode = {
-			name: node.name,
-			fullPath: node.fullPath,
-			location: `${node.sourceFile}:${node.line}:${node.column}`,
+			name     : node.name,
+			fullPath : node.fullPath,
+			location : `${node.sourceFile}:${node.line}:${node.column}`,
 			children,
 		};
 		return result;

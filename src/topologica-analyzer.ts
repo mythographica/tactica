@@ -3,7 +3,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { TypeNode, PropertyInfo, ConstructorParamInfo } from './types';
+import {
+	TypeNode, PropertyInfo, ConstructorParamInfo 
+} from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -20,33 +22,33 @@ export class TopologicaAnalyzer {
 	/**
 	 * Analyze a directory structure for topologica type definitions
 	 */
-	analyzeDirectory(directoryPath: string): { types: Map<string, TypeNode>, errors: string[] } {
+	analyzeDirectory (directoryPath: string): { types: Map<string, TypeNode>, errors: string[] } {
 		this.errors = [];
 		
 		if (!fs.existsSync(directoryPath)) {
 			this.errors.push(`Directory does not exist: ${directoryPath}`);
-			return { types: this.graph.allTypes, errors: this.errors };
+			return { types : this.graph.allTypes, errors : this.errors };
 		}
 
 		if (!fs.statSync(directoryPath).isDirectory()) {
 			this.errors.push(`Path is not a directory: ${directoryPath}`);
-			return { types: this.graph.allTypes, errors: this.errors };
+			return { types : this.graph.allTypes, errors : this.errors };
 		}
 
 		this.scanDirectory(directoryPath, undefined, directoryPath);
 		
 		return {
-			types: this.graph.allTypes,
-			errors: this.errors,
+			types  : this.graph.allTypes,
+			errors : this.errors,
 		};
 	}
 
 	/**
 	 * Recursively scan directory structure to build type hierarchy
 	 */
-	private scanDirectory(currentPath: string, parentNode: TypeNode | undefined, rootPath: string): void {
+	private scanDirectory (currentPath: string, parentNode: TypeNode | undefined, rootPath: string): void {
 		try {
-			const entries = fs.readdirSync(currentPath, { withFileTypes: true });
+			const entries = fs.readdirSync(currentPath, { withFileTypes : true });
 			
 			for (const entry of entries) {
 				if (entry.isDirectory()) {
@@ -56,20 +58,22 @@ export class TopologicaAnalyzer {
 					const dirPath = path.join(currentPath, entry.name);
 					
 					// Extract properties and constructor params from the handler file if it exists
-					const { properties, constructorParams, handlerLocation } = this.extractPropertiesFromDir(dirPath);
+					const {
+						properties, constructorParams, handlerLocation 
+					} = this.extractPropertiesFromDir(dirPath);
 					
 					// Create the type node with proper source location for Go to Definition
 					const typeNode: TypeNode = {
-						name: typeName,
-						fullPath: fullPath,
-						properties: properties,
-						constructorParams: constructorParams,
-						parent: parentNode,
-						children: new Map(),
-						sourceFile: handlerLocation?.filePath || dirPath,
-						line: handlerLocation?.line || 0,
-						column: handlerLocation?.column || 0,
-						constructorName: typeName
+						name              : typeName,
+						fullPath          : fullPath,
+						properties        : properties,
+						constructorParams : constructorParams,
+						parent            : parentNode,
+						children          : new Map(),
+						sourceFile        : handlerLocation?.filePath || dirPath,
+						line              : handlerLocation?.line || 0,
+						column            : handlerLocation?.column || 0,
+						constructorName   : typeName
 					};
 					
 					// Add to graph
@@ -93,7 +97,7 @@ export class TopologicaAnalyzer {
 	 * Extract properties from a directory's index file
 	 * Supports both .ts and .js files
 	 */
-	private extractPropertiesFromDir(dirPath: string): {
+	private extractPropertiesFromDir (dirPath: string): {
 		properties: Map<string, PropertyInfo>;
 		constructorParams?: ConstructorParamInfo[];
 		handlerLocation?: { filePath: string; line: number; column: number };
@@ -152,7 +156,7 @@ export class TopologicaAnalyzer {
 	 * Collect type aliases from source file
 	 * e.g., export type SentienceData = { awareness?: string; }
 	 */
-	private collectTypeAliases(sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
+	private collectTypeAliases (sourceFile: ts.SourceFile): Map<string, ts.TypeNode> {
 		const typeAliases = new Map<string, ts.TypeNode>();
 		
 		const visit = (node: ts.Node): void => {
@@ -173,7 +177,7 @@ export class TopologicaAnalyzer {
 	 * Extract property assignments from a source file
 	 * Returns constructor parameters and handler location if found
 	 */
-	private extractPropertiesFromSourceFile(
+	private extractPropertiesFromSourceFile (
 		sourceFile: ts.SourceFile,
 		properties: Map<string, PropertyInfo>,
 		typeAliases?: Map<string, ts.TypeNode>
@@ -188,9 +192,7 @@ export class TopologicaAnalyzer {
 			// Look for exported function declarations (topologica convention: one exported function per file)
 			if (ts.isFunctionDeclaration(node) && node.name) {
 				// Check if it's exported
-				const isExported = node.modifiers?.some(
-					m => m.kind === ts.SyntaxKind.ExportKeyword
-				);
+				const isExported = node.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword);
 				
 				if (isExported) {
 					this.extractThisProperties(node, properties);
@@ -203,9 +205,9 @@ export class TopologicaAnalyzer {
 							node.getStart(sourceFile)
 						);
 						handlerLocation = {
-							filePath: sourceFile.fileName,
-							line: line + 1, // 1-based
-							column: character + 1 // 1-based
+							filePath : sourceFile.fileName,
+							line     : line + 1, // 1-based
+							column   : character + 1 // 1-based
 						};
 					}
 				}
@@ -222,9 +224,9 @@ export class TopologicaAnalyzer {
 						node.getStart(sourceFile)
 					);
 					handlerLocation = {
-						filePath: sourceFile.fileName,
-						line: line + 1, // 1-based
-						column: character + 1 // 1-based
+						filePath : sourceFile.fileName,
+						line     : line + 1, // 1-based
+						column   : character + 1 // 1-based
 					};
 				}
 			}
@@ -239,11 +241,11 @@ export class TopologicaAnalyzer {
 	/**
 	 * Extract `this.property = value` assignments from a function body
 	 */
-	private extractThisProperties(
+	private extractThisProperties (
 		func: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
 		properties: Map<string, PropertyInfo>
 	): void {
-		const body = func.body;
+		const { body } = func;
 		if (!body) return;
 		
 		const visitStatements = (node: ts.Node): void => {
@@ -254,8 +256,8 @@ export class TopologicaAnalyzer {
 				// Check for this.prop = value
 				if (ts.isBinaryExpression(expr) && 
 				    expr.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-					const left = expr.left;
-					const right = expr.right;
+					const { left } = expr;
+					const { right } = expr;
 					
 					// Check if left side is this.property
 					if (ts.isPropertyAccessExpression(left) &&
@@ -264,10 +266,10 @@ export class TopologicaAnalyzer {
 						const propType = this.inferType(right);
 						
 						properties.set(propName, {
-							name: propName,
-							type: propType,
-							optional: false,
-							readonly: false
+							name     : propName,
+							type     : propType,
+							optional : false,
+							readonly : false
 						});
 					}
 				}
@@ -290,7 +292,7 @@ export class TopologicaAnalyzer {
 	/**
 	 * Check if a call expression is Object.assign(this, ...)
 	 */
-	private isObjectAssignCall(callExpr: ts.CallExpression): boolean {
+	private isObjectAssignCall (callExpr: ts.CallExpression): boolean {
 		const expr = callExpr.expression;
 		if (!ts.isPropertyAccessExpression(expr)) return false;
 		
@@ -298,7 +300,7 @@ export class TopologicaAnalyzer {
 		const methodName = expr.name.text;
 		
 		if (objName === 'Object' && methodName === 'assign') {
-			const firstArg = callExpr.arguments[0];
+			const firstArg = callExpr.arguments[ 0 ];
 			if (firstArg && firstArg.kind === ts.SyntaxKind.ThisKeyword) {
 				return true;
 			}
@@ -310,12 +312,12 @@ export class TopologicaAnalyzer {
 	/**
 	 * Extract properties from Object.assign(this, data) pattern
 	 */
-	private extractFromObjectAssign(
+	private extractFromObjectAssign (
 		callExpr: ts.CallExpression,
 		properties: Map<string, PropertyInfo>
 	): void {
 		// Look for the data argument (second argument)
-		const dataArg = callExpr.arguments[1];
+		const dataArg = callExpr.arguments[ 1 ];
 		if (!dataArg) return;
 		
 		// If it's an object literal, extract properties
@@ -326,10 +328,10 @@ export class TopologicaAnalyzer {
 					const propType = this.inferType(prop.initializer);
 					
 					properties.set(propName, {
-						name: propName,
-						type: propType,
-						optional: false,
-						readonly: false
+						name     : propName,
+						type     : propType,
+						optional : false,
+						readonly : false
 					});
 				}
 			}
@@ -340,7 +342,7 @@ export class TopologicaAnalyzer {
 	 * Extract constructor parameters from a function
 	 * Similar to main analyzer - skips `this` parameter and expands data types
 	 */
-	private extractConstructorParams(
+	private extractConstructorParams (
 		func: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
 		typeAliases?: Map<string, ts.TypeNode>
 	): ConstructorParamInfo[] | undefined {
@@ -352,7 +354,7 @@ export class TopologicaAnalyzer {
 		
 		// Skip `this` parameter (first param) and extract data parameters
 		for (let i = 0; i < func.parameters.length; i++) {
-			const param = func.parameters[i];
+			const param = func.parameters[ i ];
 			
 			// Skip `this` parameter (first param)
 			if (i === 0 && param.name.kind === ts.SyntaxKind.Identifier &&
@@ -370,9 +372,9 @@ export class TopologicaAnalyzer {
 			const paramType = expandedType || this.typeNodeToSimpleString(param.type);
 			
 			params.push({
-				name: paramName,
-				type: paramType,
-				optional: optional
+				name     : paramName,
+				type     : paramType,
+				optional : optional
 			});
 		}
 		
@@ -383,7 +385,7 @@ export class TopologicaAnalyzer {
 	 * Expand a type node to its object literal representation
 	 * Similar to main analyzer's resolveTypeAndExtract
 	 */
-	private expandTypeToObject(
+	private expandTypeToObject (
 		typeNode: ts.TypeNode,
 		typeAliases?: Map<string, ts.TypeNode>
 	): string | undefined {
@@ -424,98 +426,98 @@ export class TopologicaAnalyzer {
 	/**
 	 * Convert a TypeScript type node to a simple string representation
 	 */
-	private typeNodeToSimpleString(typeNode: ts.TypeNode | undefined): string {
+	private typeNodeToSimpleString (typeNode: ts.TypeNode | undefined): string {
 		if (!typeNode) return 'any';
 		
 		switch (typeNode.kind) {
-			case ts.SyntaxKind.StringKeyword:
-				return 'string';
-			case ts.SyntaxKind.NumberKeyword:
-				return 'number';
-			case ts.SyntaxKind.BooleanKeyword:
-				return 'boolean';
-			case ts.SyntaxKind.AnyKeyword:
-				return 'any';
-			case ts.SyntaxKind.ArrayType:
-				return 'Array<any>';
-			case ts.SyntaxKind.TypeReference: {
-				const typeRef = typeNode as ts.TypeReferenceNode;
-				if (ts.isIdentifier(typeRef.typeName)) {
-					return typeRef.typeName.text;
-				}
-				return 'any';
+		case ts.SyntaxKind.StringKeyword:
+			return 'string';
+		case ts.SyntaxKind.NumberKeyword:
+			return 'number';
+		case ts.SyntaxKind.BooleanKeyword:
+			return 'boolean';
+		case ts.SyntaxKind.AnyKeyword:
+			return 'any';
+		case ts.SyntaxKind.ArrayType:
+			return 'Array<any>';
+		case ts.SyntaxKind.TypeReference: {
+			const typeRef = typeNode as ts.TypeReferenceNode;
+			if (ts.isIdentifier(typeRef.typeName)) {
+				return typeRef.typeName.text;
 			}
-			default:
-				return 'any';
+			return 'any';
+		}
+		default:
+			return 'any';
 		}
 	}
 
 	/**
 	 * Infer TypeScript type from an expression
 	 */
-	private inferType(node: ts.Expression): string {
+	private inferType (node: ts.Expression): string {
 		switch (node.kind) {
-			case ts.SyntaxKind.StringLiteral:
-				return 'string';
-			case ts.SyntaxKind.NumericLiteral:
-				return 'number';
-			case ts.SyntaxKind.TrueKeyword:
-			case ts.SyntaxKind.FalseKeyword:
-				return 'boolean';
-			case ts.SyntaxKind.NullKeyword:
-				return 'null';
-			case ts.SyntaxKind.UndefinedKeyword:
-				return 'undefined';
-			case ts.SyntaxKind.ArrayLiteralExpression:
-				return 'Array<any>';
-			case ts.SyntaxKind.ObjectLiteralExpression:
-				return 'object';
-			case ts.SyntaxKind.NewExpression:
-				return this.inferNewExpressionType(node as ts.NewExpression);
-			case ts.SyntaxKind.ConditionalExpression:
-				return this.inferType((node as ts.ConditionalExpression).whenTrue);
-			case ts.SyntaxKind.BinaryExpression: {
-				const binExpr = node as ts.BinaryExpression;
-				// Check for logical OR pattern: value || default
-				if (binExpr.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
-					// Return the type of the right side (the default value)
-					return this.inferType(binExpr.right);
-				}
-				return 'any';
+		case ts.SyntaxKind.StringLiteral:
+			return 'string';
+		case ts.SyntaxKind.NumericLiteral:
+			return 'number';
+		case ts.SyntaxKind.TrueKeyword:
+		case ts.SyntaxKind.FalseKeyword:
+			return 'boolean';
+		case ts.SyntaxKind.NullKeyword:
+			return 'null';
+		case ts.SyntaxKind.UndefinedKeyword:
+			return 'undefined';
+		case ts.SyntaxKind.ArrayLiteralExpression:
+			return 'Array<any>';
+		case ts.SyntaxKind.ObjectLiteralExpression:
+			return 'object';
+		case ts.SyntaxKind.NewExpression:
+			return this.inferNewExpressionType(node as ts.NewExpression);
+		case ts.SyntaxKind.ConditionalExpression:
+			return this.inferType((node as ts.ConditionalExpression).whenTrue);
+		case ts.SyntaxKind.BinaryExpression: {
+			const binExpr = node as ts.BinaryExpression;
+			// Check for logical OR pattern: value || default
+			if (binExpr.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+				// Return the type of the right side (the default value)
+				return this.inferType(binExpr.right);
 			}
-			case ts.SyntaxKind.PropertyAccessExpression: {
-				const propAccess = node as ts.PropertyAccessExpression;
-				// Handle data?.property patterns
-				return this.inferType(propAccess);
-			}
-			case ts.SyntaxKind.CallExpression: {
-				const callExpr = node as ts.CallExpression;
-				return this.inferCallExpressionType(callExpr);
-			}
-			default:
-				return 'any';
+			return 'any';
+		}
+		case ts.SyntaxKind.PropertyAccessExpression: {
+			const propAccess = node as ts.PropertyAccessExpression;
+			// Handle data?.property patterns
+			return this.inferType(propAccess);
+		}
+		case ts.SyntaxKind.CallExpression: {
+			const callExpr = node as ts.CallExpression;
+			return this.inferCallExpressionType(callExpr);
+		}
+		default:
+			return 'any';
 		}
 	}
 
 	/**
 	 * Infer type from new expressions like new Date(), new Array(), etc.
 	 */
-	private inferNewExpressionType(node: ts.NewExpression): string {
+	private inferNewExpressionType (node: ts.NewExpression): string {
 		const expr = node.expression;
 		if (ts.isIdentifier(expr)) {
 			switch (expr.text) {
-				case 'Date':
-					return 'number'; // Date.now() returns number
-				case 'Array':
-					return 'Array<any>';
-				case 'Map':
-					return 'Map<any, any>';
-				case 'Set':
-					return 'Set<any>';
-				case 'RegExp':
-					return 'RegExp';
-				default:
-					return expr.text;
+			case 'Date':
+				return 'number'; // Date.now() returns number
+			case 'Array':
+				return 'Array<any>';
+			case 'Map':
+				return 'Map<any, any>';
+			case 'Set':
+				return 'Set<any>';
+			case 'RegExp':
+				return 'RegExp';
+			default:
+				return expr.text;
 			}
 		}
 		return 'any';
@@ -524,7 +526,7 @@ export class TopologicaAnalyzer {
 	/**
 	 * Infer type from call expressions like Date.now(), parseInt(), etc.
 	 */
-	private inferCallExpressionType(node: ts.CallExpression): string {
+	private inferCallExpressionType (node: ts.CallExpression): string {
 		const expr = node.expression;
 		
 		// Handle Date.now()
@@ -540,15 +542,15 @@ export class TopologicaAnalyzer {
 		// Handle parseInt, parseFloat, String(), Number(), Boolean()
 		if (ts.isIdentifier(expr)) {
 			switch (expr.text) {
-				case 'parseInt':
-				case 'parseFloat':
-					return 'number';
-				case 'String':
-					return 'string';
-				case 'Number':
-					return 'number';
-				case 'Boolean':
-					return 'boolean';
+			case 'parseInt':
+			case 'parseFloat':
+				return 'number';
+			case 'String':
+				return 'string';
+			case 'Number':
+				return 'number';
+			case 'Boolean':
+				return 'boolean';
 			}
 		}
 		
@@ -558,14 +560,14 @@ export class TopologicaAnalyzer {
 	/**
 	 * Get the type graph
 	 */
-	getGraph(): TypeGraphImpl {
+	getGraph (): TypeGraphImpl {
 		return this.graph;
 	}
 
 	/**
 	 * Get collected errors
 	 */
-	getErrors(): string[] {
+	getErrors (): string[] {
 		return this.errors;
 	}
 }

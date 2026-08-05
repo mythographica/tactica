@@ -14,18 +14,18 @@ const testOutputDir = path.join(__dirname, '.test-mnemographica');
 describe('Mnemographica Models - Real Filesystem Test', () => {
 	beforeEach(() => {
 		if (fs.existsSync(testOutputDir)) {
-			fs.rmSync(testOutputDir, { recursive: true });
+			fs.rmSync(testOutputDir, { recursive : true });
 		}
-		fs.mkdirSync(testOutputDir, { recursive: true });
+		fs.mkdirSync(testOutputDir, { recursive : true });
 	});
 
 	afterEach(() => {
 		if (fs.existsSync(testOutputDir)) {
-			fs.rmSync(testOutputDir, { recursive: true });
+			fs.rmSync(testOutputDir, { recursive : true });
 		}
 	});
 
-	function analyzeFile(fileName: string) {
+	function analyzeFile (fileName: string) {
 		const filePath = path.join(fixturesDir, fileName);
 		const content = fs.readFileSync(filePath, 'utf-8');
 		
@@ -36,7 +36,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		return { analyzer, graph, result };
 	}
 
-	function generateAndWrite(graph: TypeGraphImpl): string {
+	function generateAndWrite (graph: TypeGraphImpl): string {
 		const generator = new TypesGenerator(graph);
 		const generated = generator.generateTypesFile();
 		
@@ -51,7 +51,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const typesContent = generateAndWrite(graph);
 		
 		// Verify ProtoFlat is imported
-		expect(typesContent).to.include("import type { ProtoFlat } from 'mnemonica'");
+		expect(typesContent).to.include('import type { ProtoFlat } from \'mnemonica\'');
 		
 		// Definition (root type) should have Link constructor property
 		expect(typesContent).to.include('export type Definition = {');
@@ -92,7 +92,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 	});
 
 	it('should extract class methods from Usages class (has, set, values, size getter)', () => {
-		const { analyzer, graph, result } = analyzeFile('Usages.ts');
+		const { graph, result } = analyzeFile('Usages.ts');
 		const typesContent = generateAndWrite(graph);
 		
 		// Find Usages type

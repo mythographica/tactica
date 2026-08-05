@@ -13,6 +13,11 @@ export declare class MnemonicaAnalyzer {
     private flowUsages;
     private typeAliases;
     private variableToTypeMap;
+    private moduleObjectVariables;
+    private createTypesCollectionVariables;
+    private collectionVariables;
+    private collectionInfo;
+    private collectionCounter;
     constructor(program?: ts.Program);
     /**
      * Reset usage-related state for a fresh pass.
@@ -61,9 +66,56 @@ export declare class MnemonicaAnalyzer {
      */
     private visitNode;
     /**
+     * Track imports from 'mnemonica' so aliases of the module object and
+     * createTypesCollection are recognized without relying on the type checker.
+     */
+    private trackImports;
+    /**
+     * Track aliases of the mnemonica module object, e.g.:
+     *   const m = mnemonica;
+     *   const App = m;
+     */
+    private trackModuleObjectAliases;
+    /**
+     * Track custom collection variables, e.g.:
+     *   const MyCollection = createTypesCollection();
+     *   const Other = MyCollection;
+     *
+     * Also detects Option B user-provided registry interfaces:
+     *   export interface MyCollectionRegistry {}
+     *   const MyCollection = createTypesCollection<MyCollectionRegistry>();
+     */
+    private trackCollectionAliases;
+    /**
+     * Extract the registry interface name from createTypesCollection<Registry>()
+     * when the interface is declared in the same source file.
+     */
+    private extractRegistryInterfaceName;
+    /**
+     * Get the registry interface name for a collection id.
+     */
+    private getRegistryInterfaceName;
+    /**
+     * Check if an expression is a createTypesCollection() call.
+     * Handles:
+     *   createTypesCollection()
+     *   ctc() // aliased import
+     *   mnemonica.createTypesCollection() // module object method
+     *   m.createTypesCollection() // aliased module object
+     */
+    private isCreateTypesCollectionCall;
+    /**
+     * Generate a unique collection identifier.
+     */
+    private nextCollectionId;
+    /**
      * Check if a node is a define() call
      */
     private isDefineCall;
+    /**
+     * Check if a node is a lazy() call
+     */
+    private isLazyCall;
     /**
         * Extract config options from an object literal
         */
@@ -77,9 +129,51 @@ export declare class MnemonicaAnalyzer {
         */
     private isDecorateDecorator;
     /**
+     * Mark a call expression as processed and return whether it already was.
+     */
+    private markProcessed;
+    /**
      * Process a define() call
      */
     private processDefineCall;
+    /**
+     * Process a lazy() call
+     */
+    private processLazyCall;
+    /**
+     * Extract lazy() call arguments into a normalized shape.
+     * Handles named/unnamed and explicit-source forms, both as free calls
+     * and as method calls.
+     */
+    private extractLazyCallArgs;
+    /**
+     * Unwrap the constructor returned by a lazy getter.
+     * Supports:
+     *   () => class Name {}
+     *   () => function Name() {}
+     *   () => { return class Name {}; }
+     *   function () { return function Name() {}; }
+     */
+    private unwrapLazyGetter;
+    /**
+     * Extract a constructor name from a class expression, class declaration,
+     * or named function expression.
+     */
+    private extractConstructorName;
+    /**
+     * Extract the type name from either a define() or lazy() call.
+     */
+    private extractMnemonicaTypeName;
+    /**
+     * Extract the full lazy() call context: type name, parent type, and collection.
+     * Handles direct calls, property-access calls, chained calls, and the
+     * explicit-source form `lazy(source, 'TypeName', getter)`.
+     */
+    private extractLazyContext;
+    /**
+     * Extract config options from lazy() call
+     */
+    private extractLazyConfig;
     /**
         * Track variable assignments that capture define() results
         * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
@@ -101,15 +195,46 @@ export declare class MnemonicaAnalyzer {
      */
     private processDecorateDecorator;
     /**
-     * Extract type name from define() call arguments
+     * Extract type name from define() call arguments.
+     * Handles:
+     *   define('TypeName', handler)
+     *   define(source, 'TypeName', handler)   // explicit-source form
+     *   define(function TypeName() {})
+     *   define(() => class TypeName {})
      */
     private extractTypeName;
     /**
-     * Find parent type node for nested define calls
+     * Extract the full define() call context: type name, parent type, and collection.
+     * Handles direct calls, property-access calls, chained calls, and the
+     * explicit-source form `define(source, 'TypeName', handler)`.
      */
-    private findParentType;
+    private extractDefineContext;
     /**
-        * Find a parent type by its name, searching in the graph
+     * Prefix a dotted type path with a collection identifier so custom-collection
+     * types do not collide with default-collection types in the graph.
+     */
+    private prefixCollectionPath;
+    /**
+     * Resolve a define() source identifier to either a parent type, a collection,
+     * or the default (module object) collection.
+     */
+    private resolveDefineSource;
+    /**
+     * Check if a call expression is a lookup() call.
+     */
+    private isLookupCall;
+    /**
+     * Resolve a lookup() call to a dotted type path (best effort).
+     * Handles:
+     *   lookup('User')
+     *   lookup(source, 'User')
+     *   App.lookup('User')
+     *   collection.lookup('User.Admin')
+     */
+    private resolveLookupPath;
+    /**
+        * Find a parent type by its name, searching in the graph.
+        * When collectionId is provided, only types from that collection are considered.
         */
     private findParentTypeByName;
     /**
@@ -119,13 +244,28 @@ export declare class MnemonicaAnalyzer {
         */
     private findParentTypeByIdentifier;
     /**
+     * Get the leftmost identifier of a property-access chain.
+     * For `App.define('User').define('Admin')` this returns the `App` identifier.
+     */
+    private getRootIdentifier;
+    /**
         * Get property chain from nested access
         */
     private getPropertyChain;
     /**
+     * Determine the constructor expression for either a define() or lazy() call.
+     * For define() this is the construct handler; for lazy() it is the value
+     * returned by the lazy getter.
+     */
+    private extractConstructorExpression;
+    /**
      * Extract properties from constructor function
      */
     private extractProperties;
+    /**
+     * Extract properties from a constructor expression (function, arrow, or class).
+     */
+    private extractPropertiesFromConstructor;
     /**
      * Build a type map from all parameters with inline object type annotations
      * Returns a map of "paramName.propertyName" -> type
@@ -184,16 +324,16 @@ export declare class MnemonicaAnalyzer {
      */
     private inferTypeFromInitializer;
     /**
-        * Collect usage information for type references
-        */
+            * Collect usage information for type references
+            */
     private collectUsage;
     /**
-        * Get function name from expression (identifier or property access)
-        */
+            * Get function name from expression (identifier or property access)
+            */
     private getFunctionName;
     /**
-        * Add a usage to the collection
-        */
+            * Add a usage to the collection
+            */
     private addUsage;
     /**
      * Collect EDS (Execution Data Storage) usage information
@@ -257,26 +397,30 @@ export declare class MnemonicaAnalyzer {
             */
     private getTypeNameFromExpression;
     /**
-        * Resolve full type path from property access
-        */
+            * Resolve full type path from property access
+            */
     private resolveTypePath;
     /**
-         * Check if a name looks like a type (starts with uppercase)
-         */
+             * Check if a name looks like a type (starts with uppercase)
+             */
     private isLikelyTypeName;
     /**
-         * Resolve a constructor parameter type, expanding inline object literals
-         * and type aliases where possible.
-         */
+             * Resolve a constructor parameter type, expanding inline object literals
+             * and type aliases where possible.
+             */
     private resolveConstructorParamType;
     /**
-         * Extract constructor parameters from a class-like node.
-         */
+             * Extract constructor parameters from a class-like node.
+             */
     private extractClassConstructorParams;
     /**
-         * Extract constructor parameters from define() call
-         * This is used for TypeRegistry constructor signatures
-         * Preserves parameter names and expands object types to their structure
-         */
+             * Extract constructor parameters from define() call
+             * This is used for TypeRegistry constructor signatures
+             * Preserves parameter names and expands object types to their structure
+             */
     private extractConstructorParams;
+    /**
+             * Extract constructor parameters from a constructor expression.
+             */
+    private extractConstructorParamsFromConstructor;
 }

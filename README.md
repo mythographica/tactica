@@ -221,7 +221,124 @@ const AdminType = UserType.define('AdminType', function (this: { role: string })
 
 Chained calls (`define('A').define('B')`) and nested calls via variable references (`const A = define('A', …); A.define('B', …)`) are both supported.
 
-### `@decorate()` decorator
+### Builder pattern on the imported module object
+
+The analyzer also recognizes the chainable `mnemonica` module object and aliases of it:
+
+```ts
+import { mnemonica } from 'mnemonica';
+
+const App = mnemonica
+    .define('UserType', function (this: { name: string }) {
+        this.name = '';
+    })
+    .define('AdminType', function (this: { role: string }) {
+        this.role = 'admin';
+    });
+
+// Builder .lookup() results are followed
+App.lookup('UserType').define('GuestType', function (this: { token: string }) {
+    this.token = '';
+});
+```
+
+It also recognizes the explicit-source APIs:
+
+```ts
+import { define, lookup } from 'mnemonica';
+
+const AdminType = define(UserType, 'AdminType', function (this: { role: string }) {
+    this.role = 'admin';
+});
+
+const AdminCtor = lookup(App, 'UserType.AdminType');
+```
+
+### Custom collections via `createTypesCollection()`
+
+Types defined on a collection created with `createTypesCollection()` are tracked by the analyzer. By default they are **not** emitted in `.tactica/types.ts` and are **not** added to the global `mnemonica.TypeRegistry` augmentation because they live in an isolated runtime collection. Use the collection variable directly in your own code to get typed constructors.
+
+All common import styles are recognized:
+
+```ts
+import { createTypesCollection } from 'mnemonica';
+
+const AppCollection = createTypesCollection();
+
+AppCollection.define('UserType', function (this: { name: string }) {
+    this.name = '';
+});
+```
+
+```ts
+import { mnemonica } from 'mnemonica';
+
+const AppCollection = mnemonica.createTypesCollection();
+```
+
+```ts
+import * as mnemonica from 'mnemonica';
+
+const AppCollection = mnemonica.createTypesCollection();
+```
+
+```ts
+import { createTypesCollection as ctc } from 'mnemonica';
+
+const AppCollection = ctc();
+```
+
+Subtypes defined from a collection type inherit the same collection membership:
+
+```ts
+const UserType = AppCollection.define('UserType', function (this: { name: string }) {
+    this.name = '';
+});
+
+UserType.define('AdminType', function (this: { role: string }) {
+    this.role = 'admin';
+});
+```
+
+Two independent collections may define root types with the same name without colliding in the analyzer graph.
+
+#### Option B — user-provided registry interface
+
+To get fully typed `.lookup()` and `.decorate()` for a custom collection, export an empty interface and pass it to `createTypesCollection<Registry>()`:
+
+```ts
+import { createTypesCollection } from 'mnemonica';
+
+export interface AppCollectionRegistry {}
+
+const AppCollection = createTypesCollection<AppCollectionRegistry>();
+
+const UserType = AppCollection.define('UserType', function (this: { name: string }) {
+    this.name = '';
+});
+
+UserType.define('AdminType', function (this: { role: string }) {
+    this.role = 'admin';
+});
+```
+
+Tactica then emits:
+
+- Prefixed instance types in `.tactica/types.ts`, e.g. `AppCollectionRegistry_UserType` and `AppCollectionRegistry_UserType_AdminType`.
+- A `declare module '<relative path to this file>'` block in `.tactica/registry.ts` that augments `AppCollectionRegistry` with `'UserType'` and `'UserType.AdminType'` entries.
+
+Once `.tactica/registry.ts` is part of your `tsc` compilation, `AppCollection.lookup('UserType')` and `AppCollection.lookup('UserType.AdminType')` are fully typed.
+
+Custom collections also support `decorate()` for root types:
+
+```ts
+@AppCollection.decorate()
+class UserType {
+    name: string = '';
+}
+```
+
+Decorated root types are included in the same per-collection augmentation.
 
 ```ts
 @decorate()
@@ -387,7 +504,7 @@ class TypeGraphImpl implements TypeGraph {
     *bfs(): Generator<TypeNode>;
     *dfs(node?: TypeNode): Generator<TypeNode>;
 
-    static createNode(name, parent, sourceFile, line, column): TypeNode;
+    static createNode(name, parent, sourceFile, line, column, collectionId?): TypeNode;
 }
 ```
 
@@ -522,6 +639,10 @@ Mnemonica accepts the `exposeInstanceMethods` option at runtime, but tactica's `
 ### Single-pass analysis without binding
 
 The analyzer does not use `ts.Program.getTypeChecker()` for resolution, so cross-file type references in unusual shapes may resolve to `unknown`.
+
+### Custom collection name conflicts
+
+Custom collection types are isolated in the analyzer by their collection identity, so two collections may both define a root type with the same name (e.g., both defining `'User'`) without overwriting each other. Because custom-collection types are not emitted in `.tactica/types.ts`, they also do not conflict in generated output.
 
 ## Troubleshooting
 

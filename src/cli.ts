@@ -8,7 +8,9 @@ import { MnemonicaAnalyzer } from './analyzer';
 import { TopologicaAnalyzer } from './topologica-analyzer';
 import { TypesGenerator } from './generator';
 import { TypesWriter } from './writer';
-import { TacticaConfig, TypeNode } from './types';
+import {
+	TacticaConfig, TypeNode 
+} from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -32,58 +34,58 @@ interface CLIOptions extends TacticaConfig {
 /**
  * Parse command line arguments
  */
-function parseArgs(args: string[]): CLIOptions {
+function parseArgs (args: string[]): CLIOptions {
 	const options: CLIOptions = {};
 
 	for (let i = 0; i < args.length; i++) {
-		const arg = args[i];
+		const arg = args[ i ];
 
 		switch (arg) {
-			case '-w':
-			case '--watch':
-				options.watch = true;
-				break;
-			case '-p':
-			case '--project':
-				options.project = args[++i];
-				break;
-			case '-o':
-			case '--output':
-				options.outputDir = args[++i];
-				break;
-			case '-i':
-			case '--include':
-				options.include = (options.include || []).concat(args[++i].split(','));
-				break;
-			case '-e':
-			case '--exclude':
-				options.exclude = (options.exclude || []).concat(args[++i].split(','));
-				break;
-			case '-m':
-			case '--module-augmentation':
-				options.globalAugmentation = false;
-				break;
-			case '-v':
-			case '--verbose':
-				options.verbose = true;
-				break;
-			case '-t':
-			case '--topologica':
-				options.topologicaDirs = (options.topologicaDirs || []).concat(args[++i].split(','));
-				break;
-			case '--esm':
-				options.esm = true;
-				break;
-			case '--eds':
-				options.eds = true;
-				break;
-			case '--no-eds':
-				options.eds = false;
-				break;
-			case '-h':
-			case '--help':
-				options.help = true;
-				break;
+		case '-w':
+		case '--watch':
+			options.watch = true;
+			break;
+		case '-p':
+		case '--project':
+			options.project = args[ ++i ];
+			break;
+		case '-o':
+		case '--output':
+			options.outputDir = args[ ++i ];
+			break;
+		case '-i':
+		case '--include':
+			options.include = (options.include || []).concat(args[ ++i ].split(','));
+			break;
+		case '-e':
+		case '--exclude':
+			options.exclude = (options.exclude || []).concat(args[ ++i ].split(','));
+			break;
+		case '-m':
+		case '--module-augmentation':
+			options.globalAugmentation = false;
+			break;
+		case '-v':
+		case '--verbose':
+			options.verbose = true;
+			break;
+		case '-t':
+		case '--topologica':
+			options.topologicaDirs = (options.topologicaDirs || []).concat(args[ ++i ].split(','));
+			break;
+		case '--esm':
+			options.esm = true;
+			break;
+		case '--eds':
+			options.eds = true;
+			break;
+		case '--no-eds':
+			options.eds = false;
+			break;
+		case '-h':
+		case '--help':
+			options.help = true;
+			break;
 		}
 	}
 
@@ -93,7 +95,7 @@ function parseArgs(args: string[]): CLIOptions {
 /**
  * Print help message
  */
-function printHelp(): void {
+function printHelp (): void {
 	console.log(`
 Tactica - TypeScript Language Service Plugin for Mnemonica
 
@@ -126,7 +128,7 @@ Examples:
 /**
  * Find tsconfig.json
  */
-function findTsConfig(projectPath?: string): string | undefined {
+function findTsConfig (projectPath?: string): string | undefined {
 	if (projectPath) {
 		if (fs.existsSync(projectPath)) {
 			return projectPath;
@@ -150,11 +152,15 @@ function findTsConfig(projectPath?: string): string | undefined {
 /**
  * Load TypeScript program from tsconfig
  */
-function loadProgram(tsconfigPath: string): ts.Program {
+function loadProgram (tsconfigPath: string): ts.Program {
 	const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
 
 	if (configFile.error) {
-		throw new Error(`Error reading tsconfig: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n')}`);
+		const errorText = ts.flattenDiagnosticMessageText(
+			configFile.error.messageText,
+			'\n'
+		);
+		throw new Error(`Error reading tsconfig: ${errorText}`);
 	}
 
 	const parsedConfig = ts.parseJsonConfigFileContent(
@@ -165,14 +171,13 @@ function loadProgram(tsconfigPath: string): ts.Program {
 
 	if (parsedConfig.errors.length > 0) {
 		const errorMessages = parsedConfig.errors.map(e =>
-			ts.flattenDiagnosticMessageText(e.messageText, '\n')
-		);
+			ts.flattenDiagnosticMessageText(e.messageText, '\n'));
 		throw new Error(`Error parsing tsconfig: ${errorMessages.join('\n')}`);
 	}
 
 	const program = ts.createProgram({
-		rootNames: parsedConfig.fileNames,
-		options: parsedConfig.options,
+		rootNames : parsedConfig.fileNames,
+		options   : parsedConfig.options,
 	});
 
 	return program;
@@ -182,7 +187,7 @@ function loadProgram(tsconfigPath: string): ts.Program {
  * Render type hierarchy as an ASCII tree string.
  */
 function renderTypeHierarchy (graph: TypeGraphImpl): string {
-	const lines: string[] = ['Type Hierarchy (Trie):'];
+	const lines: string[] = [ 'Type Hierarchy (Trie):' ];
 
 	function renderNode (node: TypeNode, prefix = '', isLast = true): void {
 		const connector = isLast ? '└── ' : '├── ';
@@ -194,13 +199,13 @@ function renderTypeHierarchy (graph: TypeGraphImpl): string {
 		const newPrefix = prefix + (isLast ? '    ' : '│   ');
 
 		for (let i = 0; i < children.length; i++) {
-			renderNode(children[i], newPrefix, i === children.length - 1);
+			renderNode(children[ i ], newPrefix, i === children.length - 1);
 		}
 	}
 
 	const roots = Array.from(graph.roots.values());
 	for (let i = 0; i < roots.length; i++) {
-		renderNode(roots[i], '', i === roots.length - 1);
+		renderNode(roots[ i ], '', i === roots.length - 1);
 	}
 	lines.push(''); // Empty line at end
 
@@ -219,7 +224,7 @@ function printTypeHierarchy (graph: TypeGraphImpl): void {
 /**
  * Check if @mnemonica/dive is present in package.json dependencies
  */
-function hasDiveDependency(projectDir: string): boolean {
+function hasDiveDependency (projectDir: string): boolean {
 	const packageJsonPath = path.join(projectDir, 'package.json');
 	if (!fs.existsSync(packageJsonPath)) {
 		return false;
@@ -239,7 +244,7 @@ function hasDiveDependency(projectDir: string): boolean {
 /**
  * Scan for topologica directory structures
  */
-function scanTopologicaDirectories(projectDir: string, customDirs?: string[]): string[] {
+function scanTopologicaDirectories (projectDir: string, customDirs?: string[]): string[] {
 	const dirs: string[] = [];
 
 	// First, add custom directories if specified
@@ -255,7 +260,7 @@ function scanTopologicaDirectories(projectDir: string, customDirs?: string[]): s
 	}
 
 	// Then auto-discover standard topologica directories
-	const possibleDirs = ['ai-types', 'types', 'topologica-types'];
+	const possibleDirs = [ 'ai-types', 'types', 'topologica-types' ];
 
 	for (const dirName of possibleDirs) {
 		const dirPath = path.join(projectDir, dirName);
@@ -287,7 +292,7 @@ function scanTopologicaDirectories(projectDir: string, customDirs?: string[]): s
 /**
  * Run type generation
  */
-function run(options: CLIOptions): void {
+function run (options: CLIOptions): void {
 	const tsconfigPath = findTsConfig(options.project);
 
 	if (!tsconfigPath) {
@@ -324,8 +329,7 @@ function run(options: CLIOptions): void {
 		// Check exclude patterns
 		if (options.exclude) {
 			const shouldExclude = options.exclude.some(pattern =>
-				sourceFile.fileName.includes(pattern.replace(/\*/g, ''))
-			);
+				sourceFile.fileName.includes(pattern.replace(/\*/g, '')));
 			if (shouldExclude) {
 				continue;
 			}
@@ -334,8 +338,7 @@ function run(options: CLIOptions): void {
 		// Check include patterns
 		if (options.include && options.include.length > 0) {
 			const shouldInclude = options.include.some(pattern =>
-				sourceFile.fileName.includes(pattern.replace(/\*/g, ''))
-			);
+				sourceFile.fileName.includes(pattern.replace(/\*/g, '')));
 			if (!shouldInclude) {
 				continue;
 			}
@@ -359,7 +362,7 @@ function run(options: CLIOptions): void {
 		const result = topologicaAnalyzer.analyzeDirectory(dir);
 		if (result.types.size > 0) {
 			// Collect topologica types for definitions and usage tracking
-			for (const [typePath, node] of result.types) {
+			for (const [ typePath, node ] of result.types) {
 				topologicaTypes.set(typePath, node);
 			}
 			if (options.verbose) {
@@ -374,11 +377,11 @@ function run(options: CLIOptions): void {
 	// Add topologica types to analyzer so they're available for usage detection
 	// Process in order of path depth (parents first) to ensure proper hierarchy
 	const sortedTypes = Array.from(topologicaTypes.entries()).sort((a, b) => {
-		const depthA = (a[0].match(/\./g) || []).length;
-		const depthB = (b[0].match(/\./g) || []).length;
+		const depthA = (a[ 0 ].match(/\./g) || []).length;
+		const depthB = (b[ 0 ].match(/\./g) || []).length;
 		return depthA - depthB;
 	});
-	for (const [typePath, node] of sortedTypes) {
+	for (const [ typePath, node ] of sortedTypes) {
 		analyzer.addTopologicaType(typePath, node);
 	}
 
@@ -414,7 +417,7 @@ function run(options: CLIOptions): void {
 	// Generate types from mnemonica analysis
 	// Note: topologica types are already added to the analyzer's graph via addTopologicaType()
 	const graph = analyzer.getGraph();
-	const generator = new TypesGenerator(graph, options.esm);
+	const generator = new TypesGenerator(graph, options.esm, options.outputDir);
 
 	// Check if module augmentation mode is requested (legacy)
 	const useModuleAugmentation = options.globalAugmentation === false;
@@ -458,19 +461,19 @@ export * from './registry${options.esm ? '.js' : ''}';
 	const usages = new Map(analyzer.getUsages());
 	
 	// Add topologica types to definitions
-	for (const [fullPath, typeNode] of topologicaTypes) {
+	for (const [ fullPath, typeNode ] of topologicaTypes) {
 		// Skip if already exists (prefer mnemonica's analysis)
 		if (definitions.has(fullPath)) {
 			continue;
 		}
 		
 		const definition: import('./types').DefinitionInfo = {
-			name: typeNode.name,
-			location: `${typeNode.sourceFile}:${typeNode.line}:${typeNode.column}`,
-			kind: 'define',
-			parent: typeNode.parent ? typeNode.parent.fullPath : null,
-			strictChain: true,
-			blockErrors: false
+			name        : typeNode.name,
+			location    : `${typeNode.sourceFile}:${typeNode.line}:${typeNode.column}`,
+			kind        : 'define',
+			parent      : typeNode.parent ? typeNode.parent.fullPath : null,
+			strictChain : true,
+			blockErrors : false
 		};
 		definitions.set(fullPath, definition);
 	}
@@ -531,7 +534,7 @@ export * from './registry${options.esm ? '.js' : ''}';
 /**
  * Watch mode
  */
-function watch(options: CLIOptions): void {
+function watch (options: CLIOptions): void {
 	console.log('Starting watch mode...');
 
 	// Initial run
@@ -547,13 +550,13 @@ function watch(options: CLIOptions): void {
 	}
 
 	const projectDir = path.dirname(tsconfigPath);
-	const watchPaths = options.include || ['**/*.ts'];
-	const ignorePaths = options.exclude || ['**/*.d.ts', 'node_modules/**', '.tactica/**'];
+	const watchPaths = options.include || [ '**/*.ts' ];
+	const ignorePaths = options.exclude || [ '**/*.d.ts', 'node_modules/**', '.tactica/**' ];
 
 	const watcher = chokidar.watch(watchPaths, {
-		cwd: projectDir,
-		ignored: ignorePaths,
-		persistent: true,
+		cwd        : projectDir,
+		ignored    : ignorePaths,
+		persistent : true,
 	});
 
 	watcher.on('change', (filePath: string) => {
@@ -576,7 +579,7 @@ function watch(options: CLIOptions): void {
 /**
  * Main entry point
  */
-function main(): void {
+function main (): void {
 	const args = process.argv.slice(2);
 	const options = parseArgs(args);
 
@@ -602,4 +605,6 @@ if (require.main === module) {
 	main();
 }
 
-export { main, run, watch, parseArgs };
+export {
+	main, run, watch, parseArgs 
+};

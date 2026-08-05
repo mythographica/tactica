@@ -32,7 +32,9 @@ export type {
 } from './types';
 
 // CLI entry point
-export { main, run, watch, parseArgs } from './cli';
+export {
+	main, run, watch, parseArgs 
+} from './cli';
 
 // Version from package.json
 export const VERSION = pkg.version;

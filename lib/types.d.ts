@@ -49,6 +49,10 @@ export interface TypeNode {
     column: number;
     /** Constructor function name or class name */
     constructorName?: string;
+    /** Collection identifier if the type belongs to a custom collection (undefined = default/global registry) */
+    collectionId?: string;
+    /** Registry interface name for custom collections using Option B (user-provided registry interface) */
+    registryInterfaceName?: string;
 }
 export interface TypeGraph {
     /** Root types (defined at module level) */

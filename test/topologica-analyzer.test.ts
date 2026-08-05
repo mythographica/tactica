@@ -95,7 +95,7 @@ describe('TopologicaAnalyzer', () => {
 			const result = analyzer.analyzeDirectory('/non/existent/path');
 
 			expect(result.errors).to.have.length.greaterThan(0);
-			expect(result.errors[0]).to.include('does not exist');
+			expect(result.errors[ 0 ]).to.include('does not exist');
 		});
 
 		it('should report error for file instead of directory', () => {
@@ -103,7 +103,7 @@ describe('TopologicaAnalyzer', () => {
 			const result = analyzer.analyzeDirectory(filePath);
 
 			expect(result.errors).to.have.length.greaterThan(0);
-			expect(result.errors[0]).to.include('not a directory');
+			expect(result.errors[ 0 ]).to.include('not a directory');
 		});
 	});
 
@@ -115,14 +115,14 @@ describe('TopologicaAnalyzer', () => {
 			const graph = new TypeGraphImpl();
 
 			// First pass: add root types
-			for (const [, typeNode] of result.types) {
+			for (const [ , typeNode ] of result.types) {
 				if (!typeNode.parent) {
 					graph.addRoot(typeNode);
 				}
 			}
 
 			// Second pass: add child types via addChild
-			for (const [, typeNode] of result.types) {
+			for (const [ , typeNode ] of result.types) {
 				if (typeNode.parent) {
 					const parent = graph.allTypes.get(typeNode.parent.fullPath);
 					if (parent) {
@@ -144,7 +144,7 @@ describe('TopologicaAnalyzer', () => {
 			const graph = new TypeGraphImpl();
 
 			// Build graph with proper parent-child relationships
-			for (const [, typeNode] of result.types) {
+			for (const [ , typeNode ] of result.types) {
 				if (!typeNode.parent) {
 					graph.addRoot(typeNode);
 				} else {

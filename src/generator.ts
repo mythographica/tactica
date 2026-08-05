@@ -1,6 +1,9 @@
 'use strict';
 
-import { TypeNode, GeneratedTypes } from './types';
+import * as path from 'path';
+import {
+	TypeNode, GeneratedTypes 
+} from './types';
 import { TypeGraphImpl } from './graph';
 
 /**
@@ -8,15 +11,17 @@ import { TypeGraphImpl } from './graph';
  */
 export class TypesGenerator {
 	private esm: boolean;
+	private outputDir: string;
 
-	constructor(private graph: TypeGraphImpl, esm = false) {
+	constructor (private graph: TypeGraphImpl, esm = false, outputDir = '.tactica') {
 		this.esm = esm;
+		this.outputDir = outputDir;
 	}
 
 	/**
 	 * Get import path with optional .js extension for ESM NodeNext
 	 */
-	private importPath(relative: string): string {
+	private importPath (relative: string): string {
 		return this.esm ? `${relative}.js` : relative;
 	}
 
@@ -28,7 +33,7 @@ export class TypesGenerator {
 		* them to be accessed from any module without imports. Interfaces declared
 		* in the global scope will merge with classes of the same name in user modules.
 		*/
-	generateGlobalAugmentation(): GeneratedTypes {
+	generateGlobalAugmentation (): GeneratedTypes {
 		const lines: string[] = [];
 		const generatedTypes: string[] = [];
 
@@ -41,7 +46,7 @@ export class TypesGenerator {
 		lines.push('');
 
 		// Import ProtoFlat from mnemonica
-		lines.push("import type { ProtoFlat } from 'mnemonica';");
+		lines.push('import type { ProtoFlat } from \'mnemonica\';');
 		lines.push('');
 
 		// Make this a module so we can use declare global
@@ -53,9 +58,12 @@ export class TypesGenerator {
 		lines.push('');
 
 
-		// Generate instance types for all types - in global scope
+		// Generate instance types for all default-collection types - in global scope
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
+				if (node.collectionId) {
+					continue;
+				}
 				const instanceName = this.getInstanceTypeName(node);
 				generatedTypes.push(instanceName);
 				this.generateInstanceType(node, lines, 1);
@@ -69,6 +77,9 @@ export class TypesGenerator {
 		lines.push('');
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
+				if (node.collectionId) {
+					continue;
+				}
 				this.generateClassInterface(node, lines, 1);
 			}
 		}
@@ -76,8 +87,8 @@ export class TypesGenerator {
 		lines.push('}');
 
 		return {
-			content: lines.join('\n'),
-			types: generatedTypes,
+			content : lines.join('\n'),
+			types   : generatedTypes,
 		};
 	}
 
@@ -85,7 +96,7 @@ export class TypesGenerator {
 		 * Generate instance type alias (describes what the instance IS)
 		 * Uses ProtoFlat for proper inheritance (excludes overridden parent props)
 		 */
-	private generateInstanceType(node: TypeNode, lines: string[], indent: number): void {
+	private generateInstanceType (node: TypeNode, lines: string[], indent: number): void {
 		const indentStr = '\t'.repeat(indent);
 		const instanceName = this.getInstanceTypeName(node);
 
@@ -98,7 +109,7 @@ export class TypesGenerator {
 		}
 
 		// Add instance properties
-		for (const [propName, propInfo] of node.properties.entries()) {
+		for (const [ propName, propInfo ] of node.properties.entries()) {
 			const optional = propInfo.optional ? '?' : '';
 			const readonly = propInfo.readonly ? 'readonly ' : '';
 			lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
@@ -131,51 +142,51 @@ export class TypesGenerator {
 		lines.push('');
 	}
 
-		/**
+	/**
 		 * Generate class interface for TypeScript declaration merging
 		 * This merges with the actual class to provide proper typing
 		 */
-		private generateClassInterface(node: TypeNode, lines: string[], indent: number): void {
+	private generateClassInterface (node: TypeNode, lines: string[], indent: number): void {
 		const indentStr = '\t'.repeat(indent);
 
 		// Build extends clause
-			const extendsTypes: string[] = [];
-			if (node.parent) {
-				extendsTypes.push(node.parent.name);
-			}
-
-			const extendsClause = extendsTypes.length > 0
-				? ` extends ${extendsTypes.join(', ')}`
-				: '';
-
-			// Interface with same name as class - TypeScript merges these
-			lines.push(`${indentStr}interface ${node.name}${extendsClause} {`);
-			
-			// Add all instance properties (for type merging)
-			for (const [propName, propInfo] of node.properties.entries()) {
-				const optional = propInfo.optional ? '?' : '';
-				const readonly = propInfo.readonly ? 'readonly ' : '';
-				lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
-			}
-
-			// Add subtype constructors (non-optional so they're accessible) - only for root types
-				if (!node.parent) {
-					for (const child of node.children.values()) {
-						const childInstanceType = this.getInstanceTypeName(child);
-						const constructorSig = this.generateConstructorSignature(child);
-						lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
-					}
-				}
-	
-				lines.push(`${indentStr}}`);
-			lines.push('');
+		const extendsTypes: string[] = [];
+		if (node.parent) {
+			extendsTypes.push(node.parent.name);
 		}
+
+		const extendsClause = extendsTypes.length > 0
+			? ` extends ${extendsTypes.join(', ')}`
+			: '';
+
+		// Interface with same name as class - TypeScript merges these
+		lines.push(`${indentStr}interface ${node.name}${extendsClause} {`);
+			
+		// Add all instance properties (for type merging)
+		for (const [ propName, propInfo ] of node.properties.entries()) {
+			const optional = propInfo.optional ? '?' : '';
+			const readonly = propInfo.readonly ? 'readonly ' : '';
+			lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
+		}
+
+		// Add subtype constructors (non-optional so they're accessible) - only for root types
+		if (!node.parent) {
+			for (const child of node.children.values()) {
+				const childInstanceType = this.getInstanceTypeName(child);
+				const constructorSig = this.generateConstructorSignature(child);
+				lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
+			}
+		}
+	
+		lines.push(`${indentStr}}`);
+		lines.push('');
+	}
 		
-			/**
+	/**
 		* Generate a types.ts file with complete instance interfaces
 		* This includes all properties extracted from the constructors
 		*/
-	generateTypesFile(): GeneratedTypes {
+	generateTypesFile (): GeneratedTypes {
 		const lines: string[] = [];
 		const generatedTypes: string[] = [];
 
@@ -188,12 +199,18 @@ export class TypesGenerator {
 		lines.push('');
 
 		// Import ProtoFlat from mnemonica
-		lines.push("import type { ProtoFlat } from 'mnemonica';");
+		lines.push('import type { ProtoFlat } from \'mnemonica\';');
 		lines.push('');
 
-		// Generate complete instance interfaces
+		// Generate complete instance interfaces for default-collection types and
+		// for custom collections that declare a user-provided registry interface
+		// (Option B). Custom-collection types without a registry interface are
+		// isolated at runtime and are not emitted.
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
+				if (node.collectionId && !node.registryInterfaceName) {
+					continue;
+				}
 				const interfaceName = this.getInstanceTypeName(node);
 				generatedTypes.push(interfaceName);
 				this.generateCompleteInstanceInterface(node, lines);
@@ -201,8 +218,8 @@ export class TypesGenerator {
 		}
 
 		return {
-			content: lines.join('\n'),
-			types: generatedTypes,
+			content : lines.join('\n'),
+			types   : generatedTypes,
 		};
 	}
 
@@ -210,7 +227,7 @@ export class TypesGenerator {
 		 * Generate a complete instance type alias with all properties
 		 * This is for the types.ts file that users import from
 		 */
-	private generateCompleteInstanceInterface(node: TypeNode, lines: string[]): void {
+	private generateCompleteInstanceInterface (node: TypeNode, lines: string[]): void {
 		const typeName = this.getInstanceTypeName(node);
 
 		if (node.parent) {
@@ -222,7 +239,7 @@ export class TypesGenerator {
 		}
 
 		// Add instance properties extracted from the constructor
-		for (const [propName, propInfo] of node.properties.entries()) {
+		for (const [ propName, propInfo ] of node.properties.entries()) {
 			const optional = propInfo.optional ? '?' : '';
 			const readonly = propInfo.readonly ? 'readonly ' : '';
 			lines.push(`\t${readonly}${propName}${optional}: ${this.resolveTypeInString(propInfo.type, node)};`);
@@ -265,7 +282,7 @@ export class TypesGenerator {
 	/**
 		 * Generate a simple type declaration for a single type
 		 */
-	generateSingleType(node: TypeNode): string {
+	generateSingleType (node: TypeNode): string {
 		const lines: string[] = [];
 		this.generateCompleteInstanceInterface(node, lines);
 		return lines.join('\n');
@@ -275,7 +292,7 @@ export class TypesGenerator {
 		 * Generate TypeRegistry interface for type-safe lookup() function
 		 * Augment mnemonica's TypeRegistry so lookup('TypeName') returns the typed constructor
 		 */
-	generateTypeRegistry(): GeneratedTypes {
+	generateTypeRegistry (): GeneratedTypes {
 		const lines: string[] = [];
 		const generatedTypes: string[] = [];
 
@@ -284,18 +301,22 @@ export class TypesGenerator {
 		lines.push('// This file augments mnemonica\'s TypeRegistry via declaration merging.');
 		lines.push('//');
 		lines.push('// Usage:');
-		lines.push("//   import { lookup } from 'mnemonica';");
-		lines.push("//   import './.tactica/registry';  // applies the augmentation");
-		lines.push("//   const Sentience = lookup('Sentience');");
+		lines.push('//   import { lookup } from \'mnemonica\';');
+		lines.push('//   import \'./.tactica/registry\';  // applies the augmentation');
+		lines.push('//   const Sentience = lookup(\'Sentience\');');
 		lines.push('//   // TypeScript knows: Sentience is a constructor for SentienceInstance');
-		lines.push("//   const instance = new Sentience({ purpose: 'AI' });");
+		lines.push('//   const instance = new Sentience({ purpose: \'AI\' });');
 		lines.push('//   // instance has full intellisense for Consciousness, Memory, etc.');
 		lines.push('');
 
-		// Import instance types from types.ts
+		// Import instance types from types.ts.
+		// Skip custom-collection types that have no user-provided registry interface.
 		lines.push('import type {');
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
+				if (node.collectionId && !node.registryInterfaceName) {
+					continue;
+				}
 				const instanceTypeName = this.getInstanceTypeName(node);
 				lines.push(`\t${instanceTypeName},`);
 				generatedTypes.push(instanceTypeName);
@@ -314,9 +335,15 @@ export class TypesGenerator {
 		lines.push('declare module \'mnemonica\' {');
 		lines.push('	interface TypeRegistry {');
 
-		// Generate entries for all type paths
+		// Generate entries for all type paths that belong to the default/global collection.
+		// Types that live in a custom collection (collectionId set) are isolated at runtime
+		// and are not reachable through free lookup(), so they must not be added to the
+		// global TypeRegistry augmentation.
 		for (const root of this.graph.roots.values()) {
 			for (const node of this.graph.dfs(root)) {
+				if (node.collectionId) {
+					continue;
+				}
 				const fullPath = this.getFullPath(node);
 				const instanceType = this.getInstanceTypeName(node);
 				// Generate typed constructor signature for nested types with properties
@@ -329,13 +356,32 @@ export class TypesGenerator {
 		lines.push('}');
 		lines.push('');
 
+		// Generate per-collection registry augmentations for Option B
+		// (user-provided registry interfaces).
+		const collectionGroups = this.groupCollectionRegistryNodes();
+		for (const [ key, nodes ] of collectionGroups) {
+			const [ registryInterfaceName, sourceFile ] = key.split('::');
+			const modulePath = this.resolveModulePath(sourceFile);
+			lines.push(`declare module '${modulePath}' {`);
+			lines.push(`\tinterface ${registryInterfaceName} {`);
+			for (const node of nodes) {
+				const fullPath = this.getFullPath(node);
+				const instanceType = this.getInstanceTypeName(node);
+				const constructorSig = this.generateConstructorSignature(node);
+				lines.push(`\t\t'${fullPath}': ${constructorSig} => ${instanceType};`);
+			}
+			lines.push('\t}');
+			lines.push('}');
+			lines.push('');
+		}
+
 		// Re-export for backward compatibility and explicit usage
 		lines.push('import type { TypeRegistry } from \'mnemonica\';');
 		lines.push('export type { TypeRegistry };');
 
 		return {
-			content: lines.join('\n'),
-			types: generatedTypes,
+			content : lines.join('\n'),
+			types   : generatedTypes,
 		};
 	}
 
@@ -343,7 +389,7 @@ export class TypesGenerator {
 		 * Generate constructor signature for a type node
 		 * Uses constructorParams for TypeRegistry signature (not instance properties)
 		 */
-	private generateConstructorSignature(node: TypeNode): string {
+	private generateConstructorSignature (node: TypeNode): string {
 		// Use constructorParams if available, otherwise fall back to empty signature
 		const params = node.constructorParams;
 
@@ -365,7 +411,7 @@ export class TypesGenerator {
 	/**
 		 * Get the full dotted path for a type node
 		 */
-	private getFullPath(node: TypeNode): string {
+	private getFullPath (node: TypeNode): string {
 		if (!node.parent) {
 			return node.name;
 		}
@@ -375,17 +421,19 @@ export class TypesGenerator {
 	/**
 	 * Get the instance type name for a node
 	 * Uses full path with underscores: Usages.UsageEntry -> Usages_UsageEntry
+	 * For Option B custom collections, prefixes with the registry interface name.
 	 */
-	private getInstanceTypeName(node: TypeNode): string {
+	private getInstanceTypeName (node: TypeNode): string {
 		const fullPath = this.getFullPath(node);
-		return fullPath.replace(/\./g, '_');
+		const prefix = node.registryInterfaceName ? `${node.registryInterfaceName}_` : '';
+		return `${prefix}${fullPath.replace(/\./g, '_')}`;
 	}
 
 	/**
 	 * Resolve a simple type name to its full path name
 	 * e.g., "DefinitionEntry" -> "Definitions_DefinitionEntry"
 	 */
-	private resolveTypeName(simpleName: string, currentNode: TypeNode): string {
+	private resolveTypeName (simpleName: string, currentNode: TypeNode): string {
 		// First check if it's the current node or its children
 		if (currentNode.name === simpleName) {
 			return this.getInstanceTypeName(currentNode);
@@ -408,7 +456,7 @@ export class TypesGenerator {
 	 * Resolve simple type names to full path names within a type string
 	 * Handles complex types like Array<UsageEntry>, Map<string, TypeEntry>, etc.
 	 */
-	private resolveTypeInString(typeStr: string, currentNode: TypeNode): string {
+	private resolveTypeInString (typeStr: string, currentNode: TypeNode): string {
 		// Get all type names from the graph
 		const allTypes = this.graph.getAllTypes();
 		const typeNames = new Set<string>();
@@ -430,5 +478,45 @@ export class TypesGenerator {
 			}
 		}
 		return result;
+	}
+
+	/**
+	 * Group collection type nodes by their registry interface name and source file.
+	 * Returns a map keyed by `${registryInterfaceName}::${sourceFile}`.
+	 */
+	private groupCollectionRegistryNodes (): Map<string, TypeNode[]> {
+		const groups = new Map<string, TypeNode[]>();
+		for (const root of this.graph.roots.values()) {
+			for (const node of this.graph.dfs(root)) {
+				if (!node.registryInterfaceName) {
+					continue;
+				}
+				const key = `${node.registryInterfaceName}::${node.sourceFile}`;
+				const existing = groups.get(key);
+				if (existing) {
+					existing.push(node);
+				} else {
+					groups.set(key, [ node ]);
+				}
+			}
+		}
+		return groups;
+	}
+
+	/**
+	 * Resolve a source file path to a module specifier relative to the output directory,
+	 * suitable for use in a `declare module '...'` block.
+	 */
+	private resolveModulePath (sourceFile: string): string {
+		const outputAbsolute = path.resolve(this.outputDir);
+		const sourceAbsolute = path.resolve(sourceFile);
+		let relative = path.relative(outputAbsolute, sourceAbsolute);
+		// Remove .ts extension; keep .tsx if present
+		if (relative.endsWith('.ts') && !relative.endsWith('.tsx')) {
+			relative = relative.slice(0, -3);
+		}
+		// Convert Windows separators to POSIX
+		const posixRelative = relative.replace(/\\/g, '/');
+		return posixRelative;
 	}
 }
