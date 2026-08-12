@@ -1,6 +1,6 @@
 {
 	"name": "@mnemonica/tactica",
-	"version": "0.1.4",
+	"version": "0.1.5",
 	"description": "Type definition generator for Mnemonica — statically analyzes define() calls and emits .tactica/ types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
@@ -39,7 +39,7 @@
 	},
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "^1.0.9",
+		"mnemonica": "^1.2.1",
 		"typescript": "^5.0.0 || ^6.0.0"
 	},
 	"devDependencies": {
@@ -47,8 +47,8 @@
 		"@types/chai": "^4.3.20",
 		"@types/mocha": "^10.0.10",
 		"@types/node": "^20.19.43",
-		"@typescript-eslint/eslint-plugin": "^8.64.0",
-		"@typescript-eslint/parser": "^8.64.0",
+		"@typescript-eslint/eslint-plugin": "^8.67.0",
+		"@typescript-eslint/parser": "^8.67.0",
 		"chai": "^4.5.0",
 		"eslint": "^9.39.5",
 		"eslint-plugin-mocha": "^10.5.0",
@@ -63,6 +63,6 @@
 	"dependencies": {
 		"@types/chokidar": "^2.1.7",
 		"chokidar": "^3.6.0",
-		"mnemonica": "^1.0.9"
+		"mnemonica": "^1.2.1"
 	}
 }
