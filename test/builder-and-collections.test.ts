@@ -226,6 +226,63 @@ describe('Builder pattern and custom collections', () => {
 			expect(users).to.have.length(2);
 			expect(users[ 0 ].collectionId).to.not.equal(users[ 1 ].collectionId);
 		});
+
+		it('should keep same-name collection roots in traversal and hierarchy', () => {
+			// roots used to be keyed by plain name: the second 'User' overwrote
+			// the first, and every roots-driven walk (generation, hierarchy)
+			// silently lost the first collection's subtree
+			const source = `
+				import { createTypesCollection } from 'mnemonica';
+
+				const CollA = createTypesCollection();
+				const CollB = createTypesCollection();
+				CollA.define('User', function (this: any, data: { a: string }) {
+					this.a = data.a;
+				});
+				CollB.define('User', function (this: any, data: { b: string }) {
+					this.b = data.b;
+				});
+				CollB.define('Group', function (this: any, data: { g: string }) {
+					this.g = data.g;
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const graph = analyzer.getGraph();
+
+			expect(graph.roots.size).to.equal(3);
+
+			const hierarchy = graph.toHierarchy();
+			expect(hierarchy).to.have.length(3);
+			const hierarchyNames = hierarchy.map(node => node.fullPath);
+			expect(hierarchyNames.some(path => path.endsWith('::Group'))).to.be.true;
+			expect(hierarchyNames.filter(path => path.endsWith('::User'))).to.have.length(2);
+		});
+
+		it('should emit both same-name Option B collection roots in types.ts', () => {
+			const source = `
+				import { createTypesCollection } from 'mnemonica';
+
+				export interface RegistryA {}
+				export interface RegistryB {}
+
+				const CollA = createTypesCollection<RegistryA>();
+				const CollB = createTypesCollection<RegistryB>();
+				CollA.define('User', function (this: any, data: { a: string }) {
+					this.a = data.a;
+				});
+				CollB.define('User', function (this: any, data: { b: string }) {
+					this.b = data.b;
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const types = generator.generateTypesFile().content;
+
+			expect(types).to.include('export type RegistryA_User');
+			expect(types).to.include('export type RegistryB_User');
+		});
 	});
 
 	describe('explicit-source define() and lookup()', () => {

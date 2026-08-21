@@ -3,6 +3,13 @@ import { TypeNode, TypeGraph, HierarchyNode } from './types';
  * Trie-based type graph for storing Mnemonica type hierarchy
  */
 export declare class TypeGraphImpl implements TypeGraph {
+    /**
+     * Keyed by fullPath, not by plain name: a custom collection's root shares
+     * its plain name with any other collection (or the default types) — only
+     * the `collectionId::`-prefixed fullPath keeps them distinct. Name-keying
+     * silently dropped the earlier root, and with it the whole subtree, from
+     * every roots-driven walk (generation, hierarchy, verbose tree).
+     */
     roots: Map<string, TypeNode>;
     allTypes: Map<string, TypeNode>;
     addRoot(node: TypeNode): void;

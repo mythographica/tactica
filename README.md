@@ -221,6 +221,19 @@ const AdminType = UserType.define('AdminType', function (this: { role: string })
 
 Chained calls (`define('A').define('B')`) and nested calls via variable references (`const A = define('A', …); A.define('B', …)`) are both supported.
 
+### `lazy()` definitions
+
+```ts
+const AdminType = UserType.lazy(() => class AdminType {
+    role: string;
+    constructor (role: string) {
+        this.role = role;
+    }
+});
+```
+
+All forms are recognized: free `lazy('Name', getter)`, method `Type.lazy(...)`, and chained `define('A').lazy('B', getter)`. The getter is followed, and the returned constructor is analyzed like a direct `define()` handler — properties and constructor parameters are extracted and emitted in `types.ts` / `registry.ts` like any other type.
+
 ### Builder pattern on the imported module object
 
 The analyzer also recognizes the chainable `mnemonica` module object and aliases of it:
@@ -642,7 +655,7 @@ The analyzer does not use `ts.Program.getTypeChecker()` for resolution, so cross
 
 ### Custom collection name conflicts
 
-Custom collection types are isolated in the analyzer by their collection identity, so two collections may both define a root type with the same name (e.g., both defining `'User'`) without overwriting each other. Because custom-collection types are not emitted in `.tactica/types.ts`, they also do not conflict in generated output.
+Custom collection types are isolated in the analyzer by their collection identity: each collection root lives under a `collectionId::`-prefixed full path, so two collections may both define a root type with the same name (e.g., both defining `'User'`) without overwriting each other — in the graph, in traversal, in `hierarchy.json`, and in generated output. By default custom-collection types are not emitted in `.tactica/types.ts` at all; with Option B they are emitted prefixed by their registry interface name, so they stay distinct there too.
 
 ## Troubleshooting
 

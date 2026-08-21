@@ -55,7 +55,7 @@ export interface TypeNode {
     registryInterfaceName?: string;
 }
 export interface TypeGraph {
-    /** Root types (defined at module level) */
+    /** Root types, keyed by full path (custom-collection roots carry the `collectionId::` prefix) */
     roots: Map<string, TypeNode>;
     /** All types by full path */
     allTypes: Map<string, TypeNode>;

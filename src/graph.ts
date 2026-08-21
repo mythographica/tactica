@@ -8,11 +8,18 @@ import {
  * Trie-based type graph for storing Mnemonica type hierarchy
  */
 export class TypeGraphImpl implements TypeGraph {
+	/**
+	 * Keyed by fullPath, not by plain name: a custom collection's root shares
+	 * its plain name with any other collection (or the default types) — only
+	 * the `collectionId::`-prefixed fullPath keeps them distinct. Name-keying
+	 * silently dropped the earlier root, and with it the whole subtree, from
+	 * every roots-driven walk (generation, hierarchy, verbose tree).
+	 */
 	roots: Map<string, TypeNode> = new Map();
 	allTypes: Map<string, TypeNode> = new Map();
 
 	addRoot (node: TypeNode): void {
-		this.roots.set(node.name, node);
+		this.roots.set(node.fullPath, node);
 		this.allTypes.set(node.fullPath, node);
 	}
 
