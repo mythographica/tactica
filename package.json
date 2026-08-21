@@ -1,6 +1,6 @@
 {
 	"name": "@mnemonica/tactica",
-	"version": "0.1.7",
+	"version": "0.1.8",
 	"description": "Type definition generator for Mnemonica — statically analyzes define() calls and emits .tactica/ types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
@@ -37,9 +37,13 @@
 		"type": "git",
 		"url": "git+https://github.com/mythographica/tactica.git"
 	},
+	"bugs": {
+		"url": "https://github.com/mythographica/tactica/issues"
+	},
+	"homepage": "https://github.com/mythographica/tactica#readme",
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "^1.2.3",
+		"mnemonica": "^1.2.5",
 		"typescript": "^5.0.0 || ^6.0.0"
 	},
 	"devDependencies": {
@@ -57,12 +61,12 @@
 		"mocha": "^8.4.0",
 		"nyc": "^18.0.0",
 		"ts-node": "^10.9.2",
-		"typeomatica": "^0.3.60",
+		"typeomatica": "^0.3.62",
 		"typescript": "^5.9.3"
 	},
 	"dependencies": {
 		"@types/chokidar": "^2.1.7",
 		"chokidar": "^3.6.0",
-		"mnemonica": "^1.2.3"
+		"mnemonica": "^1.2.5"
 	}
 }
