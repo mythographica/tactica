@@ -1,6 +1,10 @@
 'use strict';
 
 import { expect } from 'chai';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import * as ts from 'typescript';
 import { TypeGraphImpl } from '../src/graph';
 import { TypesGenerator } from '../src/generator';
 
@@ -58,7 +62,10 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('type FirstType');
+			// root types are declared as interfaces (declaration merging with
+			// @decorate classes); a same-named `type` alias would be TS2300
+			expect(result.content).to.include('interface FirstType');
+			expect(result.content).to.not.include('type FirstType =');
 		});
 
 		it('should generate nested constructor properties', () => {
@@ -85,6 +92,40 @@ describe('TypesGenerator', () => {
 			const result = generator.generateGlobalAugmentation();
 
 			expect(result.content).to.include('Child = ProtoFlat<Parent,');
+		});
+
+		it('should emit a global file that compiles without TS2300', () => {
+			const root = TypeGraphImpl.createNode('UserType', undefined, 'repro.ts', 1, 1);
+			root.properties.set('name', { name : 'name', type : 'string', optional : false });
+			graph.addRoot(root);
+			const child = TypeGraphImpl.createNode('AdminType', root, 'repro.ts', 5, 1);
+			child.properties.set('role', { name : 'role', type : 'string', optional : false });
+			graph.addChild(root, child);
+
+			const { content } = generator.generateGlobalAugmentation();
+
+			// compile the generated file for real — string-inclusion tests
+			// missed the root alias vs class interface collision (TS2300)
+			const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-global-'));
+			const filePath = path.join(tmpDir, 'index.d.ts');
+			fs.writeFileSync(filePath, content);
+
+			const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
+			const program = ts.createProgram([ filePath ], {
+				strict           : true,
+				noEmit           : true,
+				target           : ts.ScriptTarget.ES2020,
+				module           : ts.ModuleKind.ES2020,
+				moduleResolution : ts.ModuleResolutionKind.Bundler,
+				baseUrl          : tmpDir,
+				paths            : { mnemonica : [ mnemonicaTypes ] },
+			});
+			const diagnostics = ts.getPreEmitDiagnostics(program);
+			const errors = diagnostics
+				.filter(d => d.category === ts.DiagnosticCategory.Error)
+				.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+
+			expect(errors).to.deep.equal([]);
 		});
 	});
 

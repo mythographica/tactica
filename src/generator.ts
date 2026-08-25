@@ -66,6 +66,14 @@ export class TypesGenerator {
 				}
 				const instanceName = this.getInstanceTypeName(node);
 				generatedTypes.push(instanceName);
+				// Root types are declared as interfaces below (declaration
+				// merging with @decorate classes). Emitting `type X` here as
+				// well would collide with `interface X` in the same global
+				// scope (TS2300), and the root interface already carries
+				// everything the alias would (props + child constructors).
+				if (!node.parent) {
+					continue;
+				}
 				this.generateInstanceType(node, lines, 1);
 			}
 		}
@@ -115,9 +123,10 @@ export class TypesGenerator {
 			lines.push(`${indentStr}\t${readonly}${propName}${optional}: ${propInfo.type};`);
 		}
 
-		// Add nested constructor properties (only for root types)
-		// Nested type constructors are accessible via parent, not directly on instances
-		if (!node.parent) {
+		// Add nested constructor properties for non-leaf nodes — mirrors
+		// generateCompleteInstanceInterface (types.ts): subtypes construct
+		// from parent instances at any depth, not only from roots
+		if (node.children.size > 0) {
 			for (const child of node.children.values()) {
 				const childInstanceType = this.getInstanceTypeName(child);
 				const constructorSig = this.generateConstructorSignature(child);
@@ -125,10 +134,15 @@ export class TypesGenerator {
 			}
 		}
 
-		// For nested types, add Subtype: undefined to indicate no further subtypes
-		// This is needed for strict chain behavior
+		// For nested types, add this node's constructor and all siblings as
+		// undefined (strict-chain behavior; parent undefineds come via ProtoFlat)
 		if (node.parent) {
 			lines.push(`${indentStr}\t${node.name}: undefined;`);
+			for (const sibling of node.parent.children.values()) {
+				if (sibling.name !== node.name) {
+					lines.push(`${indentStr}\t${sibling.name}: undefined;`);
+				}
+			}
 		}
 
 		// Close the type properly - ProtoFlat uses }>; for nested, }; for root

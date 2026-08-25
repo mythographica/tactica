@@ -138,12 +138,18 @@ In ESM mode (`--esm`) the imports gain `.js` extensions.
 import type { ProtoFlat } from 'mnemonica';
 export {};
 declare global {
-    type UserType = { … };
-    interface UserType { … } // declaration-merging shape for @decorate classes
+    interface UserType { … }        // all types, merges with @decorate classes
+    type UserType_AdminType = ProtoFlat<UserType, { … }>; // nested types only
 }
 ```
 
-Single file; types are global. Consumed via triple-slash reference or `typeRoots`. Source: `TypesGenerator.generateGlobalAugmentation()` → `TypesWriter.writeGlobalAugmentation()`.
+Single file; types are global. Consumed via tsconfig `include` (typeRoots does
+not pick it up — `.tactica` is not a package folder). Root types are declared
+ONLY as interfaces: a same-named `type` alias would collide with the merging
+interface in the same global scope (TS2300). Nested types keep their
+`ProtoFlat` aliases (interfaces cannot express computed types) and carry their
+children's constructor signatures, same as `types.ts`. Source:
+`TypesGenerator.generateGlobalAugmentation()` → `TypesWriter.writeGlobalAugmentation()`.
 
 ### `hierarchy.json` (always)
 
