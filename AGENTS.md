@@ -244,7 +244,7 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 }
 ```
 
-`kind ∈ 'wrap' | 'link' | 'contextConsume' | 'errorEnrich' | 'hookAttach' | 'adapterUse'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
+`kind ∈ 'wrap' | 'contextConsume' | 'hookAttach'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
 
 ## Key classes (quick reference)
 

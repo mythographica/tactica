@@ -136,7 +136,7 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
 | `usages.json` | always | One entry per type, value is an array of `{ location, kind, code }` records — where each type is instantiated, referenced, accessed, or looked up. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
-| `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `link`, `getLastContext`, hook attachment, framework adapters). Consumed by tools that visualize execution chains. |
+| `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
 
 ### Default mode (types.ts + registry.ts)
 
@@ -565,14 +565,9 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 
 | Function | EDS kind | Description |
 |---|---|---|
-| `wrap(fn)`, `wrapArgs(fn)`, `wrapInstanceMethods(obj)` | `wrap` | Wrap a function / arguments / instance methods for context propagation |
-| `link(parent, child)`, `runWithInstance(inst, fn)` | `link` | Link two instances in the EDS chain |
-| `getLastContext()`, `getErrorInstance(err)` | `contextConsume` | Read the current / error-attached EDS context |
-| `enrichError(err, inst)` | `errorEnrich` | Attach an instance to an error |
-| `attachHooks(types)` | `hookAttach` | Install hooks on the given types |
-| `createDiveInterceptor()` | `adapterUse` | NestJS interceptor adapter |
-| `createDivePlugin()` | `adapterUse` | Fastify plugin adapter |
-| `createDiveMiddleware()` | `adapterUse` | Express middleware adapter |
+| `wrap(fn)`, `wrapConstructorArg(fn, parent)`, `upgradeConstructorArg(arg, inst)`, `wrapInstanceMethods(obj)` | `wrap` | Wrap a function / constructor argument / instance methods for context propagation and tracing (`@mnemonica/dive`) |
+| `current()`, `getErrorInstance(err)`, `getFlow(target?)` | `contextConsume` | Read the current context, the error-pinned instance, or the recorded flow (`@mnemonica/dive`) |
+| `attachHooks(collection)` | `hookAttach` | Wire a TypesCollection to dive's lifecycle tracing (`@mnemonica/nestjs`) |
 
 `eds.json` structure:
 

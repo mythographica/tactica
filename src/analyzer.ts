@@ -190,7 +190,7 @@ export class MnemonicaAnalyzer {
 		// Check for type usages (new Type(), type annotations, etc.)
 		this.collectUsage(node, sourceFile);
 
-		// Check for EDS patterns (wrap, link, getLastContext, etc.)
+		// Check for EDS patterns (wrap, current, getFlow, etc.)
 		this.collectEDS(node, sourceFile);
 
 		// Check for native flow patterns (property access, method calls, etc.)
@@ -2605,8 +2605,13 @@ export class MnemonicaAnalyzer {
 		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
 		const code = node.getText(sourceFile).slice(0, 100);
 
-		// wrap(fn), wrapArgs(fn), wrapInstanceMethods(obj)
-		if (funcName === 'wrap' || funcName === 'wrapArgs' || funcName === 'wrapInstanceMethods') {
+		// wrap(fn), wrapConstructorArg(fn, parent), upgradeConstructorArg(arg, inst), wrapInstanceMethods(obj)
+		if (
+			funcName === 'wrap' ||
+			funcName === 'wrapConstructorArg' ||
+			funcName === 'upgradeConstructorArg' ||
+			funcName === 'wrapInstanceMethods'
+		) {
 			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
 			this.addEDS(targetType || 'unknown', {
 				location,
@@ -2617,20 +2622,8 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
-		// link(parent, child), runWithInstance(instance, fn)
-		if (funcName === 'link' || funcName === 'runWithInstance') {
-			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
-			this.addEDS(targetType || 'unknown', {
-				location,
-				kind       : 'link',
-				code,
-				targetType : targetType || undefined,
-			});
-			return;
-		}
-
-		// getLastContext(), getErrorInstance(err)
-		if (funcName === 'getLastContext' || funcName === 'getErrorInstance') {
+		// current(), getErrorInstance(err), getFlow(target?)
+		if (funcName === 'current' || funcName === 'getErrorInstance' || funcName === 'getFlow') {
 			this.addEDS('unknown', {
 				location,
 				kind : 'contextConsume',
@@ -2639,21 +2632,8 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
-		// enrichError(err, instance)
-		if (funcName === 'enrichError') {
-			const targetType = node.arguments.length > 1
-				? this.resolveEDSArgumentType(node.arguments[ 1 ])
-				: undefined;
-			this.addEDS(targetType || 'unknown', {
-				location,
-				kind       : 'errorEnrich',
-				code,
-				targetType : targetType || undefined,
-			});
-			return;
-		}
-
-		// attachHooks(types), attachHooks([A, B])
+		// attachHooks(collection) — from @mnemonica/nestjs, wires a
+		// TypesCollection to dive's lifecycle tracing
 		if (funcName === 'attachHooks' && node.arguments.length > 0) {
 			const arg = node.arguments[ 0 ];
 			if (ts.isArrayLiteralExpression(arg)) {
@@ -2675,20 +2655,6 @@ export class MnemonicaAnalyzer {
 					targetType : targetType || undefined,
 				});
 			}
-			return;
-		}
-
-		// Adapters: createDiveInterceptor, createDivePlugin, createDiveMiddleware
-		if (
-			funcName === 'createDiveInterceptor' ||
-			funcName === 'createDivePlugin' ||
-			funcName === 'createDiveMiddleware'
-		) {
-			this.addEDS('unknown', {
-				location,
-				kind : 'adapterUse',
-				code,
-			});
 			return;
 		}
 	}

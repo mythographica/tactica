@@ -32,17 +32,31 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(wrapEntry!.code).to.include('wrap(');
 		});
 
-		it('should detect wrapArgs() call', () => {
+		it('should detect wrapConstructorArg() call', () => {
 			const source = `
-				import { wrapArgs } from '@mnemonica/dive';
-				const wrapped = wrapArgs(someFn);
+				import { wrapConstructorArg } from '@mnemonica/dive';
+				const wrapped = wrapConstructorArg(someFn, parent);
 			`;
 
 			analyzer.analyzeSource(source);
 			const eds = analyzer.getEDSUsages();
 
 			const entries = Array.from(eds.values()).flat();
-			const wrapEntry = entries.find(e => e.kind === 'wrap' && e.code.includes('wrapArgs'));
+			const wrapEntry = entries.find(e => e.kind === 'wrap' && e.code.includes('wrapConstructorArg'));
+			expect(wrapEntry).to.exist;
+		});
+
+		it('should detect upgradeConstructorArg() call', () => {
+			const source = `
+				import { upgradeConstructorArg } from '@mnemonica/dive';
+				upgradeConstructorArg(arg, instance);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap' && e.code.includes('upgradeConstructorArg'));
 			expect(wrapEntry).to.exist;
 		});
 
@@ -68,49 +82,32 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 		});
 	});
 
-	describe('link() detection', () => {
-		it('should detect link() call', () => {
-			const source = `
-				import { link } from '@mnemonica/dive';
-				link(parentInstance, childInstance);
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const linkEntry = entries.find(e => e.kind === 'link');
-			expect(linkEntry).to.exist;
-			expect(linkEntry!.code).to.include('link(');
-		});
-
-		it('should detect runWithInstance() call', () => {
-			const source = `
-				import { runWithInstance } from '@mnemonica/dive';
-				runWithInstance(instance, () => { /* ... */ });
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const linkEntry = entries.find(e => e.kind === 'link' && e.code.includes('runWithInstance'));
-			expect(linkEntry).to.exist;
-		});
-	});
-
 	describe('contextConsume detection', () => {
-		it('should detect getLastContext() call', () => {
+		it('should detect current() call', () => {
 			const source = `
-				import { getLastContext } from '@mnemonica/dive';
-				const ctx = getLastContext();
+				import { current } from '@mnemonica/dive';
+				const ctx = current();
 			`;
 
 			analyzer.analyzeSource(source);
 			const eds = analyzer.getEDSUsages();
 
 			const entries = Array.from(eds.values()).flat();
-			const ctxEntry = entries.find(e => e.kind === 'contextConsume' && e.code.includes('getLastContext'));
+			const ctxEntry = entries.find(e => e.kind === 'contextConsume' && e.code.includes('current'));
+			expect(ctxEntry).to.exist;
+		});
+
+		it('should detect getFlow() call', () => {
+			const source = `
+				import { getFlow } from '@mnemonica/dive';
+				const flow = getFlow(err);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const ctxEntry = entries.find(e => e.kind === 'contextConsume' && e.code.includes('getFlow'));
 			expect(ctxEntry).to.exist;
 		});
 
@@ -129,27 +126,10 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 		});
 	});
 
-	describe('errorEnrich detection', () => {
-		it('should detect enrichError() call', () => {
-			const source = `
-				import { enrichError } from '@mnemonica/dive';
-				enrichError(err, instance);
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const enrichEntry = entries.find(e => e.kind === 'errorEnrich');
-			expect(enrichEntry).to.exist;
-			expect(enrichEntry!.code).to.include('enrichError(');
-		});
-	});
-
 	describe('hookAttach detection', () => {
 		it('should detect attachHooks() with single type', () => {
 			const source = `
-				import { attachHooks } from '@mnemonica/dive';
+				import { attachHooks } from '@mnemonica/nestjs';
 				import { defaultTypes } from 'mnemonica';
 
 				attachHooks(defaultTypes);
@@ -166,7 +146,7 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 
 		it('should detect attachHooks() with array of types', () => {
 			const source = `
-				import { attachHooks } from '@mnemonica/dive';
+				import { attachHooks } from '@mnemonica/nestjs';
 				import { define } from 'mnemonica';
 
 				const TypeA = define('TypeA', function () { this.a = 1; });
@@ -182,55 +162,6 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			const entries = Array.from(eds.values()).flat();
 			const hookEntries = entries.filter(e => e.kind === 'hookAttach');
 			expect(hookEntries.length).to.be.at.least(2);
-		});
-	});
-
-	describe('adapterUse detection', () => {
-		it('should detect createDiveInterceptor() call', () => {
-			const source = `
-				import { createDiveInterceptor } from '@mnemonica/dive/adapters/nestjs';
-				const interceptor = createDiveInterceptor();
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const adapterEntry = entries.find(e => e.kind === 'adapterUse');
-			expect(adapterEntry).to.exist;
-			expect(adapterEntry!.code).to.include('createDiveInterceptor');
-		});
-
-		it('should detect createDivePlugin() call', () => {
-			const source = `
-				import { createDivePlugin } from '@mnemonica/dive/adapters/fastify';
-				const plugin = createDivePlugin();
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const adapterEntry = entries.find(
-				e => e.kind === 'adapterUse' && e.code.includes('createDivePlugin')
-			);
-			expect(adapterEntry).to.exist;
-		});
-
-		it('should detect createDiveMiddleware() call', () => {
-			const source = `
-				import { createDiveMiddleware } from '@mnemonica/dive/adapters/express';
-				const middleware = createDiveMiddleware();
-			`;
-
-			analyzer.analyzeSource(source);
-			const eds = analyzer.getEDSUsages();
-
-			const entries = Array.from(eds.values()).flat();
-			const adapterEntry = entries.find(
-				e => e.kind === 'adapterUse' && e.code.includes('createDiveMiddleware')
-			);
-			expect(adapterEntry).to.exist;
 		});
 	});
 

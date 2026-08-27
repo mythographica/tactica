@@ -133,7 +133,7 @@ export interface UsagesJson {
 /**
  * EDS (Execution Data Storage) kind for tracking execution flow patterns
  */
-export type EDSKind = 'wrap' | 'link' | 'contextConsume' | 'errorEnrich' | 'hookAttach' | 'adapterUse';
+export type EDSKind = 'wrap' | 'contextConsume' | 'hookAttach';
 /**
  * EDS info for execution data flow tracking
  */

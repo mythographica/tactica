@@ -150,11 +150,8 @@ export interface UsagesJson {
  */
 export type EDSKind =
 	| 'wrap'
-	| 'link'
 	| 'contextConsume'
-	| 'errorEnrich'
-	| 'hookAttach'
-	| 'adapterUse';
+	| 'hookAttach';
 
 /**
  * EDS info for execution data flow tracking
