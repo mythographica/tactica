@@ -146,6 +146,8 @@ export interface EDSInfo {
     code: string;
     /** Resolved target type if detectable */
     targetType?: string;
+    /** Enclosing mnemonica type path (define/lazy handler or decorated class) */
+    scope?: string;
 }
 /**
  * JSON output for eds.json

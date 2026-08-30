@@ -11,6 +11,7 @@ export declare class MnemonicaAnalyzer {
     private usages;
     private edsUsages;
     private flowUsages;
+    private edsScopeByNode;
     private typeAliases;
     private variableToTypeMap;
     private moduleObjectVariables;
@@ -343,6 +344,13 @@ export declare class MnemonicaAnalyzer {
      * Resolve type from EDS call argument (best effort)
      */
     private resolveEDSArgumentType;
+    /**
+     * Resolve the enclosing mnemonica scope of an EDS call site by walking
+     * up the parent chain: nearest define()/lazy() call whose handler holds
+     * the node, or nearest @decorate()-ed class declaration. Best effort —
+     * returns undefined for calls outside any type scope (module top level).
+     */
+    private resolveEDSScope;
     /**
      * Add an EDS usage to the collection
      */
