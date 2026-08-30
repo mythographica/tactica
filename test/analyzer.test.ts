@@ -143,6 +143,23 @@ describe('MnemonicaAnalyzer', () => {
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('name')?.type).to.equal('string');
 			});
+
+			it('should not overwrite an annotated array-of-literal with an empty-array initializer inference', () => {
+				// `this.items = []` infers 'Array<unknown>' — an unknown-bearing
+				// type must not clobber the `this` annotation's
+				// 'Array<{ id: number }>' (mnemographica Main.traceBuffer case)
+				const source = `
+					const ItemType = define('ItemType', function (this: { items: Array<{ id: number; parentId: number | null }> }, v: string) {
+						this.items = [];
+					});
+				`;
+
+				const result = analyzer.analyzeSource(source);
+
+				expect(result.types).to.have.length(1);
+				const itemType = result.types[ 0 ];
+				expect(itemType.properties.get('items')?.type).to.equal('Array<{ id: number; parentId: number | null }>');
+			});
 		});
 
 		describe('multiple parameters with different names', () => {

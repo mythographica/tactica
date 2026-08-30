@@ -1813,9 +1813,14 @@ export class MnemonicaAnalyzer {
 						if (!type) {
 							type = this.inferTypeFromInitializer(expr.right, dataTypeMap);
 						}
-						// Don't overwrite a known type from `this` annotation with unknown
+						// Don't overwrite a known type from a `this` annotation
+						// with an unknown-bearing inference: an empty-array
+						// initializer infers 'Array<unknown>', which must not
+						// clobber an annotated 'Array<{ id: number }>' either
 						const existing = properties.get(name);
-						if (existing && existing.type !== 'unknown' && type === 'unknown') {
+						const typeHasUnknown = !type || type.includes('unknown');
+						const existingIsKnown = existing ? !existing.type.includes('unknown') : false;
+						if (existingIsKnown && typeHasUnknown) {
 							// Keep the better type from explicit annotation
 						} else {
 							properties.set(name, {
