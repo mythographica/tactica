@@ -24,6 +24,11 @@ export class MnemonicaAnalyzer {
 	private usages = new Map<string, UsageInfo[]>();
 	private edsUsages = new Map<string, EDSInfo[]>();
 	private flowUsages = new Map<string, FlowInfo[]>();
+	// Enclosing mnemonica scope for EDS keying: define()/lazy() call node
+	// or @decorate()-ed class declaration -> fullPath of the type it owns.
+	// Populated on the definitions pass; AST nodes persist across passes,
+	// so entries stay valid after resetUsages().
+	private edsScopeByNode = new Map<ts.Node, string>();
 	private typeAliases = new Map<string, ts.TypeNode>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
@@ -620,6 +625,7 @@ export class MnemonicaAnalyzer {
 			blockErrors : config.blockErrors ?? false,
 		};
 		this.definitions.set(node.fullPath, definition);
+		this.edsScopeByNode.set(call, node.fullPath);
 
 		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
 		// For chained calls like const X = define('A').define('B'), we want to map X -> A (the root)
@@ -706,6 +712,7 @@ export class MnemonicaAnalyzer {
 			blockErrors : config.blockErrors ?? false,
 		};
 		this.definitions.set(node.fullPath, definition);
+		this.edsScopeByNode.set(call, node.fullPath);
 
 		// Track variable assignment: const LazyType = lazy('LazyType', ...) -> map "LazyType" -> "LazyType"
 		// For chained calls like const X = lazy('A').define('B'), we want to map X -> A (the root)
@@ -1187,6 +1194,7 @@ export class MnemonicaAnalyzer {
 			blockErrors : decoratorConfig.blockErrors ?? false,
 		};
 		this.definitions.set(fullPath, definition);
+		this.edsScopeByNode.set(classDecl, fullPath);
 
 		// Create type node
 		const node = TypeGraphImpl.createNode(
@@ -2609,6 +2617,10 @@ export class MnemonicaAnalyzer {
 		);
 		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
 		const code = node.getText(sourceFile).slice(0, 100);
+		// Enclosing mnemonica type path — wrap args are usually local
+		// functions, so the owning define()/lazy() handler or decorated
+		// class is what eds.json consumers (GraphBuilder) can join on.
+		const scope = this.resolveEDSScope(node);
 
 		// wrap(fn), wrapConstructorArg(fn, parent), upgradeConstructorArg(arg, inst), wrapInstanceMethods(obj)
 		if (
@@ -2618,21 +2630,23 @@ export class MnemonicaAnalyzer {
 			funcName === 'wrapInstanceMethods'
 		) {
 			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
-			this.addEDS(targetType || 'unknown', {
+			this.addEDS(targetType || scope || 'unknown', {
 				location,
 				kind       : 'wrap',
 				code,
 				targetType : targetType || undefined,
+				scope,
 			});
 			return;
 		}
 
 		// current(), getErrorInstance(err), getFlow(target?)
 		if (funcName === 'current' || funcName === 'getErrorInstance' || funcName === 'getFlow') {
-			this.addEDS('unknown', {
+			this.addEDS(scope || 'unknown', {
 				location,
 				kind : 'contextConsume',
 				code,
+				scope,
 			});
 			return;
 		}
@@ -2644,20 +2658,22 @@ export class MnemonicaAnalyzer {
 			if (ts.isArrayLiteralExpression(arg)) {
 				for (const element of arg.elements) {
 					const targetType = this.resolveEDSArgumentType(element);
-					this.addEDS(targetType || 'unknown', {
+					this.addEDS(targetType || scope || 'unknown', {
 						location,
 						kind       : 'hookAttach',
 						code,
 						targetType : targetType || undefined,
+						scope,
 					});
 				}
 			} else {
 				const targetType = this.resolveEDSArgumentType(arg);
-				this.addEDS(targetType || 'unknown', {
+				this.addEDS(targetType || scope || 'unknown', {
 					location,
 					kind       : 'hookAttach',
 					code,
 					targetType : targetType || undefined,
+					scope,
 				});
 			}
 			return;
@@ -2695,6 +2711,24 @@ export class MnemonicaAnalyzer {
 			return undefined;
 		}
 
+		return undefined;
+	}
+
+	/**
+	 * Resolve the enclosing mnemonica scope of an EDS call site by walking
+	 * up the parent chain: nearest define()/lazy() call whose handler holds
+	 * the node, or nearest @decorate()-ed class declaration. Best effort —
+	 * returns undefined for calls outside any type scope (module top level).
+	 */
+	private resolveEDSScope (node: ts.Node): string | undefined {
+		let current: ts.Node | undefined = node.parent;
+		while (current) {
+			const scopePath = this.edsScopeByNode.get(current);
+			if (scopePath) {
+				return scopePath;
+			}
+			current = current.parent;
+		}
 		return undefined;
 	}
 

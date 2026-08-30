@@ -206,4 +206,109 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(wrapEntry).to.exist;
 		});
 	});
+
+	describe('scope keying', () => {
+		it('should key wrap() inside a define() handler by the type path', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const MyType = define('MyType', function () {
+					this.process = wrap(function () { return 1; });
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyType');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('MyType');
+		});
+
+		it('should key wrap() inside a nested define() handler by the full path', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const MyType = define('MyType', function () {
+					this.value = 1;
+				});
+
+				const SubType = MyType.define('SubType', function () {
+					this.process = wrap(function () { return 2; });
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyType.SubType');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('MyType.SubType');
+		});
+
+		it('should key wrap() inside a @decorate()-ed class method by the class type', () => {
+			const source = `
+				import { decorate } from 'mnemonica';
+				import { wrap } from '@mnemonica/dive';
+
+				@decorate()
+				class MyClass {
+					doWork () {
+						return wrap(function () { return 3; });
+					}
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyClass');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('MyClass');
+		});
+
+		it('should keep the unknown key for wrap() outside any type scope', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				const wrapped = wrap(function () { return 4; });
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+			const wrapEntry = unscoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.be.undefined;
+		});
+
+		it('should key current() inside a define() handler by the type path', () => {
+			const source = `
+				import { current } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const MyType = define('MyType', function () {
+					this.ctx = current();
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyType');
+			expect(scoped).to.exist;
+			const ctxEntry = scoped!.find(e => e.kind === 'contextConsume');
+			expect(ctxEntry).to.exist;
+			expect(ctxEntry!.scope).to.equal('MyType');
+		});
+	});
 });
