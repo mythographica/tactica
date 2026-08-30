@@ -12,6 +12,9 @@ export declare class MnemonicaAnalyzer {
     private edsUsages;
     private flowUsages;
     private edsScopeByNode;
+    private functionBindings;
+    private nestedWrapVia;
+    private wrapEntryByNode;
     private typeAliases;
     private variableToTypeMap;
     private moduleObjectVariables;
@@ -352,7 +355,35 @@ export declare class MnemonicaAnalyzer {
      */
     private resolveEDSScope;
     /**
+     * Resolve a wrap() argument to its function node without the type
+     * checker: direct function expressions/arrows, or same-file bindings
+     * (`const fn = () => ...`, `function fn() ...`). Best effort — method
+     * references, .bind() products and cross-file identifiers stay
+     * unresolved; the callsite entry itself is still recorded.
+     */
+    private resolveFunctionArgument;
+    /**
+     * Analyse a wrapped function's body for guaranteed runtime paths:
+     * dive wraps returned functions as well (recursively), so each
+     * function-valued return is a nested wrap site, and each `new Type()`
+     * inside the body means the path hits that type's constructor (which
+     * attachHooks wraps too). Both facts are 100% ensured, so they are
+     * recorded AoT. Nested function bodies are NOT walked here — they
+     * belong to their own wrap analysis, reached via the return chain.
+     * Depth-capped and cycle-guarded.
+     */
+    private analyzeWrappedBody;
+    /**
+     * Record one function-valued return of a wrapped body as a nested wrap
+     * site (`via` = the site whose wrapping caused it) and recurse into
+     * its own returns. Returns through identifiers resolve through the
+     * same-file bindings table; unresolvable returns are simply skipped.
+     */
+    private recordWrappedReturn;
+    /**
      * Add an EDS usage to the collection
+     * Returns the stored entry (the existing one when this is a duplicate),
+     * so callers can enrich it after nested body analysis.
      */
     private addEDS;
     /**

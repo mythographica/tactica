@@ -29,6 +29,16 @@ export class MnemonicaAnalyzer {
 	// Populated on the definitions pass; AST nodes persist across passes,
 	// so entries stay valid after resetUsages().
 	private edsScopeByNode = new Map<ts.Node, string>();
+	// Same-file function bindings (`fileName#name` -> function node) for
+	// resolving wrap(fn) arguments syntactically — the checker stays unused
+	private functionBindings = new Map<string, ts.FunctionLikeDeclaration>();
+	// wrap call node -> location of the enclosing wrap site, so nested
+	// wrap() calls inside a wrapped body carry the `via` link
+	private nestedWrapVia = new Map<ts.Node, string>();
+	// wrap call node -> its collected entry, so a lexically nested wrap
+	// (visited BEFORE the outer wrap call, per source order) gets its
+	// `via` back-patched when the outer body is analysed
+	private wrapEntryByNode = new Map<ts.Node, EDSInfo>();
 	private typeAliases = new Map<string, ts.TypeNode>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
@@ -56,6 +66,10 @@ export class MnemonicaAnalyzer {
 		this.edsUsages.clear();
 		this.flowUsages.clear();
 		this.variableToTypeMap.clear();
+		// EDS entry references go stale with edsUsages; via links are
+		// re-derived on the next pass
+		this.wrapEntryByNode.clear();
+		this.nestedWrapVia.clear();
 		// Note: moduleObjectVariables and collectionVariables intentionally persist
 		// across definition and usage passes.
 	}
@@ -204,6 +218,22 @@ export class MnemonicaAnalyzer {
 		// Collect type aliases for resolving type references
 		if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
 			this.typeAliases.set(node.name.text, node.type);
+		}
+
+		// Track same-file function bindings so EDS can resolve wrap(fn)
+		// arguments without the type checker (best effort, last wins)
+		if (ts.isFunctionDeclaration(node) && node.name) {
+			const key = `${sourceFile.fileName}#${node.name.text}`;
+			this.functionBindings.set(key, node);
+		}
+		if (
+			ts.isVariableDeclaration(node) &&
+			ts.isIdentifier(node.name) &&
+			node.initializer &&
+			(ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+		) {
+			const key = `${sourceFile.fileName}#${node.name.text}`;
+			this.functionBindings.set(key, node.initializer);
 		}
 
 		// Track class declarations for decorator parent lookup
@@ -2630,13 +2660,32 @@ export class MnemonicaAnalyzer {
 			funcName === 'wrapInstanceMethods'
 		) {
 			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
-			this.addEDS(targetType || scope || 'unknown', {
+			const info: EDSInfo = {
 				location,
 				kind       : 'wrap',
 				code,
 				targetType : targetType || undefined,
 				scope,
-			});
+			};
+			// A wrap() call nested inside another wrapped body carries the
+			// link to the site whose runtime wrapping caused it
+			const via = this.nestedWrapVia.get(node);
+			if (via) {
+				info.via = via;
+			}
+			// dive wraps returned functions too, and any mnemonica instance
+			// created inside the wrapped body is a guaranteed path hit —
+			// both are calculable AoT, so record them
+			const wrapped = this.resolveFunctionArgument(node.arguments[ 0 ], sourceFile);
+			if (wrapped) {
+				const createsTypes = new Set<string>();
+				this.analyzeWrappedBody(wrapped, location, sourceFile, 0, new Set(), createsTypes);
+				if (createsTypes.size > 0) {
+					info.createsTypes = Array.from(createsTypes);
+				}
+			}
+			const stored = this.addEDS(targetType || scope || 'unknown', info);
+			this.wrapEntryByNode.set(node, stored);
 			return;
 		}
 
@@ -2733,23 +2782,169 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Add an EDS usage to the collection
+	 * Resolve a wrap() argument to its function node without the type
+	 * checker: direct function expressions/arrows, or same-file bindings
+	 * (`const fn = () => ...`, `function fn() ...`). Best effort — method
+	 * references, .bind() products and cross-file identifiers stay
+	 * unresolved; the callsite entry itself is still recorded.
 	 */
-	private addEDS (typePath: string, info: EDSInfo): void {
+	private resolveFunctionArgument (
+		arg: ts.Expression | undefined,
+		sourceFile: ts.SourceFile
+	): ts.FunctionLikeDeclaration | undefined {
+		if (!arg) {
+			return undefined;
+		}
+		if (ts.isArrowFunction(arg) || ts.isFunctionExpression(arg)) {
+			return arg;
+		}
+		if (ts.isIdentifier(arg)) {
+			const key = `${sourceFile.fileName}#${arg.text}`;
+			const bound = this.functionBindings.get(key);
+			if (bound) {
+				return bound;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Analyse a wrapped function's body for guaranteed runtime paths:
+	 * dive wraps returned functions as well (recursively), so each
+	 * function-valued return is a nested wrap site, and each `new Type()`
+	 * inside the body means the path hits that type's constructor (which
+	 * attachHooks wraps too). Both facts are 100% ensured, so they are
+	 * recorded AoT. Nested function bodies are NOT walked here — they
+	 * belong to their own wrap analysis, reached via the return chain.
+	 * Depth-capped and cycle-guarded.
+	 */
+	private analyzeWrappedBody (
+		fn: ts.FunctionLikeDeclaration,
+		viaLocation: string,
+		sourceFile: ts.SourceFile,
+		depth: number,
+		visited: Set<ts.Node>,
+		createsTypes: Set<string>
+	): void {
+		if (depth > 5 || visited.has(fn) || !fn.body) {
+			return;
+		}
+		visited.add(fn);
+
+		// Arrow with expression body: implicit return
+		if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
+			this.recordWrappedReturn(fn.body, viaLocation, sourceFile, depth, visited);
+			return;
+		}
+
+		const walk = (node: ts.Node): void => {
+			if (node !== fn.body && (
+				ts.isFunctionExpression(node) ||
+				ts.isArrowFunction(node) ||
+				ts.isFunctionDeclaration(node) ||
+				ts.isMethodDeclaration(node)
+			)) {
+				// nested function bodies are analysed through the return chain
+				return;
+			}
+			if (ts.isReturnStatement(node) && node.expression) {
+				this.recordWrappedReturn(node.expression, viaLocation, sourceFile, depth, visited);
+			}
+			if (ts.isNewExpression(node)) {
+				const created = this.resolveExpressionType(node.expression) ||
+					(ts.isIdentifier(node.expression) && this.definitions.has(node.expression.text)
+						? node.expression.text
+						: undefined);
+				if (created) {
+					createsTypes.add(created);
+				}
+			}
+			if (ts.isCallExpression(node)) {
+				const nestedName = this.getFunctionName(node.expression);
+				if (
+					nestedName === 'wrap' ||
+					nestedName === 'wrapConstructorArg' ||
+					nestedName === 'upgradeConstructorArg' ||
+					nestedName === 'wrapInstanceMethods'
+				) {
+					// the nested call may already be collected (visited
+					// before this outer wrap site) — back-patch its entry,
+					// otherwise leave the link for collectEDS to pick up
+					const nestedEntry = this.wrapEntryByNode.get(node);
+					if (nestedEntry) {
+						nestedEntry.via = viaLocation;
+					} else {
+						this.nestedWrapVia.set(node, viaLocation);
+					}
+				}
+			}
+			ts.forEachChild(node, walk);
+		};
+		walk(fn.body);
+	}
+
+	/**
+	 * Record one function-valued return of a wrapped body as a nested wrap
+	 * site (`via` = the site whose wrapping caused it) and recurse into
+	 * its own returns. Returns through identifiers resolve through the
+	 * same-file bindings table; unresolvable returns are simply skipped.
+	 */
+	private recordWrappedReturn (
+		expr: ts.Expression,
+		viaLocation: string,
+		sourceFile: ts.SourceFile,
+		depth: number,
+		visited: Set<ts.Node>
+	): void {
+		const returned = this.resolveFunctionArgument(expr, sourceFile);
+		if (!returned) {
+			return;
+		}
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			returned.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = returned.getText(sourceFile).slice(0, 100);
+		const scope = this.resolveEDSScope(returned);
+		const entry = this.addEDS(scope || 'unknown', {
+			location,
+			kind : 'wrap',
+			code,
+			scope,
+			via  : viaLocation,
+		});
+		// the returned function's own returns are wrapped in turn; `via`
+		// chains to this nested entry's location
+		const nestedCreates = new Set<string>();
+		this.analyzeWrappedBody(returned, location, sourceFile, depth + 1, visited, nestedCreates);
+		if (nestedCreates.size > 0) {
+			entry.createsTypes = Array.from(nestedCreates);
+		}
+	}
+
+	/**
+	 * Add an EDS usage to the collection
+	 * Returns the stored entry (the existing one when this is a duplicate),
+	 * so callers can enrich it after nested body analysis.
+	 */
+	private addEDS (typePath: string, info: EDSInfo): EDSInfo {
 		if (!this.edsUsages.has(typePath)) {
 			this.edsUsages.set(typePath, []);
 		}
 
 		const existing = this.edsUsages.get(typePath)!;
-		const isDuplicate = existing.some(e => {
+		const duplicate = existing.find(e => {
 			return e.location === info.location &&
 				e.kind === info.kind &&
 				e.code === info.code;
 		});
 
-		if (!isDuplicate) {
-			existing.push(info);
+		if (duplicate) {
+			return duplicate;
 		}
+		existing.push(info);
+		return info;
 	}
 
 	/**

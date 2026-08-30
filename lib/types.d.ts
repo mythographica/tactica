@@ -148,6 +148,10 @@ export interface EDSInfo {
     targetType?: string;
     /** Enclosing mnemonica type path (define/lazy handler or decorated class) */
     scope?: string;
+    /** Location of the enclosing wrap site whose runtime wrapping caused this entry */
+    via?: string;
+    /** Mnemonica type fullPaths instantiated inside the wrapped body — guaranteed path hits */
+    createsTypes?: string[];
 }
 /**
  * JSON output for eds.json

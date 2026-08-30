@@ -311,4 +311,119 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(ctxEntry!.scope).to.equal('MyType');
 		});
 	});
+
+	describe('wrapped body analysis', () => {
+		it('should record a function-valued return as a nested wrap with via', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const fn = function () {
+					return () => 42;
+				};
+				const w = wrap(fn);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(fn)'));
+			expect(rootEntry).to.exist;
+			const nested = entries.find(e => e.via === rootEntry!.location);
+			expect(nested).to.exist;
+			expect(nested!.kind).to.equal('wrap');
+		});
+
+		it('should chain via through nested returns (fn -> g -> h)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const h = () => 1;
+				const g = function () { return h; };
+				const fn = function () { return g; };
+				wrap(fn);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(fn)'));
+			expect(rootEntry).to.exist;
+			const midEntry = entries.find(e => e.via === rootEntry!.location);
+			expect(midEntry).to.exist;
+			const leafEntry = entries.find(e => e.via === midEntry!.location);
+			expect(leafEntry).to.exist;
+		});
+
+		it('should record mnemonica instances created in the wrapped body as createsTypes', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const MyType = define('MyType', function () {
+					this.value = 1;
+				});
+
+				const fn = function () {
+					const inst = new MyType();
+					return inst;
+				};
+				wrap(fn);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(fn)'));
+			expect(rootEntry).to.exist;
+			expect(rootEntry!.createsTypes).to.include('MyType');
+		});
+
+		it('should back-patch via onto a lexically nested wrap call', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const outer = function () {
+					const inner = wrap(function () { return 1; });
+					return inner;
+				};
+				wrap(outer);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(outer)'));
+			expect(rootEntry).to.exist;
+			// the nested wrap call was visited BEFORE wrap(outer), so its
+			// via arrives through the back-patch path
+			const nestedCall = entries.find(e => e.code.includes('wrap(function'));
+			expect(nestedCall).to.exist;
+			expect(nestedCall!.via).to.equal(rootEntry!.location);
+		});
+
+		it('should survive a function returning itself (cycle guard)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const fn = function () {
+					return fn;
+				};
+				wrap(fn);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(fn)'));
+			expect(rootEntry).to.exist;
+			// fn returns fn: exactly one nested entry, no infinite recursion
+			const nested = entries.filter(e => e.via === rootEntry!.location);
+			expect(nested.length).to.equal(1);
+		});
+	});
 });
