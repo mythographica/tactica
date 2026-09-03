@@ -162,6 +162,53 @@ export interface EDSJson {
     eds: Record<string, EDSInfo[]>;
 }
 /**
+ * Instrumentation kind for NestJS lifecycle crossroads
+ */
+export type InstrumentationKind = 'interceptor' | 'guard' | 'pipe' | 'filter' | 'middleware';
+/**
+ * Instrumentation scope: where the point attaches.
+ * 'global' for APP_* provider registrations, 'module' for middleware wired
+ * via consumer.apply() AND for bare heritage declarations whose attachment
+ * is statically unknown, `controller:Name` / `method:Class.method` for
+ * decorator-scoped attachments.
+ */
+export type InstrumentationScope = 'global' | 'module' | `controller:${string}` | `method:${string}`;
+/**
+ * Instrumentation point: a NestJS lifecycle crossroad (interceptor, guard,
+ * pipe, filter, middleware) detected syntactically.
+ *
+ * Dedupe/scope decision: points are keyed by (kind, className, location,
+ * scope) and duplicates merge their `targets`. A class detected both by
+ * heritage (`implements NestInterceptor`) and by a decorator site
+ * (`@UseInterceptors(X)`) yields SEPARATE entries — the class-declaration
+ * point keeps scope 'module' (attachment unknown) while each registration
+ * site carries its own scope. One point serving multiple scopes via merged
+ * scope lists was rejected: consumers (mnemographica diamonds) key off a
+ * single scope per point, and separate entries keep that contract simple.
+ */
+export interface InstrumentationPoint {
+    /** Kind of lifecycle crossroad */
+    kind: InstrumentationKind;
+    /** Class providing the instrumentation (e.g., "AuthGuard") */
+    className: string;
+    /** Location in source: file.ts:Line:Col (class declaration when declared in-project, else the registration site) */
+    location: string;
+    /** Code snippet: signature / first line, like EDS `code` */
+    code: string;
+    /** Where the point attaches */
+    scope: InstrumentationScope;
+    /** Controller/provider names the point attaches to; empty for global points */
+    targets: string[];
+}
+/**
+ * JSON output for instrumentation.json
+ */
+export interface InstrumentationJson {
+    version: number;
+    generatedAt: string;
+    points: InstrumentationPoint[];
+}
+/**
  * Flow kind for tracking native instance usage patterns
  */
 export type FlowKind = 'propertyRead' | 'propertyWrite' | 'methodCall' | 'destructureRead' | 'passAsArg' | 'return' | 'spread' | 'arrayElement' | 'conditionalAccess' | 'elementAccess' | 'reassignment' | 'instantiation';

@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint } from './types';
 import { TypeGraphImpl } from './graph';
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -22,6 +22,8 @@ export declare class MnemonicaAnalyzer {
     private collectionVariables;
     private collectionInfo;
     private collectionCounter;
+    private instrumentationClassDecls;
+    private instrumentationSites;
     constructor(program?: ts.Program);
     /**
      * Reset usage-related state for a fresh pass.
@@ -56,6 +58,16 @@ export declare class MnemonicaAnalyzer {
      * Get collected flow usages
      */
     getFlowUsages(): Map<string, FlowInfo[]>;
+    /**
+     * Get collected instrumentation points.
+     * Registration sites referencing a class declared in the same project
+     * resolve to the class declaration's location/code; external classes
+     * (e.g., ValidationPipe from node_modules) keep the registration site.
+     * Deduped by kind+className+location+scope with targets merged — a
+     * class detected by heritage AND by a decorator site yields separate
+     * entries with distinct scopes (see InstrumentationPoint in types.ts).
+     */
+    getInstrumentationPoints(): InstrumentationPoint[];
     /**
      * Add a topologica type to the analyzer for usage tracking.
      * This allows the analyzer to recognize topologica types when collecting usages.
@@ -462,4 +474,41 @@ export declare class MnemonicaAnalyzer {
              * Extract constructor parameters from a constructor expression.
              */
     private extractConstructorParamsFromConstructor;
+    /**
+     * Collect NestJS instrumentation points (interceptors, guards, pipes,
+     * filters, middleware). Purely syntactic: heritage clauses, decorator
+     * application sites, APP_* provider object literals and
+     * consumer.apply().forRoutes() wiring. No import resolution beyond the
+     * identifier text — the type checker stays unused.
+     */
+    private collectInstrumentation;
+    /**
+     * Record a named class declaration for instrumentation site resolution
+     * and detect heritage-based kinds (`implements NestInterceptor`, etc.)
+     */
+    private collectInstrumentationClass;
+    /**
+     * Detect decorator application sites: @UseGuards(X), @UseInterceptors(X),
+     * @UsePipes(X) on a controller class or one of its methods. One site per
+     * referenced class identifier.
+     */
+    private collectInstrumentationDecorator;
+    /**
+     * Detect global registrations: object literals shaped like
+     * `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }`.
+     * useExisting/useFactory without a useClass identifier are not
+     * statically obvious — skipped rather than guessed.
+     */
+    private collectInstrumentationProvider;
+    /**
+     * Detect middleware wiring: `consumer.apply(Mw1, Mw2).forRoutes(...)`
+     * inside a class's configure() method. Targets come from forRoutes
+     * arguments when statically readable (string routes or controller
+     * identifiers), else [].
+     */
+    private collectInstrumentationMiddleware;
+    /**
+     * Walk up the parent chain looking for an enclosing configure() method
+     */
+    private isInsideConfigureMethod;
 }

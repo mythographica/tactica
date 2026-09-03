@@ -4,7 +4,8 @@ import * as ts from 'typescript';
 import {
 	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
 	DefinitionInfo, UsageInfo, ConstructorParamInfo,
-	EDSInfo, FlowInfo
+	EDSInfo, FlowInfo, InstrumentationKind, InstrumentationPoint,
+	InstrumentationScope
 } from './types';
 import { TypeGraphImpl } from './graph';
 
@@ -13,6 +14,54 @@ interface CollectionInfo {
 	sourceFile: string;
 	registryInterfaceName?: string;
 }
+
+/**
+ * Location/code captured at a class declaration, used to resolve
+ * instrumentation registration sites to the declared class
+ */
+interface InstrumentationClassDecl {
+	kind?: InstrumentationKind;
+	location: string;
+	code: string;
+}
+
+/**
+ * Raw registration site (decorator, APP_* provider, consumer.apply).
+ * Location/code are the site's own; getInstrumentationPoints() rewrites
+ * them to the class declaration when the class is declared in-project.
+ */
+interface InstrumentationSite {
+	kind: InstrumentationKind;
+	className: string;
+	location: string;
+	code: string;
+	scope: InstrumentationScope;
+	targets: string[];
+}
+
+/** NestJS interface identifier -> instrumentation kind (matched by simple name only) */
+const INSTRUMENTATION_INTERFACE_KINDS: Record<string, InstrumentationKind> = {
+	NestInterceptor : 'interceptor',
+	CanActivate     : 'guard',
+	PipeTransform   : 'pipe',
+	ExceptionFilter : 'filter',
+	NestMiddleware  : 'middleware',
+};
+
+/** @UseXxx decorator identifier -> instrumentation kind */
+const USE_DECORATOR_KINDS: Record<string, InstrumentationKind> = {
+	UseGuards       : 'guard',
+	UseInterceptors : 'interceptor',
+	UsePipes        : 'pipe',
+};
+
+/** APP_* provider token identifier -> instrumentation kind */
+const APP_TOKEN_KINDS: Record<string, InstrumentationKind> = {
+	APP_GUARD       : 'guard',
+	APP_PIPE        : 'pipe',
+	APP_INTERCEPTOR : 'interceptor',
+	APP_FILTER      : 'filter',
+};
 
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -51,6 +100,13 @@ export class MnemonicaAnalyzer {
 	// Track custom collection metadata for Option B registry emission
 	private collectionInfo = new Map<string, CollectionInfo>();
 	private collectionCounter = 0;
+	// Instrumentation collection (syntactic only — no type checker):
+	// every named class declaration by simple name, for resolving
+	// registration sites to declaration locations (best effort, last wins)
+	private instrumentationClassDecls = new Map<string, InstrumentationClassDecl>();
+	// Registration sites: decorator applications, APP_* providers,
+	// consumer.apply() middleware wiring
+	private instrumentationSites: InstrumentationSite[] = [];
 
 	constructor (program?: ts.Program) {
 		// Store program for future use (currently unused but kept for extensibility)
@@ -138,6 +194,64 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Get collected instrumentation points.
+	 * Registration sites referencing a class declared in the same project
+	 * resolve to the class declaration's location/code; external classes
+	 * (e.g., ValidationPipe from node_modules) keep the registration site.
+	 * Deduped by kind+className+location+scope with targets merged — a
+	 * class detected by heritage AND by a decorator site yields separate
+	 * entries with distinct scopes (see InstrumentationPoint in types.ts).
+	 */
+	getInstrumentationPoints (): InstrumentationPoint[] {
+		const points = new Map<string, InstrumentationPoint>();
+
+		const addPoint = (point: InstrumentationPoint): void => {
+			const key = `${point.kind}|${point.className}|${point.location}|${point.scope}`;
+			const existing = points.get(key);
+			if (existing) {
+				const merged = new Set([ ...existing.targets, ...point.targets ]);
+				existing.targets = Array.from(merged);
+				return;
+			}
+			points.set(key, point);
+		};
+
+		for (const site of this.instrumentationSites) {
+			const decl = this.instrumentationClassDecls.get(site.className);
+			const point: InstrumentationPoint = {
+				kind      : site.kind,
+				className : site.className,
+				location  : decl ? decl.location : site.location,
+				code      : decl ? decl.code : site.code,
+				scope     : site.scope,
+				targets   : site.targets,
+			};
+			addPoint(point);
+		}
+
+		// Heritage-declared classes always emit a declaration point with
+		// scope 'module' (attachment statically unknown); registration
+		// sites above carry the narrower scopes as separate entries
+		for (const [ className, decl ] of this.instrumentationClassDecls) {
+			if (!decl.kind) {
+				continue;
+			}
+			const point: InstrumentationPoint = {
+				kind      : decl.kind,
+				className : className,
+				location  : decl.location,
+				code      : decl.code,
+				scope     : 'module',
+				targets   : [],
+			};
+			addPoint(point);
+		}
+
+		const result = Array.from(points.values());
+		return result;
+	}
+
+	/**
 	 * Add a topologica type to the analyzer for usage tracking.
 	 * This allows the analyzer to recognize topologica types when collecting usages.
 	 */
@@ -214,6 +328,10 @@ export class MnemonicaAnalyzer {
 
 		// Check for native flow patterns (property access, method calls, etc.)
 		this.collectFlow(node, sourceFile);
+
+		// Check for NestJS instrumentation points (interceptors, guards,
+		// pipes, filters, middleware) — syntactic only
+		this.collectInstrumentation(node, sourceFile);
 
 		// Collect type aliases for resolving type references
 		if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
@@ -3454,5 +3572,257 @@ export class MnemonicaAnalyzer {
 		}
 
 		return params;
+	}
+
+	/**
+	 * Collect NestJS instrumentation points (interceptors, guards, pipes,
+	 * filters, middleware). Purely syntactic: heritage clauses, decorator
+	 * application sites, APP_* provider object literals and
+	 * consumer.apply().forRoutes() wiring. No import resolution beyond the
+	 * identifier text — the type checker stays unused.
+	 */
+	private collectInstrumentation (node: ts.Node, sourceFile: ts.SourceFile): void {
+		if (ts.isClassDeclaration(node) && node.name) {
+			this.collectInstrumentationClass(node, sourceFile);
+		}
+		if (ts.isDecorator(node)) {
+			this.collectInstrumentationDecorator(node, sourceFile);
+		}
+		if (ts.isObjectLiteralExpression(node)) {
+			this.collectInstrumentationProvider(node, sourceFile);
+		}
+		if (ts.isCallExpression(node)) {
+			this.collectInstrumentationMiddleware(node, sourceFile);
+		}
+	}
+
+	/**
+	 * Record a named class declaration for instrumentation site resolution
+	 * and detect heritage-based kinds (`implements NestInterceptor`, etc.)
+	 */
+	private collectInstrumentationClass (node: ts.ClassDeclaration, sourceFile: ts.SourceFile): void {
+		if (!node.name) {
+			return;
+		}
+		const className = node.name.text;
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.name.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		// First line of the declaration, like EDS `code` snippets
+		const code = node.getText(sourceFile).split('\n')[ 0 ].slice(0, 100);
+
+		let kind: InstrumentationKind | undefined;
+		if (node.heritageClauses) {
+			for (const clause of node.heritageClauses) {
+				if (clause.token !== ts.SyntaxKind.ImplementsKeyword) {
+					continue;
+				}
+				for (const type of clause.types) {
+					if (!ts.isIdentifier(type.expression)) {
+						continue;
+					}
+					const matched = INSTRUMENTATION_INTERFACE_KINDS[ type.expression.text ];
+					if (matched) {
+						kind = matched;
+					}
+				}
+			}
+		}
+
+		const decl: InstrumentationClassDecl = {
+			location,
+			code,
+		};
+		if (kind) {
+			decl.kind = kind;
+		}
+		this.instrumentationClassDecls.set(className, decl);
+	}
+
+	/**
+	 * Detect decorator application sites: @UseGuards(X), @UseInterceptors(X),
+	 * @UsePipes(X) on a controller class or one of its methods. One site per
+	 * referenced class identifier.
+	 */
+	private collectInstrumentationDecorator (node: ts.Decorator, sourceFile: ts.SourceFile): void {
+		const { expression } = node;
+		if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) {
+			return;
+		}
+		const kind = USE_DECORATOR_KINDS[ expression.expression.text ];
+		if (!kind) {
+			return;
+		}
+
+		// The decorator's parent is the decorated node: a controller class
+		// or one of its methods
+		const decorated = node.parent;
+		let scope: InstrumentationScope;
+		let targets: string[];
+		if (ts.isClassDeclaration(decorated) && decorated.name) {
+			scope = `controller:${decorated.name.text}`;
+			targets = [ decorated.name.text ];
+		} else if (
+			ts.isMethodDeclaration(decorated) &&
+			ts.isIdentifier(decorated.name) &&
+			ts.isClassDeclaration(decorated.parent) &&
+			decorated.parent.name
+		) {
+			const className = decorated.parent.name.text;
+			scope = `method:${className}.${decorated.name.text}`;
+			targets = [ className ];
+		} else {
+			return;
+		}
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		for (const arg of expression.arguments) {
+			// Class reference: @UseGuards(AuthGuard) or an inline instance:
+			// @UsePipes(new ValidationPipe({ transform: true }))
+			let className: string | undefined;
+			if (ts.isIdentifier(arg)) {
+				className = arg.text;
+			} else if (ts.isNewExpression(arg) && ts.isIdentifier(arg.expression)) {
+				className = arg.expression.text;
+			}
+			if (!className) {
+				continue;
+			}
+			this.instrumentationSites.push({
+				kind,
+				className,
+				location,
+				code,
+				scope,
+				targets,
+			});
+		}
+	}
+
+	/**
+	 * Detect global registrations: object literals shaped like
+	 * `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }`.
+	 * useExisting/useFactory without a useClass identifier are not
+	 * statically obvious — skipped rather than guessed.
+	 */
+	private collectInstrumentationProvider (node: ts.ObjectLiteralExpression, sourceFile: ts.SourceFile): void {
+		let kind: InstrumentationKind | undefined;
+		let useClassName: string | undefined;
+
+		for (const prop of node.properties) {
+			if (
+				!ts.isPropertyAssignment(prop) ||
+				!ts.isIdentifier(prop.name) ||
+				!ts.isIdentifier(prop.initializer)
+			) {
+				continue;
+			}
+			if (prop.name.text === 'provide') {
+				kind = APP_TOKEN_KINDS[ prop.initializer.text ];
+			}
+			if (prop.name.text === 'useClass') {
+				useClassName = prop.initializer.text;
+			}
+		}
+
+		if (!kind || !useClassName) {
+			return;
+		}
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			node.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		this.instrumentationSites.push({
+			kind,
+			className : useClassName,
+			location,
+			code,
+			scope     : 'global',
+			targets   : [],
+		});
+	}
+
+	/**
+	 * Detect middleware wiring: `consumer.apply(Mw1, Mw2).forRoutes(...)`
+	 * inside a class's configure() method. Targets come from forRoutes
+	 * arguments when statically readable (string routes or controller
+	 * identifiers), else [].
+	 */
+	private collectInstrumentationMiddleware (node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		if (
+			!ts.isPropertyAccessExpression(node.expression) ||
+			node.expression.name.text !== 'forRoutes'
+		) {
+			return;
+		}
+		const applyCall = node.expression.expression;
+		if (
+			!ts.isCallExpression(applyCall) ||
+			!ts.isPropertyAccessExpression(applyCall.expression) ||
+			applyCall.expression.name.text !== 'apply'
+		) {
+			return;
+		}
+		if (!this.isInsideConfigureMethod(node)) {
+			return;
+		}
+
+		const targets: string[] = [];
+		for (const arg of node.arguments) {
+			if (ts.isIdentifier(arg) || ts.isStringLiteral(arg)) {
+				targets.push(arg.text);
+			}
+		}
+
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			applyCall.getStart(sourceFile)
+		);
+		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
+		const code = node.getText(sourceFile).slice(0, 100);
+
+		for (const arg of applyCall.arguments) {
+			if (!ts.isIdentifier(arg)) {
+				continue;
+			}
+			this.instrumentationSites.push({
+				kind      : 'middleware',
+				className : arg.text,
+				location,
+				code,
+				scope     : 'module',
+				targets,
+			});
+		}
+	}
+
+	/**
+	 * Walk up the parent chain looking for an enclosing configure() method
+	 */
+	private isInsideConfigureMethod (node: ts.Node): boolean {
+		let current: ts.Node | undefined = node.parent;
+		while (current) {
+			if (
+				ts.isMethodDeclaration(current) &&
+				ts.isIdentifier(current.name) &&
+				current.name.text === 'configure'
+			) {
+				return true;
+			}
+			current = current.parent;
+		}
+		return false;
 	}
 }

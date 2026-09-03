@@ -246,6 +246,31 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 
 `kind ∈ 'wrap' | 'contextConsume' | 'hookAttach'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
 
+### `instrumentation.json` (always)
+
+```json
+{
+    "version": 1,
+    "generatedAt": "2026-09-02T…",
+    "points": [
+        {
+            "kind": "pipe",
+            "className": "ValidationPipe",
+            "location": "/abs/path/src/user.controller.ts:49:2",
+            "code": "@UsePipes(new ValidationPipe({ transform: true }))",
+            "scope": "method:UserController.createUser",
+            "targets": ["UserController"]
+        }
+    ]
+}
+```
+
+- NestJS lifecycle crossroads detected syntactically (no type checker, no dive dependency): heritage (`implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware`), decorator sites (`@UseGuards` / `@UseInterceptors` / `@UsePipes`, incl. `new X(...)` args), `APP_*` provider object literals (scope `global`), and `consumer.apply(Mw).forRoutes(...)` inside `configure()` (scope `module`).
+- `scope` ∈ `'global' | 'module' | 'controller:<Name>' | 'method:<Class>.<method>'`; a bare heritage declaration carries scope `'module'` (attachment statically unknown).
+- Points referencing a class declared in the analyzed project resolve `location`/`code` to the class declaration; external classes keep the registration site. Deduped by `(kind, className, location, scope)` with `targets` merged — heritage + decorator for the same class yields separate entries per scope (documented on `InstrumentationPoint` in `src/types.ts`).
+- **Consumed by:** mnemographica's instrumentation graph (diamond nodes).
+- Source: `MnemonicaAnalyzer.getInstrumentationPoints()` → `TypesWriter.writeInstrumentationFile()`.
+
 ## Key classes (quick reference)
 
 ### `MnemonicaAnalyzer`
@@ -256,7 +281,7 @@ Parses TS/JS source via the TS compiler API; populates a `TypeGraphImpl` and fou
 - `analyzeSource(code, fileName?)` — analyze a string of source code.
 - `resetUsages()` — clear usage/EDS/flow maps before the second pass (the CLI runs definitions first, then usages).
 - `addTopologicaType(fullPath, node)` — inject a topologica-discovered type into the graph + definitions.
-- Getters: `getGraph`, `getDefinitions`, `getUsages`, `getEDSUsages`, `getFlowUsages`.
+- Getters: `getGraph`, `getDefinitions`, `getUsages`, `getEDSUsages`, `getFlowUsages`, `getInstrumentationPoints`.
 
 JavaScript files work when `allowJs: true` is in the user's `tsconfig.json`. The same AST visitors run on JS — type inference is naturally weaker without annotations.
 
@@ -283,7 +308,7 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 Thin filesystem wrapper. One method per output file:
 
-- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
+- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
 - `write(generated)` is a legacy alias for `writeTypesFile`.
 - `clean()` empties the output directory; `getOutputDir()` returns the configured path.
 

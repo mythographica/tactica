@@ -3,7 +3,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import {
-	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson 
+	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson,
+	InstrumentationPoint, InstrumentationJson
 } from './types';
 
 /**
@@ -144,6 +145,23 @@ export class TypesWriter {
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			eds         : edsObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write instrumentation.json file
+	 */
+	writeInstrumentationFile (points: InstrumentationPoint[]): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'instrumentation.json');
+
+		const json: InstrumentationJson = {
+			version     : 1,
+			generatedAt : new Date().toISOString(),
+			points,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');

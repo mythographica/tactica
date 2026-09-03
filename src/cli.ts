@@ -508,6 +508,14 @@ export * from './registry${options.esm ? '.js' : ''}';
 		console.log(`Generated flow.json at: ${flowPath} (${flowCount} flow entries)`);
 	}
 
+	// Always generate instrumentation.json (NestJS lifecycle crossroads —
+	// syntactic detection needs no dive dependency, unlike eds.json)
+	const instrumentation = analyzer.getInstrumentationPoints();
+	const instrumentationPath = writer.writeInstrumentationFile(instrumentation);
+	if (options.verbose) {
+		console.log(`Generated instrumentation.json at: ${instrumentationPath} (${instrumentation.length} points)`);
+	}
+
 	// Generate hierarchy.json (structured) and hierarchy.txt (ASCII tree) for the Trie
 	const hierarchyRoots = graph.toHierarchy();
 	const hierarchyJsonPath = writer.writeHierarchyFile(hierarchyRoots);

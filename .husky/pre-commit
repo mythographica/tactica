@@ -1,0 +1,7 @@
+# lib/ is committed and publish ships it from disk — rebuild it whenever
+# src/ changes are staged, so committed lib always matches committed src
+# (guards against the stale-lib publish failure mode)
+if git diff --cached --name-only | grep -q '^src/'; then
+	npm run build
+	git add lib
+fi

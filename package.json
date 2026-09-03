@@ -13,6 +13,7 @@
 		"LICENSE"
 	],
 	"scripts": {
+		"prepare": "husky",
 		"build": "rm -rf ./lib && npx tsc --pretty && npm run fix-permissions",
 		"fix-permissions": "chmod +x lib/cli.js",
 		"watch": "npx tsc --pretty -w",
@@ -58,6 +59,7 @@
 		"eslint-plugin-mocha": "^10.5.0",
 		"eslint-plugin-no-arrow-this": "^1.2.0",
 		"globals": "^15.15.0",
+		"husky": "^9.1.7",
 		"mocha": "^8.4.0",
 		"nyc": "^18.0.0",
 		"ts-node": "^10.9.2",

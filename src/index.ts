@@ -29,6 +29,10 @@ export type {
 	UsageInfo,
 	DefinitionsJson,
 	UsagesJson,
+	InstrumentationKind,
+	InstrumentationScope,
+	InstrumentationPoint,
+	InstrumentationJson,
 } from './types';
 
 // CLI entry point

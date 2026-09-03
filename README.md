@@ -136,6 +136,7 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
 | `usages.json` | always | One entry per type, value is an array of `{ location, kind, code }` records — where each type is instantiated, referenced, accessed, or looked up. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
+| `instrumentation.json` | always | NestJS lifecycle crossroads (interceptors, guards, pipes, filters, middleware): heritage declarations, `@UseGuards`/`@UseInterceptors`/`@UsePipes` sites, `APP_*` providers, `consumer.apply()` wiring. Syntactic only — no dive dependency. |
 | `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
 
 ### Default mode (types.ts + registry.ts)
@@ -487,6 +488,7 @@ class MnemonicaAnalyzer {
     getUsages():      Map<string, UsageInfo[]>;
     getEDSUsages():   Map<string, EDSInfo[]>;
     getFlowUsages():  Map<string, FlowInfo[]>;
+    getInstrumentationPoints(): InstrumentationPoint[];
 }
 ```
 
@@ -548,6 +550,7 @@ class TypesWriter {
     writeUsagesFile     (map: Map<string, UsageInfo[]>):    string; // → outputDir/usages.json
     writeEDSFile        (map: Map<string, EDSInfo[]>):      string; // → outputDir/eds.json
     writeFlowFile       (map: Map<string, FlowInfo[]>):     string; // → outputDir/flow.json
+    writeInstrumentationFile(points: InstrumentationPoint[]): string; // → outputDir/instrumentation.json
 
     write(generated: GeneratedTypes): string; // legacy alias for writeTypesFile
     clean(): void;
@@ -557,7 +560,7 @@ class TypesWriter {
 
 ### Types
 
-`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema.
+`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema.
 
 ## EDS (Execution Data Storage) Tracking
 
@@ -585,6 +588,36 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
             }
         ]
     }
+}
+```
+
+## Instrumentation Points
+
+Tactica statically detects NestJS lifecycle crossroads — interceptors, guards, pipes, exception filters, middleware — purely syntactically (no type checker), and always emits `.tactica/instrumentation.json`. Detection covers:
+
+- **Heritage** — `class X implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware` (matched by interface identifier name).
+- **Decorator sites** — `@UseGuards(X)`, `@UseInterceptors(X)`, `@UsePipes(X)` on controller classes or methods, including inline instances (`@UsePipes(new ValidationPipe(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>`.
+- **Global providers** — `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }` object literals → scope `global`. `useExisting`/`useFactory` without `useClass` are skipped.
+- **Middleware wiring** — `consumer.apply(Mw).forRoutes(...)` inside a class's `configure()` method → scope `module`, targets from `forRoutes` arguments when statically readable.
+
+When a referenced class is declared in the analyzed project, the point's `location`/`code` resolve to the class declaration; external classes (e.g. `ValidationPipe` from `@nestjs/common`) keep the registration site. Points are deduped by `(kind, className, location, scope)` with `targets` merged — a class seen via both heritage and a decorator yields separate entries per scope, with the bare declaration carrying scope `module`.
+
+`instrumentation.json` structure:
+
+```json
+{
+    "version": 1,
+    "generatedAt": "2026-09-02T…",
+    "points": [
+        {
+            "kind": "pipe",
+            "className": "ValidationPipe",
+            "location": "/project/src/user.controller.ts:49:2",
+            "code": "@UsePipes(new ValidationPipe({ transform: true }))",
+            "scope": "method:UserController.createUser",
+            "targets": ["UserController"]
+        }
+    ]
 }
 ```
 

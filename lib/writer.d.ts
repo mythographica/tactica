@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode, InstrumentationPoint } from './types';
 /**
  * Writes generated types to file system
  */
@@ -45,6 +45,10 @@ export declare class TypesWriter {
      * Write eds.json file
      */
     writeEDSFile(eds: Map<string, EDSInfo[]>): string;
+    /**
+     * Write instrumentation.json file
+     */
+    writeInstrumentationFile(points: InstrumentationPoint[]): string;
     /**
      * Write flow.json file
      */
