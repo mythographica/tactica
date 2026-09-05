@@ -58,6 +58,9 @@ src/
 ├── index.ts                # public exports (analyzer, generator, writer, CLI, types)
 ├── types.ts                # all interface / type definitions
 ├── analyzer.ts             # AST analyzer for define()/decorate() + usage/EDS/flow collection
+├── module-graph.ts         # Module-scope walker: import/export bindings, resolution, cycles → modules.json
+├── scopes.ts               # Local-scope walker: function/method/arrow scopes, variables, reassignments → scopes.json
+├── creation-graph.ts       # Inside-out creation walker: instantiation anchors → caller chains → starters → instrumentation.json creationGraph
 ├── topologica-analyzer.ts  # AST analyzer for Topologica directory structures
 ├── graph.ts                # Trie-based TypeGraphImpl
 ├── generator.ts            # generates types.ts / registry.ts / index.d.ts
@@ -224,6 +227,8 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
 ```
 
 - `kind` is one of `'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'lookup' | 'reference'`.
+- `holderScopeId` (optional, additive) is the innermost local scope holding the usage — the scopeId from `scopes.json` (module scope = file path; function scopes = file:line:col). Present for every usage inside a tracked file.
+- `constructorText` (optional, additive; instantiations only) is the constructor expression text actually used (`'Thing'`, `'user.AdminEntity'`, a lookup alias name) — feeds the creation graph's anchors.
 - **Consumed by:** `mnemographica/src/providers/referenceProvider.ts` (Find All References).
 
 ### `flow.json` (always)
@@ -246,12 +251,14 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 
 `kind ∈ 'wrap' | 'contextConsume' | 'hookAttach'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
 
+`wrap` entries also carry the wrappers-graph join fields (all optional, additive): `label` (the string-literal label arg), `callbackScopeId` (the wrapped callback's own scopeId — the preferred creation-graph join), `instanceArg` (the instance/context identifier text), `scopeId` (the scope holding the wrap call site — fallback join), `wrapsTypePath` (the instance argument's mnemonica fullPath, resolved through the scope-variable chain — innermost binding wins, untyped shadowing stays untyped), `via` (the enclosing wrap site's location for textually nested wraps and function-valued returns — the generation chain), and `fn` (the wrap-family function name — `wrap`/`wrapConstructorArg`/`upgradeConstructorArg`/`wrapInstanceMethods`; return-chain entries are `fn: 'wrap'` — joins the call site to dive's engine knot in graph consumers). `scopeId`/`wrapsTypePath` are a CLI post-pass (`attachWrapJoinData` in `src/cli.ts`); the rest come from the analyzer's wrap branch.
+
 ### `instrumentation.json` (always)
 
 ```json
 {
-    "version": 1,
-    "generatedAt": "2026-09-02T…",
+    "version": 2,
+    "generatedAt": "2026-09-04T…",
     "points": [
         {
             "kind": "pipe",
@@ -261,15 +268,120 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
             "scope": "method:UserController.createUser",
             "targets": ["UserController"]
         }
+    ],
+    "creationGraph": {
+        "nodes": [
+            {
+                "scopeId": "/abs/path/src/main.ts",
+                "name": "/abs/path/src/main.ts",
+                "kind": "module",
+                "filePath": "/abs/path/src/main.ts",
+                "location": "/abs/path/src/main.ts:1:1",
+                "starter": true
+            }
+        ],
+        "edges": [
+            { "caller": "/abs/path/src/main.ts", "callee": "/abs/path/src/user.service.ts:26:2" }
+        ],
+        "anchors": [
+            {
+                "location": "/abs/path/src/user.service.ts:29:24",
+                "holderScopeId": "/abs/path/src/user.service.ts:26:2",
+                "typePath": "UserEntity.UserResponse",
+                "constructorText": "user.UserResponse",
+                "variable": "userResponse"
+            }
+        ]
+    }
+}
+```
+
+- **Points (v1 contract, unchanged):** NestJS lifecycle crossroads detected syntactically (no type checker, no dive dependency): heritage (`implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware`), decorator sites (`@UseGuards` / `@UseInterceptors` / `@UsePipes`, incl. `new X(...)` args), `APP_*` provider object literals (scope `global`), and `consumer.apply(Mw).forRoutes(...)` inside `configure()` (scope `module`).
+- `scope` ∈ `'global' | 'module' | 'controller:<Name>' | 'method:<Class>.<method>'`; a bare heritage declaration carries scope `'module'` (attachment statically unknown).
+- Points referencing a class declared in the analyzed project resolve `location`/`code` to the class declaration; external classes keep the registration site. Deduped by `(kind, className, location, scope)` with `targets` merged — heritage + decorator for the same class yields separate entries per scope (documented on `InstrumentationPoint` in `src/types.ts`).
+- **`creationGraph` (v2, always present from the CLI):** the inside-out walk — anchors are the `instantiation` usages (each pinned to its `holderScopeId`), edges point `caller → callee` (callee closer to the creation site), nodes with no discovered callers are `starter: true`. Module-scope creations are `rooted: true` anchors (labeled, not policed). Module scopes end the invocation walk, but a terminal module gains its IMPORTERS as callers (the exports-and-usage bridge): entry modules hand classes to frameworks as values — `NestFactory.create(AppModule)` — which no call-walk can see, so the import relation connects them to the center instead. `constructorText` records the constructor expression actually used (decision 1: `strictChain: false` permits non-linear construction); `variable`/`terminatedAt` come from the same-line variable heuristic, `terminatedAt` being the first reassignment site (decision 6 flow termination). Deliberate approximations: namespace imports count any alias reference; method holders bind to their class name; any non-declaration identifier counts as a reference; export wiring alone creates no edge.
+- **Consumed by:** mnemographica's creation graph layer — holder scopes render as diamond knots tangent to their created type's sphere (the v1-points diamond rendering was reverted; diamonds carry creation semantics now). `loadInstrumentation()` ignores `version` and unknown top-level keys, so v2 is backward compatible.
+- Source: points from `MnemonicaAnalyzer.getInstrumentationPoints()`, creation graph from `CreationGraphBuilder` (`src/creation-graph.ts`) → `TypesWriter.writeInstrumentationFile(points, creationGraph)`.
+
+### `modules.json` (always)
+
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-09-03T…",
+    "modules": {
+        "/abs/path/src/fake-queue.ts": {
+            "filePath": "/abs/path/src/fake-queue.ts",
+            "definedTypes": [],
+            "exportedBindings": [
+                { "name": "consumeMessage", "kind": "function", "sourceModule": "/abs/path/src/fake-queue.ts", "isReExport": false }
+            ],
+            "importedBindings": [
+                { "name": "Thing", "kind": "class", "sourceModule": "/abs/path/src/defs.ts", "importKind": "named", "isReExport": false }
+            ],
+            "dependencies": ["/abs/path/src/defs.ts"],
+            "unresolvedSpecifiers": []
+        }
+    },
+    "edges": [
+        { "typePath": "Thing", "definitionModule": "/abs/path/src/defs.ts", "usageModule": "/abs/path/src/consumer.ts", "usageLocation": "/abs/path/src/consumer.ts:1:10" }
+    ],
+    "cycles": [["/abs/a.ts", "/abs/b.ts"]]
+}
+```
+
+- Module-scope graph: every module's **generic** import/export wiring — functions, classes, consts, types — not only mnemonica types. Function bindings (`kind: "function"`) are the holder-function wiring the inside-out walker follows.
+- `definedTypes` holds the mnemonica type fullPaths defined in that module; `edges` records cross-module usages of those types (import binding chased through re-export barrels to the origin module).
+- `sourceModule` on imports is resolved via `ts.resolveModuleName` with the program's compilerOptions (tsconfig `paths`, extensionless imports, index files) — module resolution, NOT the type checker; the no-`getTypeChecker()` precedent stays.
+- **Node.js builtins are skipped entirely** (both `'path'` and `'node:path'` forms, matched against `node:module`'s `builtinModules`): no bindings, no dependencies, no edges — they appear only in the module's `builtinSpecifiers: string[]` honesty list.
+- **External packages** (specifiers resolved with `isExternalLibraryImport`, i.e. node_modules) keep their resolved `.d.ts` path in `sourceModule` and are marked `external: true` on the binding; they never enter `dependencies` (project-internal only) and are never walked. Genuinely unresolvable specifiers stay raw in `sourceModule` and are listed in `unresolvedSpecifiers`.
+- `cycles` records circular import chains as data — never an error (mnemonica `strictChain: false` permits non-linear construction; the walker must not assume a linear Trie). Unused-export detection is internal only — nothing about it is emitted (linter territory).
+- Source: `ModuleGraphBuilder` (`src/module-graph.ts`; `addFile()` during the CLI definitions pass, `build(definedTypesByFile)` after) → `TypesWriter.writeModulesFile()`.
+
+### `scopes.json` (always)
+
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-09-03T…",
+    "scopes": {
+        "/abs/path/src/fake-queue.ts": {
+            "scopeId": "/abs/path/src/fake-queue.ts",
+            "name": "/abs/path/src/fake-queue.ts",
+            "kind": "module",
+            "filePath": "/abs/path/src/fake-queue.ts",
+            "location": "/abs/path/src/fake-queue.ts:1:1"
+        },
+        "/abs/path/src/fake-queue.ts:30:1": {
+            "scopeId": "/abs/path/src/fake-queue.ts:30:1",
+            "name": "consumeMessage",
+            "kind": "function",
+            "parentScopeId": "/abs/path/src/fake-queue.ts",
+            "filePath": "/abs/path/src/fake-queue.ts",
+            "location": "/abs/path/src/fake-queue.ts:30:1"
+        }
+    },
+    "variables": [
+        {
+            "name": "early",
+            "scopeId": "/abs/path/src/fake-queue.ts:30:1",
+            "typePath": "UserEntity",
+            "inferredType": "UserEntity",
+            "declaration": "/abs/path/src/fake-queue.ts:32:8",
+            "isParameter": false,
+            "isMutable": false,
+            "reassignments": []
+        }
     ]
 }
 ```
 
-- NestJS lifecycle crossroads detected syntactically (no type checker, no dive dependency): heritage (`implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware`), decorator sites (`@UseGuards` / `@UseInterceptors` / `@UsePipes`, incl. `new X(...)` args), `APP_*` provider object literals (scope `global`), and `consumer.apply(Mw).forRoutes(...)` inside `configure()` (scope `module`).
-- `scope` ∈ `'global' | 'module' | 'controller:<Name>' | 'method:<Class>.<method>'`; a bare heritage declaration carries scope `'module'` (attachment statically unknown).
-- Points referencing a class declared in the analyzed project resolve `location`/`code` to the class declaration; external classes keep the registration site. Deduped by `(kind, className, location, scope)` with `targets` merged — heritage + decorator for the same class yields separate entries per scope (documented on `InstrumentationPoint` in `src/types.ts`).
-- **Consumed by:** mnemographica's instrumentation graph (diamond nodes).
-- Source: `MnemonicaAnalyzer.getInstrumentationPoints()` → `TypesWriter.writeInstrumentationFile()`.
+- Local-scope graph: **function/method/arrow scopes ONLY — no block scopes** (decision: block-level granularity rejected after the module PoC showed function-granular holders suffice). One synthetic `kind: "module"` scope per file roots the tree, so module-level instance creations are labeled as rooted instances instead of disappearing.
+- Scope labeling: functions by name, methods as `Class.method`, arrows/function-expressions take the variable or property they are bound to, anonymous holders are labeled `file:line`.
+- Variables carry `isParameter`, `isMutable` (`const` = false; `let`/`var` and parameters = true — parameters are reassignable; `this` parameters of mnemonica handlers are recorded as immutable), and `reassignments`: every reassignment site of the binding. A reassignment is a **flow-termination point** — the inside-out walker stops following that binding there. Property writes (`x.prop = …`) are not reassignments; only rebindings (all assignment operators plus `++`/`--`).
+- `typePath` is the mnemonica fullPath when knowable without the type checker: `new KnownType(…)`, `new instance.Sub.Type(…)` chained through a tracked variable's typePath, an underscore annotation (`UserEntity_UserResponse` → dotted), or a `lookup('Path')` initializer (literal paths only; `receiver.lookup('Sub')` resolves receiver-relative first, then root fallback — mirroring the analyzer). Ambiguous names resolve to nothing rather than guessing.
+- Implementation detail: program source files can be unbound (no `node.parent`); the walker never relies on parent pointers (declaration-list flags and a bound-name map instead).
+- Source: `LocalScopeWalker` (`src/scopes.ts`; `addFile()` per file, `build(resolver)` once definitions are known) → `TypesWriter.writeScopesFile()`. `LocalScopeWalker.attachHolderScopeIds(usages, walker)` decorates usages before `usages.json` is written.
 
 ## Key classes (quick reference)
 
@@ -308,9 +420,18 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 Thin filesystem wrapper. One method per output file:
 
-- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
+- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeModulesFile`, `writeScopesFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
 - `write(generated)` is a legacy alias for `writeTypesFile`.
 - `clean()` empties the output directory; `getOutputDir()` returns the configured path.
+
+### `CreationGraphBuilder`
+
+Inside-out creation walker (instrumentation walker plan, Phase 3).
+
+- Constructor: `(moduleGraph, scopeAnalysis, scopeWalker, sourceFilesByPath)` — the BUILT module graph, the BUILT scope analysis, the walker (for `findHolderScopeId`), and program source files keyed by `path.resolve(fileName)`.
+- `build(usages)` → `CreationGraph` (nodes / edges / anchors; empty arrays when nothing instantiates a tracked type). Expects `holderScopeId` already attached (`LocalScopeWalker.attachHolderScopeIds`).
+- Caller search is parent-pointer-free (program files can be unbound): identifier references are bucketed per file with a NODE skip-set for import/export specifiers, declaration names, property-access `.name`, and property-assignment keys. Shorthand properties count as references.
+- Cross-file chase mirrors `ModuleGraphBuilder.resolveOrigin` (barrels, `export *`, aliases), run over the built graph.
 
 ## CLI options
 
@@ -331,8 +452,10 @@ Thin filesystem wrapper. One method per output file:
 
 **Mode behavior:**
 
-- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (+ `definitions.json`, `usages.json`, `flow.json`, optional `eds.json`).
+- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`; optional `eds.json`).
 - With `--module-augmentation`: writes `index.d.ts` (+ same JSONs). Default mode is the recommended path.
+
+**Exclusion behavior:** the project-conventional `.tactica/` directory (next to the tsconfig) is ALWAYS excluded from analysis, even when `--output` points elsewhere — generated files are never project source. When `--output` is used, that output directory is excluded too. No env variable; the flag is enough.
 
 The flag name `--module-augmentation` is historical; what it actually does is emit a **global**-augmentation single file. Renaming would be a breaking change to existing scripts.
 

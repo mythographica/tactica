@@ -78,7 +78,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 
 			expect(result.types).to.have.length(1);
-			const userType = result.types[ 0 ];
+			const [ userType ] = result.types;
 			expect(userType.name).to.equal('UserType');
 		});
 
@@ -108,7 +108,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('email')?.type).to.equal('string');
 				expect(userType.properties.get('age')?.type).to.equal('number');
@@ -124,7 +124,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('permissions')?.type).to.equal('Array<string>');
 			});
 
@@ -139,7 +139,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('name')?.type).to.equal('string');
 			});
@@ -157,7 +157,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const itemType = result.types[ 0 ];
+				const [ itemType ] = result.types;
 				expect(itemType.properties.get('items')?.type).to.equal('Array<{ id: number; parentId: number | null }>');
 			});
 		});
@@ -174,7 +174,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('email')?.type).to.equal('string');
 			});
@@ -190,7 +190,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('email')?.type).to.equal('string');
 			});
@@ -207,7 +207,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('name')?.type).to.equal('string');
 				expect(userType.properties.get('age')?.type).to.equal('number');
@@ -224,7 +224,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('id')?.type).to.equal('string');
 				expect(userType.properties.get('_private')?.type).to.equal('boolean');
 			});
@@ -239,7 +239,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 
 				expect(result.types).to.have.length(1);
-				const userType = result.types[ 0 ];
+				const [ userType ] = result.types;
 				expect(userType.properties.get('permissions')?.type).to.equal('Array<string>');
 			});
 		});
@@ -257,7 +257,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.name).to.equal('LazyType');
 			expect(type.fullPath).to.equal('LazyType');
 			expect(type.properties.get('value')?.type).to.equal('number');
@@ -274,7 +274,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.name).to.equal('MyType');
 			expect(type.properties.get('id')?.type).to.equal('string');
 		});
@@ -309,7 +309,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.name).to.equal('Root');
 			expect(type.fullPath).to.equal('Root');
 			expect(type.properties.get('x')?.type).to.equal('number');
@@ -377,7 +377,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			const params = type.constructorParams || [];
 			expect(params).to.have.length(1);
 			expect(params[ 0 ].name).to.equal('data');
@@ -413,7 +413,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 
 			expect(result.types).to.have.length(1);
-			const user = result.types[ 0 ];
+			const [ user ] = result.types;
 			expect(user.properties.has('name')).to.be.true;
 			expect(user.properties.has('email')).to.be.true;
 		});
@@ -453,7 +453,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('sum')?.type).to.equal('number');
 			});
 	
@@ -467,7 +467,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('diff')?.type).to.equal('number');
 			});
 	
@@ -481,7 +481,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('product')?.type).to.equal('number');
 			});
 	
@@ -495,7 +495,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('quotient')?.type).to.equal('number');
 			});
 	
@@ -509,7 +509,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('result')?.type).to.equal('number');
 			});
 		});
@@ -527,7 +527,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('userId')?.type).to.equal('string');
 				expect(type.properties.get('counter')?.type).to.equal('number');
 				expect(type.properties.get('isActive')?.type).to.equal('boolean');
@@ -543,7 +543,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('tags')?.type).to.equal('Array<string>');
 			});
 	
@@ -557,7 +557,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Deep nested property access returns 'unknown' - not yet implemented
 				expect(type.properties.get('name')?.type).to.equal('unknown');
 			});
@@ -574,7 +574,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('name')?.type).to.equal('string');
 			});
 	
@@ -588,7 +588,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('age')?.type).to.equal('number');
 			});
 	
@@ -602,7 +602,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('active')?.type).to.equal('boolean');
 			});
 		});
@@ -618,7 +618,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('createdAt')?.type).to.equal('number');
 			});
 	
@@ -632,7 +632,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('id')?.type).to.equal('number');
 			});
 	
@@ -646,7 +646,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('value')?.type).to.equal('number');
 			});
 	
@@ -660,7 +660,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('id')?.type).to.equal('string');
 			});
 	
@@ -674,7 +674,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('value')?.type).to.equal('number');
 			});
 	
@@ -688,7 +688,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('value')?.type).to.equal('boolean');
 			});
 	
@@ -702,7 +702,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('idStr')?.type).to.equal('string');
 			});
 	
@@ -716,7 +716,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('result')?.type).to.equal('unknown');
 			});
 		});
@@ -732,7 +732,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('fullName')?.type).to.equal('string');
 			});
 	
@@ -746,7 +746,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('idStr')?.type).to.equal('string');
 			});
 		});
@@ -762,7 +762,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Currently returns 'string' instead of "'user'" - baseline type
 				expect(type.properties.get('role')?.type).to.equal('string');
 			});
@@ -777,7 +777,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Currently returns 'number' instead of '200' - baseline type
 				expect(type.properties.get('status')?.type).to.equal('number');
 			});
@@ -792,7 +792,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Currently returns 'boolean' instead of 'true' - baseline type
 				expect(type.properties.get('active')?.type).to.equal('boolean');
 			});
@@ -807,7 +807,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Fixed: Union types are now properly parsed
 				expect(type.properties.get('role')?.type).to.equal('\'admin\' | \'user\' | \'guest\'');
 			});
@@ -824,7 +824,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				expect(type.properties.get('createdAt')?.type).to.equal('Date');
 			});
 	
@@ -838,7 +838,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Returns 'Array' without type arguments - generics not parsed from AST
 				expect(type.properties.get('items')?.type).to.equal('Array');
 			});
@@ -853,7 +853,7 @@ describe('MnemonicaAnalyzer', () => {
 				const result = analyzer.analyzeSource(source);
 	
 				expect(result.types).to.have.length(1);
-				const type = result.types[ 0 ];
+				const [ type ] = result.types;
 				// Note: Returns 'Map' without type arguments - generics not parsed from AST
 				expect(type.properties.get('cache')?.type).to.equal('Map');
 			});
@@ -873,7 +873,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.name).to.equal('AsyncType');
 			expect(type.properties.get('value')?.type).to.equal('number');
 			expect(type.properties.get('computed')?.type).to.equal('number');
@@ -907,7 +907,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 	
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.properties.get('timestamp')?.type).to.equal('number');
 		});
 	
@@ -921,7 +921,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 	
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.properties.get('key')?.type).to.equal('string');
 		});
 	});
@@ -942,7 +942,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			expect(result.errors).to.have.length(0);
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.name).to.equal('UserEntity');
 			expect(type.properties.get('id')?.type).to.equal('string');
 			expect(type.properties.get('email')?.type).to.equal('string');
@@ -965,7 +965,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 	
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.properties.get('id')?.type).to.equal('string');
 			expect(type.properties.get('count')?.type).to.equal('number');
 			expect(type.properties.get('active')?.type).to.equal('boolean');
@@ -986,7 +986,7 @@ describe('MnemonicaAnalyzer', () => {
 			const result = analyzer.analyzeSource(source);
 	
 			expect(result.types).to.have.length(1);
-			const type = result.types[ 0 ];
+			const [ type ] = result.types;
 			expect(type.properties.get('sum')?.type).to.equal('number');
 			expect(type.properties.get('diff')?.type).to.equal('number');
 			expect(type.properties.get('product')?.type).to.equal('number');

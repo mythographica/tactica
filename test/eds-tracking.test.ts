@@ -1,4 +1,5 @@
 import { expect } from 'chai';
+import * as path from 'path';
 import { MnemonicaAnalyzer } from '../src/analyzer';
 
 describe('MnemonicaAnalyzer - EDS Tracking', () => {
@@ -424,6 +425,138 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			// fn returns fn: exactly one nested entry, no infinite recursion
 			const nested = entries.filter(e => e.via === rootEntry!.location);
 			expect(nested.length).to.equal(1);
+		});
+	});
+
+	describe('wrap fn field (engine knot join)', () => {
+		it('should record fn for each wrap-family call', () => {
+			const source = `
+				import { wrap, wrapConstructorArg, upgradeConstructorArg, wrapInstanceMethods } from '@mnemonica/dive';
+
+				const a = wrap(function () { return 1; });
+				const b = wrapConstructorArg(function () { return 2; }, parent);
+				const c = upgradeConstructorArg(arg, inst);
+				const d = wrapInstanceMethods(inst);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat().filter(e => e.kind === 'wrap');
+			const byCode = (needle: string) => entries.find(e => e.code.startsWith(needle));
+			expect(byCode('wrap(function')!.fn).to.equal('wrap');
+			expect(byCode('wrapConstructorArg(')!.fn).to.equal('wrapConstructorArg');
+			expect(byCode('upgradeConstructorArg(')!.fn).to.equal('upgradeConstructorArg');
+			expect(byCode('wrapInstanceMethods(')!.fn).to.equal('wrapInstanceMethods');
+		});
+
+		it('should mark return-chain nested wraps as fn wrap', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const fn = function () {
+					return () => 42;
+				};
+				wrap(fn);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const entries = Array.from(eds.values()).flat();
+			const rootEntry = entries.find(e => e.code.includes('wrap(fn)'));
+			const nested = entries.find(e => e.via === rootEntry!.location);
+			expect(nested).to.exist;
+			expect(nested!.fn).to.equal('wrap');
+		});
+	});
+
+	describe('wrap() join fields', () => {
+		it('should record the label of wrap(fn, label) and no instanceArg', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const w = wrap(function () { return 1; }, 'job:run');
+			`;
+
+			analyzer.analyzeSource(source);
+			const entries = Array.from(analyzer.getEDSUsages().values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.label).to.equal('job:run');
+			expect(wrapEntry!.instanceArg).to.be.undefined;
+		});
+
+		it('should record both instanceArg and label of wrap(fn, instance, label)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+
+				const user = { name : 'ada' };
+				const w = wrap(function () { return 1; }, user, 'job:run');
+			`;
+
+			analyzer.analyzeSource(source);
+			const entries = Array.from(analyzer.getEDSUsages().values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.instanceArg).to.equal('user');
+			expect(wrapEntry!.label).to.equal('job:run');
+		});
+
+		it('should treat wrapConstructorArg(fn, context) second arg as the instance', () => {
+			const source = `
+				import { wrapConstructorArg } from '@mnemonica/dive';
+				const wrapped = wrapConstructorArg(someFn, parent);
+			`;
+
+			analyzer.analyzeSource(source);
+			const entries = Array.from(analyzer.getEDSUsages().values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.instanceArg).to.equal('parent');
+			expect(wrapEntry!.label).to.be.undefined;
+		});
+
+		it('should treat wrapInstanceMethods(instance) first arg as the instance', () => {
+			const source = `
+				import { wrapInstanceMethods } from '@mnemonica/dive';
+
+				const instance = { work () { return 1; } };
+				wrapInstanceMethods(instance);
+			`;
+
+			analyzer.analyzeSource(source);
+			const entries = Array.from(analyzer.getEDSUsages().values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap' && e.code.includes('wrapInstanceMethods'));
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.instanceArg).to.equal('instance');
+			expect(wrapEntry!.callbackScopeId).to.be.undefined;
+		});
+
+		it('should record callbackScopeId at the wrapped callback start', () => {
+			const source = [
+				'import { wrap } from \'@mnemonica/dive\';',
+				'',
+				'const w = wrap(() => {',
+				'\treturn 1;',
+				'});',
+			].join('\n');
+
+			analyzer.analyzeSource(source, 'test.ts');
+			const entries = Array.from(analyzer.getEDSUsages().values()).flat();
+			const wrapEntry = entries.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.callbackScopeId).to.exist;
+			expect(wrapEntry!.callbackScopeId!.startsWith(path.resolve('test.ts'))).to.be.true;
+
+			// The recorded coordinates point at the arrow's parameter list:
+			// line 3, and the character there is the opening '(' of '() => {'
+			const match = /:(\d+):(\d+)$/.exec(wrapEntry!.callbackScopeId!);
+			expect(match).to.exist;
+			const [ , lineText, colText ] = match!;
+			expect(Number(lineText)).to.equal(3);
+			const [ , , sourceLine ] = source.split('\n');
+			expect(sourceLine[ Number(colText) - 1 ]).to.equal('(');
 		});
 	});
 });

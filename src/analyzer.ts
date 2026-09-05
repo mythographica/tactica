@@ -1,5 +1,6 @@
 'use strict';
 
+import * as nodePath from 'path';
 import * as ts from 'typescript';
 import {
 	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
@@ -488,7 +489,7 @@ export class MnemonicaAnalyzer {
 			return undefined;
 		}
 
-		const firstTypeArg = typeArgs[ 0 ];
+		const [ firstTypeArg ] = typeArgs;
 		if (!ts.isTypeReferenceNode(firstTypeArg) || !ts.isIdentifier(firstTypeArg.typeName)) {
 			return undefined;
 		}
@@ -636,7 +637,7 @@ export class MnemonicaAnalyzer {
 		*/
 	private extractConfig (call: ts.CallExpression): { strictChain?: boolean; blockErrors?: boolean } {
 		// Config is the third argument: define('Name', handler, config)
-		const configArg = call.arguments[ 2 ];
+		const [ , , configArg ] = call.arguments;
 		if (!configArg || !ts.isObjectLiteralExpression(configArg)) {
 			return {};
 		}
@@ -714,7 +715,8 @@ export class MnemonicaAnalyzer {
 		if (ts.isPropertyAccessExpression(call.expression)) {
 			// The expression is the property access: (define('RootAsync', ...)).define
 			// We want the position of just the .define part
-			positionNode = call.expression.name; // This is the 'define' identifier
+			// This is the 'define' identifier
+			positionNode = call.expression.name;
 		}
 
 		const startPos = positionNode.getStart(sourceFile);
@@ -801,7 +803,8 @@ export class MnemonicaAnalyzer {
 		if (ts.isPropertyAccessExpression(call.expression)) {
 			// The expression is the property access: (define('RootAsync', ...)).lazy
 			// We want the position of just the .lazy part
-			positionNode = call.expression.name; // This is the 'lazy' identifier
+			// This is the 'lazy' identifier
+			positionNode = call.expression.name;
 		}
 
 		const startPos = positionNode.getStart(sourceFile);
@@ -887,7 +890,7 @@ export class MnemonicaAnalyzer {
 			if (args.length === 0) {
 				return undefined;
 			}
-			const methodFirstArg = args[ 0 ];
+			const [ methodFirstArg ] = args;
 			if (ts.isStringLiteral(methodFirstArg)) {
 				// Type.lazy('Name', getter, config?)
 				if (args.length < 2) {
@@ -913,12 +916,12 @@ export class MnemonicaAnalyzer {
 			return undefined;
 		}
 
-		const firstArg = args[ 0 ];
+		const [ firstArg ] = args;
 
 		// Explicit-source form: lazy(source, 'Name', getter, config?)
 		// or lazy(source, getter, config?)
 		if (args.length >= 2 && ts.isIdentifier(firstArg)) {
-			const secondArg = args[ 1 ];
+			const [ , secondArg ] = args;
 			if (ts.isStringLiteral(secondArg)) {
 				// lazy(source, 'Name', getter, config?)
 				if (args.length < 3) {
@@ -1382,7 +1385,7 @@ export class MnemonicaAnalyzer {
 			return undefined;
 		}
 
-		const firstArg = args[ 0 ];
+		const [ firstArg ] = args;
 
 		// Explicit-source form: define(source, 'TypeName', handler)
 		if (args.length >= 2 && ts.isIdentifier(firstArg) && ts.isStringLiteral(args[ 1 ])) {
@@ -1573,7 +1576,7 @@ export class MnemonicaAnalyzer {
 
 		// Single-arg lookup: lookup('User') or App.lookup('User')
 		if (args.length === 1) {
-			const arg = args[ 0 ];
+			const [ arg ] = args;
 			if (ts.isStringLiteral(arg) || ts.isNoSubstitutionTemplateLiteral(arg)) {
 				const path = arg.text;
 				// If this is a method call on a source, resolve relative to that source.
@@ -1603,8 +1606,7 @@ export class MnemonicaAnalyzer {
 
 		// Two-arg lookup: lookup(source, 'User')
 		if (args.length >= 2) {
-			const sourceArg = args[ 0 ];
-			const pathArg = args[ 1 ];
+			const [ sourceArg, pathArg ] = args;
 			if (!ts.isIdentifier(sourceArg) || !ts.isStringLiteral(pathArg)) {
 				return undefined;
 			}
@@ -1892,7 +1894,8 @@ export class MnemonicaAnalyzer {
 			if (ts.isIdentifier(param.name)) {
 				paramName = param.name.text;
 			} else {
-				continue; // Skip destructured parameters for now
+				// Skip destructured parameters for now
+				continue;
 			}
 
 			// Check if it's an inline object type literal
@@ -2000,7 +2003,7 @@ export class MnemonicaAnalyzer {
 				const args = expr.arguments;
 				if (args.length >= 2 && args[ 0 ].kind === ts.SyntaxKind.ThisKeyword) {
 					// Extract properties from the second argument
-					const propsArg = args[ 1 ];
+					const [ , propsArg ] = args;
 					if (ts.isObjectLiteralExpression(propsArg)) {
 						for (const prop of propsArg.properties) {
 							if (ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name)) {
@@ -2188,7 +2191,8 @@ export class MnemonicaAnalyzer {
 						}
 					}
 				}
-				break; // Found the `this` parameter, no need to continue
+				// Found the `this` parameter, no need to continue
+				break;
 			}
 		}
 
@@ -2278,7 +2282,7 @@ export class MnemonicaAnalyzer {
 
 			// Handle InstanceType<typeof X> pattern -> convert to Parent_X
 			if (typeName === 'InstanceType' && typeRef.typeArguments && typeRef.typeArguments.length === 1) {
-				const arg = typeRef.typeArguments[ 0 ];
+				const [ arg ] = typeRef.typeArguments;
 				if (arg.kind === ts.SyntaxKind.TypeQuery) {
 					const typeQuery = arg as ts.TypeQueryNode;
 					if (ts.isIdentifier(typeQuery.exprName)) {
@@ -2578,7 +2582,7 @@ export class MnemonicaAnalyzer {
 								// Parse Map<K, V> to get V
 								const match = mapType.match(/Map<[^,]+,\s*(.+)>$/);
 								if (match) {
-									mapValueType = match[ 1 ];
+									[ , mapValueType ] = match;
 								}
 							}
 						}
@@ -2650,9 +2654,12 @@ export class MnemonicaAnalyzer {
 					node.getStart(sourceFile)
 				);
 				this.addUsage(typeName, {
-					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-					kind     : 'instantiation',
-					code     : node.getText(sourceFile).slice(0, 100),
+					location        : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind            : 'instantiation',
+					code            : node.getText(sourceFile).slice(0, 100),
+					// Constructor expression text ('Thing', 'user.AdminEntity',
+					// a lookup alias) — CreationAnchor.constructorText (Phase 3)
+					constructorText : node.expression.getText(sourceFile).slice(0, 100),
 				});
 				// Track variable assignment from new Type() for flow analysis
 				this.trackNewAssignment(node, typeName);
@@ -2784,7 +2791,27 @@ export class MnemonicaAnalyzer {
 				code,
 				targetType : targetType || undefined,
 				scope,
+				fn         : funcName,
 			};
+			// dive's wrap-family signatures (dive/src/index.ts):
+			//   wrap(fn, label?) | wrap(fn, context?, label?)
+			//   wrapConstructorArg(fn, context)
+			//   upgradeConstructorArg(arg, instance)
+			//   wrapInstanceMethods(instance)
+			// …so the instance/context arg sits at args[1] (args[0] for
+			// wrapInstanceMethods) and a string literal in args[1..2] is the label
+			const instanceArgNode = funcName === 'wrapInstanceMethods'
+				? node.arguments[ 0 ]
+				: node.arguments[ 1 ];
+			if (instanceArgNode && ts.isIdentifier(instanceArgNode)) {
+				info.instanceArg = instanceArgNode.text;
+			}
+			for (const extraArg of [ node.arguments[ 1 ], node.arguments[ 2 ] ]) {
+				if (extraArg && ts.isStringLiteral(extraArg)) {
+					info.label = extraArg.text;
+					break;
+				}
+			}
 			// A wrap() call nested inside another wrapped body carries the
 			// link to the site whose runtime wrapping caused it
 			const via = this.nestedWrapVia.get(node);
@@ -2796,6 +2823,15 @@ export class MnemonicaAnalyzer {
 			// both are calculable AoT, so record them
 			const wrapped = this.resolveFunctionArgument(node.arguments[ 0 ], sourceFile);
 			if (wrapped) {
+				// The wrapped callback gets its own scope in scopes.json keyed by
+				// its start position — record that scopeId so graph consumers can
+				// join a wrap entry to the callback's creation node
+				const callbackPos = ts.getLineAndCharacterOfPosition(
+					sourceFile,
+					wrapped.getStart(sourceFile)
+				);
+				const callbackFile = nodePath.resolve(sourceFile.fileName);
+				info.callbackScopeId = `${callbackFile}:${callbackPos.line + 1}:${callbackPos.character + 1}`;
 				const createsTypes = new Set<string>();
 				this.analyzeWrappedBody(wrapped, location, sourceFile, 0, new Set(), createsTypes);
 				if (createsTypes.size > 0) {
@@ -2821,7 +2857,7 @@ export class MnemonicaAnalyzer {
 		// attachHooks(collection) — from @mnemonica/nestjs, wires a
 		// TypesCollection to dive's lifecycle tracing
 		if (funcName === 'attachHooks' && node.arguments.length > 0) {
-			const arg = node.arguments[ 0 ];
+			const [ arg ] = node.arguments;
 			if (ts.isArrayLiteralExpression(arg)) {
 				for (const element of arg.elements) {
 					const targetType = this.resolveEDSArgumentType(element);
@@ -3031,6 +3067,8 @@ export class MnemonicaAnalyzer {
 			code,
 			scope,
 			via  : viaLocation,
+			// dive wraps returned functions through the same wrap machinery
+			fn   : 'wrap',
 		});
 		// the returned function's own returns are wrapped in turn; `via`
 		// chains to this nested entry's location
@@ -3508,7 +3546,8 @@ export class MnemonicaAnalyzer {
 					optional : !!param.questionToken || !!param.initializer
 				});
 			}
-			break; // Only process first constructor
+			// Only process first constructor
+			break;
 		}
 
 		return params;

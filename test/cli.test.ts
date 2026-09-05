@@ -1,7 +1,10 @@
 'use strict';
 
 import { expect } from 'chai';
-import { parseArgs } from '../src/cli';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import { parseArgs, run } from '../src/cli';
 
 describe('parseArgs()', () => {
 	it('should return empty options for empty args', () => {
@@ -103,5 +106,66 @@ describe('parseArgs()', () => {
 		expect(opts.verbose).to.be.true;
 		expect(opts.esm).to.be.true;
 		expect(opts.outputDir).to.equal('.out');
+	});
+});
+
+describe('run() exclusion', () => {
+	// The fixture tsconfig deliberately includes ".tactica/*.ts" (the real-world
+	// trap: the nestjs example does this). The conventional project .tactica
+	// dir must be excluded anyway, even when --output points elsewhere.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-exclusion');
+
+	it('should always exclude the project-conventional .tactica directory', () => {
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-exclusion-'));
+		try {
+			run({
+				project : path.join(fixtureDir, 'tsconfig.json'),
+				outputDir,
+			});
+
+			const modulesJson = JSON.parse(
+				fs.readFileSync(path.join(outputDir, 'modules.json'), 'utf-8')
+			);
+			const keys = Object.keys(modulesJson.modules);
+			expect(keys.filter(k => k.includes(`${path.sep}.tactica${path.sep}`))).to.deep.equal([]);
+			expect(keys.some(k => k.endsWith(path.join('src', 'main.ts')))).to.be.true;
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+	});
+});
+
+describe('run() EDS join data', () => {
+	// Wrap entries carry the join data mnemographica's wrappers layer needs:
+	// the holder scope of the call site (scopeId) and the mnemonica type of
+	// the wrapped instance argument (wrapsTypePath), resolved through the
+	// scope-variable chain.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-eds');
+
+	it('should pin wrap entries to holder scopes and resolve wrapped instance types', () => {
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-eds-'));
+		try {
+			run({
+				project : path.join(fixtureDir, 'tsconfig.json'),
+				outputDir,
+				eds     : true,
+			});
+
+			const edsJson = JSON.parse(
+				fs.readFileSync(path.join(outputDir, 'eds.json'), 'utf-8')
+			);
+			const entries = Object.values(edsJson.eds).flat() as Array<Record<string, unknown>>;
+			const wrapEntry = entries.find(e => e.kind === 'wrap' && e.label === 'demo:wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.instanceArg).to.equal('widget');
+			expect(wrapEntry!.wrapsTypePath).to.equal('Widget');
+			expect(wrapEntry!.callbackScopeId).to.be.a('string').and.include('main.ts');
+			expect(wrapEntry!.scopeId).to.be.a('string').and.include('main.ts');
+			// The holder scope of the wrap call is makeWrapped's function scope,
+			// not the module scope (module scope ids are the bare file path)
+			expect(String(wrapEntry!.scopeId)).to.match(/main\.ts:\d+:\d+$/);
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
 	});
 });

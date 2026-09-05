@@ -8,8 +8,13 @@ import { MnemonicaAnalyzer } from './analyzer';
 import { TopologicaAnalyzer } from './topologica-analyzer';
 import { TypesGenerator } from './generator';
 import { TypesWriter } from './writer';
+import { ModuleGraphBuilder } from './module-graph';
+import { CreationGraphBuilder } from './creation-graph';
 import {
-	TacticaConfig, TypeNode 
+	LocalScopeWalker, ScopeTypeResolver
+} from './scopes';
+import {
+	TacticaConfig, TypeNode, EDSInfo, ScopeAnalysis
 } from './types';
 import { TypeGraphImpl } from './graph';
 
@@ -184,6 +189,63 @@ function loadProgram (tsconfigPath: string): ts.Program {
 }
 
 /**
+ * Look up a variable by name starting from a scope, walking outward through
+ * parentScopeId. The innermost binding wins even when it carries no typePath
+ * (shadowing honesty — an untyped local shadows a typed outer one).
+ */
+function resolveScopedVariableTypePath (
+	name: string,
+	scopeId: string,
+	scopeAnalysis: ScopeAnalysis
+): string | undefined {
+	let current: string | undefined = scopeId;
+	while (current) {
+		const variable = scopeAnalysis.variables.get(`${current}#${name}`);
+		if (variable) {
+			const { typePath } = variable;
+			return typePath;
+		}
+		current = scopeAnalysis.scopes.get(current)?.parentScopeId;
+	}
+	return undefined;
+}
+
+/**
+ * Join data for mnemographica's wrappers layer: pin each wrap entry to the
+ * scope holding its call site, and resolve the wrapped instance argument's
+ * mnemonica type through the scope-variable chain.
+ */
+function attachWrapJoinData (
+	eds: Map<string, EDSInfo[]>,
+	scopeWalker: LocalScopeWalker,
+	scopeAnalysis: ScopeAnalysis
+): void {
+	for (const entries of eds.values()) {
+		for (const entry of entries) {
+			if (entry.kind !== 'wrap') {
+				continue;
+			}
+			const holderScopeId = scopeWalker.findHolderScopeId(entry.location);
+			if (!holderScopeId) {
+				continue;
+			}
+			entry.scopeId = holderScopeId;
+			if (!entry.instanceArg) {
+				continue;
+			}
+			const wrapsTypePath = resolveScopedVariableTypePath(
+				entry.instanceArg,
+				holderScopeId,
+				scopeAnalysis
+			);
+			if (wrapsTypePath) {
+				entry.wrapsTypePath = wrapsTypePath;
+			}
+		}
+	}
+}
+
+/**
  * Render type hierarchy as an ASCII tree string.
  */
 function renderTypeHierarchy (graph: TypeGraphImpl): string {
@@ -207,7 +269,8 @@ function renderTypeHierarchy (graph: TypeGraphImpl): string {
 	for (let i = 0; i < roots.length; i++) {
 		renderNode(roots[ i ], '', i === roots.length - 1);
 	}
-	lines.push(''); // Empty line at end
+	// Empty line at end
+	lines.push('');
 
 	const result = lines.join('\n');
 	return result;
@@ -313,6 +376,11 @@ function run (options: CLIOptions): void {
 	// Determine output directory for exclusion
 	const outputDir = options.outputDir || '.tactica';
 	const outputDirPath = path.resolve(process.cwd(), outputDir);
+	// The project-conventional .tactica dir (next to tsconfig) is ALWAYS
+	// excluded, even when --output points elsewhere: generated files are
+	// never project source. resolve() both sides — tsconfigPath may be
+	// relative ('./tsconfig.json') while sourceFile.fileName is absolute
+	const conventionalOutputDir = path.resolve(process.cwd(), path.dirname(tsconfigPath), '.tactica');
 
 	// Collect source files to analyze
 	const sourceFiles: ts.SourceFile[] = [];
@@ -321,8 +389,9 @@ function run (options: CLIOptions): void {
 			continue;
 		}
 
-		// Always exclude the output directory to avoid analyzing generated files
-		if (sourceFile.fileName.startsWith(outputDirPath + path.sep)) {
+		const absoluteFileName = path.resolve(process.cwd(), sourceFile.fileName);
+		if (absoluteFileName.startsWith(outputDirPath + path.sep) ||
+			absoluteFileName.startsWith(conventionalOutputDir + path.sep)) {
 			continue;
 		}
 
@@ -385,7 +454,10 @@ function run (options: CLIOptions): void {
 		analyzer.addTopologicaType(typePath, node);
 	}
 
-	// First pass: collect all definitions
+	// First pass: collect all definitions.
+	// Module-scope tracking (imports/exports for modules.json) happens in the
+	// same pass — it needs only the AST, not the collected definitions.
+	const moduleGraphBuilder = new ModuleGraphBuilder(program);
 	for (const sourceFile of sourceFiles) {
 		if (options.verbose) {
 			console.log(`Analyzing (definitions): ${sourceFile.fileName}`);
@@ -393,6 +465,7 @@ function run (options: CLIOptions): void {
 
 		try {
 			analyzer.analyzeFile(sourceFile);
+			moduleGraphBuilder.addFile(sourceFile);
 		} catch (err) {
 			console.error(`Error analyzing ${sourceFile.fileName}:`, err);
 			throw err;
@@ -477,7 +550,42 @@ export * from './registry${options.esm ? '.js' : ''}';
 		};
 		definitions.set(fullPath, definition);
 	}
-	
+
+	// Local-scope walk (instrumentation walker Phase 2): function/method/arrow
+	// scopes only (no block scopes — decision 5), variables with isMutable and
+	// reassignment sites (decision 6). Runs after definitions are known so
+	// variable typePaths can resolve; holderScopeId is attached to usages
+	// before they are written.
+	const scopeWalker = new LocalScopeWalker();
+	for (const sourceFile of sourceFiles) {
+		scopeWalker.addFile(sourceFile);
+	}
+	const scopeResolver: ScopeTypeResolver = {
+		resolveByName : (name: string): string | undefined => {
+			if (definitions.has(name)) {
+				return name;
+			}
+			let found: string | undefined;
+			for (const [ fullPath, definition ] of definitions) {
+				if (definition.name !== name) {
+					continue;
+				}
+				if (found) {
+					// Ambiguous name — no type checker, so refuse to guess
+					return undefined;
+				}
+				found = fullPath;
+			}
+			return found;
+		},
+		hasPath : (fullPath: string): boolean => {
+			const result = definitions.has(fullPath);
+			return result;
+		},
+	};
+	const scopeAnalysis = scopeWalker.build(scopeResolver);
+	LocalScopeWalker.attachHolderScopeIds(usages, scopeWalker);
+
 	const definitionsPath = writer.writeDefinitionsFile(definitions);
 	const usagesPath = writer.writeUsagesFile(usages);
 
@@ -494,6 +602,7 @@ export * from './registry${options.esm ? '.js' : ''}';
 
 	if (enableEDS) {
 		const eds = analyzer.getEDSUsages();
+		attachWrapJoinData(eds, scopeWalker, scopeAnalysis);
 		const edsPath = writer.writeEDSFile(eds);
 		if (options.verbose) {
 			console.log(`Generated eds.json at: ${edsPath}`);
@@ -508,12 +617,56 @@ export * from './registry${options.esm ? '.js' : ''}';
 		console.log(`Generated flow.json at: ${flowPath} (${flowCount} flow entries)`);
 	}
 
-	// Always generate instrumentation.json (NestJS lifecycle crossroads —
-	// syntactic detection needs no dive dependency, unlike eds.json)
-	const instrumentation = analyzer.getInstrumentationPoints();
-	const instrumentationPath = writer.writeInstrumentationFile(instrumentation);
+	// Always generate modules.json (module-scope graph: imports/exports,
+	// dependencies, cycles, cross-module mnemonica-type edges)
+	const definedTypesByFile = new Map<string, string[]>();
+	for (const [ fullPath, definition ] of definitions) {
+		const { location } = definition;
+		const lastColon = location.lastIndexOf(':');
+		const prevColon = location.lastIndexOf(':', lastColon - 1);
+		const file = location.slice(0, prevColon);
+		const list = definedTypesByFile.get(file) ?? [];
+		list.push(fullPath);
+		definedTypesByFile.set(file, list);
+	}
+	const moduleGraph = moduleGraphBuilder.build(definedTypesByFile);
+	const modulesPath = writer.writeModulesFile(moduleGraph);
 	if (options.verbose) {
+		const moduleCount = moduleGraph.modules.size;
+		const edgeCount = moduleGraph.edges.length;
+		console.log(`Generated modules.json at: ${modulesPath} (${moduleCount} modules, ${edgeCount} edges)`);
+	}
+
+	// Always generate scopes.json (local-scope walker: scopes, variables,
+	// reassignment flow-termination points)
+	const scopesPath = writer.writeScopesFile(scopeAnalysis);
+	if (options.verbose) {
+		const scopeCount = scopeAnalysis.scopes.size;
+		const variableCount = scopeAnalysis.variables.size;
+		console.log(`Generated scopes.json at: ${scopesPath} (${scopeCount} scopes, ${variableCount} variables)`);
+	}
+
+	// The inside-out creation walk (instrumentation walker Phase 3): anchors
+	// are the instantiation usages; callers are followed same-file and
+	// cross-file (module graph, barrels chased) until only starters remain.
+	const sourceFilesByPath = new Map<string, ts.SourceFile>();
+	for (const sourceFile of sourceFiles) {
+		sourceFilesByPath.set(path.resolve(sourceFile.fileName), sourceFile);
+	}
+	const creationGraphBuilder = new CreationGraphBuilder(moduleGraph, scopeAnalysis, scopeWalker, sourceFilesByPath);
+	const creationGraph = creationGraphBuilder.build(usages);
+
+	// Always generate instrumentation.json (NestJS lifecycle crossroads —
+	// syntactic detection needs no dive dependency, unlike eds.json). v2
+	// carries the creation graph alongside the points.
+	const instrumentation = analyzer.getInstrumentationPoints();
+	const instrumentationPath = writer.writeInstrumentationFile(instrumentation, creationGraph);
+	if (options.verbose) {
+		const nodeCount = creationGraph.nodes.length;
+		const edgeCount = creationGraph.edges.length;
+		const anchorCount = creationGraph.anchors.length;
 		console.log(`Generated instrumentation.json at: ${instrumentationPath} (${instrumentation.length} points)`);
+		console.log(`  creation graph: ${nodeCount} nodes, ${edgeCount} edges, ${anchorCount} anchors`);
 	}
 
 	// Generate hierarchy.json (structured) and hierarchy.txt (ASCII tree) for the Trie

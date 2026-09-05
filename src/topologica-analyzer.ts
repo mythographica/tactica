@@ -138,11 +138,11 @@ export class TopologicaAnalyzer {
 			
 			// Find handler function and extract property assignments and constructor params
 			const result = this.extractPropertiesFromSourceFile(sourceFile, properties, typeAliases);
-			constructorParams = result.constructorParams;
-			
+			( { constructorParams } = result );
+
 			// Use the handler function location if found
 			if (result.handlerLocation) {
-				handlerLocation = result.handlerLocation;
+				( { handlerLocation } = result );
 			}
 			
 		} catch (error) {
@@ -204,10 +204,11 @@ export class TopologicaAnalyzer {
 							sourceFile,
 							node.getStart(sourceFile)
 						);
+						// line and column are 1-based
 						handlerLocation = {
 							filePath : sourceFile.fileName,
-							line     : line + 1, // 1-based
-							column   : character + 1 // 1-based
+							line     : line + 1,
+							column   : character + 1
 						};
 					}
 				}
@@ -223,10 +224,11 @@ export class TopologicaAnalyzer {
 						sourceFile,
 						node.getStart(sourceFile)
 					);
+					// line and column are 1-based
 					handlerLocation = {
 						filePath : sourceFile.fileName,
-						line     : line + 1, // 1-based
-						column   : character + 1 // 1-based
+						line     : line + 1,
+						column   : character + 1
 					};
 				}
 			}
@@ -300,7 +302,7 @@ export class TopologicaAnalyzer {
 		const methodName = expr.name.text;
 		
 		if (objName === 'Object' && methodName === 'assign') {
-			const firstArg = callExpr.arguments[ 0 ];
+			const [ firstArg ] = callExpr.arguments;
 			if (firstArg && firstArg.kind === ts.SyntaxKind.ThisKeyword) {
 				return true;
 			}
@@ -317,7 +319,7 @@ export class TopologicaAnalyzer {
 		properties: Map<string, PropertyInfo>
 	): void {
 		// Look for the data argument (second argument)
-		const dataArg = callExpr.arguments[ 1 ];
+		const [ , dataArg ] = callExpr.arguments;
 		if (!dataArg) return;
 		
 		// If it's an object literal, extract properties
@@ -507,7 +509,8 @@ export class TopologicaAnalyzer {
 		if (ts.isIdentifier(expr)) {
 			switch (expr.text) {
 			case 'Date':
-				return 'number'; // Date.now() returns number
+				// Date.now() returns number
+				return 'number';
 			case 'Array':
 				return 'Array<any>';
 			case 'Map':

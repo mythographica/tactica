@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson,
-	InstrumentationPoint, InstrumentationJson
+	InstrumentationPoint, InstrumentationJson, ModuleGraph, ModulesJson, ScopeAnalysis, ScopesJson, CreationGraph
 } from './types';
 
 /**
@@ -152,17 +152,21 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Write instrumentation.json file
+	 * Write instrumentation.json file (v2: adds the creationGraph key when
+	 * the caller passes creation-graph data — the CLI always does)
 	 */
-	writeInstrumentationFile (points: InstrumentationPoint[]): string {
+	writeInstrumentationFile (points: InstrumentationPoint[], creationGraph?: CreationGraph): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'instrumentation.json');
 
 		const json: InstrumentationJson = {
-			version     : 1,
+			version     : 2,
 			generatedAt : new Date().toISOString(),
 			points,
 		};
+		if (creationGraph) {
+			json.creationGraph = creationGraph;
+		}
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -185,6 +189,56 @@ export class TypesWriter {
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			flow        : flowObj,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write modules.json file
+	 */
+	writeModulesFile (graph: ModuleGraph): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'modules.json');
+
+		// Convert Map to plain object
+		const modulesObj: ModulesJson[ 'modules' ] = {};
+		for (const [ key, value ] of graph.modules) {
+			modulesObj[ key ] = value;
+		}
+
+		const json: ModulesJson = {
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			modules     : modulesObj,
+			edges       : graph.edges,
+			cycles      : graph.cycles,
+		};
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write scopes.json file
+	 */
+	writeScopesFile (analysis: ScopeAnalysis): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'scopes.json');
+
+		// Convert Maps to plain shapes
+		const scopesObj: ScopesJson[ 'scopes' ] = {};
+		for (const [ key, value ] of analysis.scopes) {
+			scopesObj[ key ] = value;
+		}
+		const variables = Array.from(analysis.variables.values());
+
+		const json: ScopesJson = {
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			scopes      : scopesObj,
+			variables,
 		};
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');

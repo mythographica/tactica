@@ -4,7 +4,7 @@ import { expect } from 'chai';
 import * as fs from 'fs';
 import * as path from 'path';
 import { TypesWriter } from '../src/writer';
-import { GeneratedTypes } from '../src/types';
+import { GeneratedTypes, ModuleGraph } from '../src/types';
 
 describe('TypesWriter', () => {
 	const testDir = path.join(__dirname, '.test-mnemonica');
@@ -221,6 +221,111 @@ describe('TypesWriter', () => {
 			const outputPath = writer.writeFlowFile(new Map());
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.flow).to.deep.equal({});
+		});
+	});
+
+	describe('writeModulesFile()', () => {
+		it('should write modules.json with correct shape', () => {
+			const graph: ModuleGraph = {
+				modules : new Map([
+					[ '/project/src/defs.ts', {
+						filePath         : '/project/src/defs.ts',
+						definedTypes     : [ 'Thing' ],
+						exportedBindings : [
+							{
+								name         : 'Thing',
+								kind         : 'class' as const,
+								sourceModule : '/project/src/defs.ts',
+								isReExport   : false,
+							},
+						],
+						importedBindings     : [],
+						dependencies         : [],
+						unresolvedSpecifiers : [],
+						builtinSpecifiers    : [],
+					} ],
+				]),
+				edges : [
+					{
+						typePath         : 'Thing',
+						definitionModule : '/project/src/defs.ts',
+						usageModule      : '/project/src/main.ts',
+						usageLocation    : '/project/src/main.ts:1:1',
+					},
+				],
+				cycles : [],
+			};
+
+			const outputPath = writer.writeModulesFile(graph);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('modules.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.modules[ '/project/src/defs.ts' ].definedTypes).to.deep.equal([ 'Thing' ]);
+			expect(json.modules[ '/project/src/defs.ts' ].exportedBindings[ 0 ].kind).to.equal('class');
+			expect(json.edges).to.have.length(1);
+			expect(json.edges[ 0 ].definitionModule).to.equal('/project/src/defs.ts');
+			expect(json.cycles).to.deep.equal([]);
+		});
+
+		it('should handle an empty module graph', () => {
+			const outputPath = writer.writeModulesFile({ modules : new Map(), edges : [], cycles : [] });
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.modules).to.deep.equal({});
+			expect(json.edges).to.deep.equal([]);
+		});
+	});
+
+	describe('writeScopesFile()', () => {
+		it('should write scopes.json with correct shape', () => {
+			const outputPath = writer.writeScopesFile({
+				scopes : new Map([
+					[ '/project/src/main.ts', {
+						scopeId  : '/project/src/main.ts',
+						name     : '/project/src/main.ts',
+						kind     : 'module' as const,
+						filePath : '/project/src/main.ts',
+						location : '/project/src/main.ts:1:1',
+					} ],
+					[ '/project/src/main.ts:3:1', {
+						scopeId       : '/project/src/main.ts:3:1',
+						name          : 'bootstrap',
+						kind          : 'function' as const,
+						parentScopeId : '/project/src/main.ts',
+						filePath      : '/project/src/main.ts',
+						location      : '/project/src/main.ts:3:1',
+					} ],
+				]),
+				variables : new Map([
+					[ '/project/src/main.ts:3:1#app', {
+						name          : 'app',
+						scopeId       : '/project/src/main.ts:3:1',
+						typePath      : 'App',
+						declaration   : '/project/src/main.ts:4:8',
+						isParameter   : false,
+						isMutable     : false,
+						reassignments : [],
+					} ],
+				]),
+			});
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('scopes.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.0');
+			expect(json.scopes[ '/project/src/main.ts' ].kind).to.equal('module');
+			expect(json.scopes[ '/project/src/main.ts:3:1' ].parentScopeId).to.equal('/project/src/main.ts');
+			expect(json.variables).to.have.length(1);
+			expect(json.variables[ 0 ].typePath).to.equal('App');
+			expect(json.variables[ 0 ].reassignments).to.deep.equal([]);
+		});
+
+		it('should handle an empty scope analysis', () => {
+			const outputPath = writer.writeScopesFile({ scopes : new Map(), variables : new Map() });
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.scopes).to.deep.equal({});
+			expect(json.variables).to.deep.equal([]);
 		});
 	});
 

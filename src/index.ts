@@ -15,6 +15,10 @@ export { TopologicaAnalyzer } from './topologica-analyzer';
 export { TypeGraphImpl } from './graph';
 export { TypesGenerator } from './generator';
 export { TypesWriter } from './writer';
+export { ModuleGraphBuilder } from './module-graph';
+export { LocalScopeWalker } from './scopes';
+export type { ScopeTypeResolver } from './scopes';
+export { CreationGraphBuilder } from './creation-graph';
 
 
 export type {
@@ -33,6 +37,22 @@ export type {
 	InstrumentationScope,
 	InstrumentationPoint,
 	InstrumentationJson,
+	ModuleBindingKind,
+	ModuleImportKind,
+	ModuleBinding,
+	ModuleInfo,
+	CrossModuleUsage,
+	ModuleGraph,
+	ModulesJson,
+	ScopeKind,
+	ScopeInfo,
+	ScopeVariable,
+	ScopeAnalysis,
+	ScopesJson,
+	CreationGraphNode,
+	CreationGraphEdge,
+	CreationAnchor,
+	CreationGraph,
 } from './types';
 
 // CLI entry point

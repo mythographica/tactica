@@ -134,9 +134,11 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | `index.ts` | default mode | Re-exports everything from `types.ts` and `registry.ts`. |
 | `index.d.ts` | with `--module-augmentation` | Single global-augmentation file (legacy mode). |
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
-| `usages.json` | always | One entry per type, value is an array of `{ location, kind, code }` records — where each type is instantiated, referenced, accessed, or looked up. Consumed by `mnemographica`'s Find References. |
+| `usages.json` | always | One entry per type, value is an array of `{ location, kind, code, holderScopeId?, constructorText? }` records — where each type is instantiated, referenced, accessed, or looked up. `holderScopeId` points into `scopes.json` (the innermost scope holding the usage); `constructorText` (instantiations only) is the constructor expression text actually used. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
-| `instrumentation.json` | always | NestJS lifecycle crossroads (interceptors, guards, pipes, filters, middleware): heritage declarations, `@UseGuards`/`@UseInterceptors`/`@UsePipes` sites, `APP_*` providers, `consumer.apply()` wiring. Syntactic only — no dive dependency. |
+| `instrumentation.json` | always | v2 envelope. `points`: NestJS lifecycle crossroads (interceptors, guards, pipes, filters, middleware): heritage declarations, `@UseGuards`/`@UseInterceptors`/`@UsePipes` sites, `APP_*` providers, `consumer.apply()` wiring. Syntactic only — no dive dependency. `creationGraph`: the inside-out walk from every instantiation site out to the starters — see "Creation graph" below. |
+| `modules.json` | always | Module-scope graph: every module's `exportedBindings`/`importedBindings` (functions, classes, consts, types — not only mnemonica types), project-internal `dependencies`, `builtinSpecifiers` (Node builtins are skipped entirely — both `'path'` and `'node:path'` forms), `unresolvedSpecifiers`, circular-import `cycles`, and cross-module mnemonica-type `edges`. Resolution uses `ts.resolveModuleName` with the project's compilerOptions (tsconfig `paths`, extensionless imports, index files) — no type checker. Bindings resolved into `node_modules` are marked `external: true` and never enter `dependencies`. |
+| `scopes.json` | always | Local-scope graph: function/method/arrow scopes only (no block scopes) plus one module scope per file; variables with `typePath` (mnemonica type when known), `isParameter`, `isMutable`, and `reassignments` — each reassignment of a mutable binding is a flow-termination point. |
 | `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
 
 ### Default mode (types.ts + registry.ts)
@@ -536,6 +538,61 @@ class TypesGenerator {
 }
 ```
 
+### `ModuleGraphBuilder`
+
+Module-scope walker. Tracks every export/import binding of every module —
+generically, not only mnemonica types — and resolves specifiers with
+`ts.resolveModuleName` driven by the program's compilerOptions
+(no `getTypeChecker()`).
+
+```ts
+class ModuleGraphBuilder {
+    constructor(program?: ts.Program, compilerOptions?: ts.CompilerOptions);
+
+    addFile(sourceFile: ts.SourceFile): ModuleInfo;   // call per file (definitions pass)
+    build(definedTypesByFile?: Map<string, string[]>): ModuleGraph;
+}
+```
+
+`ModuleGraph` = `{ modules: Map<absPath, ModuleInfo>, edges: CrossModuleUsage[], cycles: string[][] }`.
+Each `ModuleBinding` carries `{ name, kind: 'function'|'class'|'const'|'type'|'unknown',
+sourceModule (resolved absolute path), importKind?, importAlias?, isReExport, external? }`.
+Node.js builtins (`'path'`, `'node:fs'`, …) are skipped entirely and recorded
+only in the module's `builtinSpecifiers`; bindings resolved into `node_modules`
+carry `external: true` and never enter `dependencies`. Re-export chains
+(barrels, `export * from`) are chased to the origin module when producing
+`edges`; circular imports are recorded in `cycles`, never treated as errors.
+Unused-export detection is internal only — nothing about it is emitted.
+
+### `LocalScopeWalker`
+
+Local-scope walker. Tracks function/method/arrow scopes only (no block
+scopes), plus one synthetic module scope per file. Variables carry
+`isParameter`, `isMutable` (const vs let/var; `this` parameters are
+immutable), and `reassignments` — every reassignment site of a mutable
+binding is a flow-termination point where downstream walking stops.
+
+```ts
+class LocalScopeWalker {
+    addFile(sourceFile: ts.SourceFile): void;         // call per file
+    build(resolver?: ScopeTypeResolver): ScopeAnalysis;
+    findHolderScopeId(location: string): string | undefined;
+
+    static attachHolderScopeIds(usages: Map<string, UsageInfo[]>, walker: LocalScopeWalker): void;
+}
+
+interface ScopeTypeResolver {
+    resolveByName(name: string): string | undefined;  // bare name → mnemonica fullPath
+    hasPath(fullPath: string): boolean;
+}
+```
+
+`ScopeAnalysis` = `{ scopes: Map<scopeId, ScopeInfo>, variables: Map<'scopeId#name', ScopeVariable> }`.
+Scope ids: module scope = file path; function scopes = `file:line:col`.
+Labels: functions by name, methods as `Class.method`, arrows by the binding
+they are assigned to, anonymous holders as `file:line`. Never relies on
+`node.parent` (program files can be unbound).
+
 ### `TypesWriter`
 
 ```ts
@@ -550,7 +607,9 @@ class TypesWriter {
     writeUsagesFile     (map: Map<string, UsageInfo[]>):    string; // → outputDir/usages.json
     writeEDSFile        (map: Map<string, EDSInfo[]>):      string; // → outputDir/eds.json
     writeFlowFile       (map: Map<string, FlowInfo[]>):     string; // → outputDir/flow.json
-    writeInstrumentationFile(points: InstrumentationPoint[]): string; // → outputDir/instrumentation.json
+    writeInstrumentationFile(points: InstrumentationPoint[], creationGraph?: CreationGraph): string; // → outputDir/instrumentation.json
+    writeModulesFile      (graph: ModuleGraph):             string; // → outputDir/modules.json
+    writeScopesFile       (analysis: ScopeAnalysis):        string; // → outputDir/scopes.json
 
     write(generated: GeneratedTypes): string; // legacy alias for writeTypesFile
     clean(): void;
@@ -560,7 +619,7 @@ class TypesWriter {
 
 ### Types
 
-`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema.
+`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson`, `ModuleBindingKind`, `ModuleImportKind`, `ModuleBinding`, `ModuleInfo`, `CrossModuleUsage`, `ModuleGraph`, `ModulesJson`, `ScopeKind`, `ScopeInfo`, `ScopeVariable`, `ScopeAnalysis`, `ScopesJson`, `CreationGraphNode`, `CreationGraphEdge`, `CreationAnchor`, `CreationGraph` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema.
 
 ## EDS (Execution Data Storage) Tracking
 
@@ -591,6 +650,15 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 }
 ```
 
+`wrap` entries additionally carry graph-join fields (all optional, additive):
+
+- `label` — the label string literal of `wrap(fn, …, 'label')` when statically visible.
+- `callbackScopeId` — the scopeId (scopes.json) of the wrapped callback's own scope; the callback is what the wrapper runs, so graph consumers join on it first.
+- `instanceArg` — the identifier passed as the instance/context argument (`user` in `wrap(fn, user)`), when it is one.
+- `scopeId` — the scopeId of the scope holding the wrap call site (fallback join).
+- `wrapsTypePath` — the mnemonica fullPath of the instance argument, resolved through the scope-variable chain (innermost binding wins; an untyped local shadows a typed outer one rather than being guessed).
+- `via` — the location of the enclosing wrap site when the call is nested inside another wrapped body (or returns a function): the wrappers-graph generation chain is built from it.
+
 ## Instrumentation Points
 
 Tactica statically detects NestJS lifecycle crossroads — interceptors, guards, pipes, exception filters, middleware — purely syntactically (no type checker), and always emits `.tactica/instrumentation.json`. Detection covers:
@@ -602,12 +670,12 @@ Tactica statically detects NestJS lifecycle crossroads — interceptors, guards,
 
 When a referenced class is declared in the analyzed project, the point's `location`/`code` resolve to the class declaration; external classes (e.g. `ValidationPipe` from `@nestjs/common`) keep the registration site. Points are deduped by `(kind, className, location, scope)` with `targets` merged — a class seen via both heritage and a decorator yields separate entries per scope, with the bare declaration carrying scope `module`.
 
-`instrumentation.json` structure:
+`instrumentation.json` structure (v2):
 
 ```json
 {
-    "version": 1,
-    "generatedAt": "2026-09-02T…",
+    "version": 2,
+    "generatedAt": "2026-09-04T…",
     "points": [
         {
             "kind": "pipe",
@@ -617,16 +685,50 @@ When a referenced class is declared in the analyzed project, the point's `locati
             "scope": "method:UserController.createUser",
             "targets": ["UserController"]
         }
-    ]
+    ],
+    "creationGraph": {
+        "nodes": [
+            {
+                "scopeId": "/project/src/main.ts",
+                "name": "/project/src/main.ts",
+                "kind": "module",
+                "filePath": "/project/src/main.ts",
+                "location": "/project/src/main.ts:1:1",
+                "starter": true
+            }
+        ],
+        "edges": [
+            { "caller": "/project/src/main.ts", "callee": "/project/src/user.service.ts:26:2" }
+        ],
+        "anchors": [
+            {
+                "location": "/project/src/user.service.ts:29:24",
+                "holderScopeId": "/project/src/user.service.ts:26:2",
+                "typePath": "UserEntity.UserResponse",
+                "constructorText": "user.UserResponse",
+                "variable": "userResponse"
+            }
+        ]
+    }
 }
 ```
+
+## Creation graph (inside-out walk)
+
+The `creationGraph` key is the third phase of the instrumentation walker: it starts at the certain points — every `usages.json` `instantiation` entry (each carries a `holderScopeId` into `scopes.json`) — and walks **outward**: who invokes or references the holder function, crossing files through `modules.json` (re-export barrels chased to the origin module), until no callers remain. Terminals are the **starters** (application entry points); the walk never assumes a linear type Trie (mnemonica `strictChain: false` permits cycles and out-of-order construction), so traversal is cycle-guarded and every anchor records the constructor expression actually used.
+
+- **Nodes** are scopes (`module` / `function` / `method` / `arrow`), labeled like `scopes.json`; `starter: true` marks nodes with no discovered callers.
+- **Edges** point `caller → callee`, where the callee is closer to the creation site.
+- **Anchors** pin each creation site to its holder scope: `typePath`, the `constructorText` used, `rooted: true` for module-scope creations (a legitimate root or a developer error — labeled, not policed), and a `variable`/`terminatedAt` pair from a documented heuristic: the variable declared in the holder scope on the same line as the creation (typePath must match when known), with `terminatedAt` being that variable's first reassignment site — the flow-termination point where the walk stops following the binding.
+
+Deliberate approximations (name-based, no type checker): namespace imports count any reference to the alias once the namespace's module exposes the holder's export; method holders bind to their **class** name (that is what callers reference); any non-declaration identifier counts as a reference. Export wiring alone (`export { f }`, `export default f`) is not a caller — an importer's usage creates the edge.
 
 ## How It Works
 
 1. **Parse** — load `tsconfig.json`, build a `ts.Program`, walk each source file's AST.
 2. **Detect** — find `define()` and `@decorate()` calls, plus `lookup` lookups, `new` expressions, and EDS / flow patterns.
 3. **Graph** — build a Trie of types in `TypeGraphImpl`, with parent links via the chain of `.define()` calls and `@decorate(Parent)` references.
-4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json`, `flow.json`, and optionally `eds.json`.
+4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, and optionally `eds.json`.
 5. **Write** — files land in the output directory (default `.tactica/`).
 
 ```

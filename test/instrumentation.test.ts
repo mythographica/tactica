@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { MnemonicaAnalyzer } from '../src/analyzer';
 import { TypesWriter } from '../src/writer';
-import { InstrumentationPoint } from '../src/types';
+import { InstrumentationPoint, CreationGraph } from '../src/types';
 
 describe('MnemonicaAnalyzer - Instrumentation Points', () => {
 	let analyzer: MnemonicaAnalyzer;
@@ -353,7 +353,7 @@ describe('TypesWriter - instrumentation.json', () => {
 		}
 	});
 
-	it('should write instrumentation.json with version 1 envelope', () => {
+	it('should write instrumentation.json with version 2 envelope', () => {
 		const points: InstrumentationPoint[] = [
 			{
 				kind      : 'guard',
@@ -369,8 +369,40 @@ describe('TypesWriter - instrumentation.json', () => {
 
 		expect(fs.existsSync(outputPath)).to.be.true;
 		const written = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-		expect(written.version).to.equal(1);
+		expect(written.version).to.equal(2);
 		expect(written.generatedAt).to.be.a('string');
 		expect(written.points).to.deep.equal(points);
+		// Without creation-graph data the key stays absent (library callers)
+		expect(written).to.not.have.property('creationGraph');
+	});
+
+	it('should include the creation graph when provided (CLI always passes it)', () => {
+		const creationGraph: CreationGraph = {
+			nodes : [
+				{
+					scopeId  : '/abs/path/src/main.ts',
+					name     : '/abs/path/src/main.ts',
+					kind     : 'module',
+					filePath : '/abs/path/src/main.ts',
+					location : '/abs/path/src/main.ts:1:1',
+					starter  : true,
+				},
+			],
+			edges   : [],
+			anchors : [
+				{
+					location      : '/abs/path/src/main.ts:5:16',
+					holderScopeId : '/abs/path/src/main.ts',
+					typePath      : 'Thing',
+					rooted        : true,
+				},
+			],
+		};
+
+		const outputPath = writer.writeInstrumentationFile([], creationGraph);
+
+		const written = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+		expect(written.version).to.equal(2);
+		expect(written.creationGraph).to.deep.equal(creationGraph);
 	});
 });
