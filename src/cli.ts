@@ -3,6 +3,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createRequire } from 'module';
 import * as ts from 'typescript';
 import { MnemonicaAnalyzer } from './analyzer';
 import { TopologicaAnalyzer } from './topologica-analyzer';
@@ -16,12 +17,13 @@ import {
 import {
 	TacticaConfig, TypeNode, EDSInfo, ScopeAnalysis
 } from './types';
+import { TacticaPlugin } from './plugins';
 import { TypeGraphImpl } from './graph';
 
 /**
  * CLI entry point for Tactica
  *
- * Can be used standalone without the Language Service Plugin
+ * Runs the analyzer over a tsconfig project and writes .tactica/ output
  */
 
 interface CLIOptions extends TacticaConfig {
@@ -34,6 +36,8 @@ interface CLIOptions extends TacticaConfig {
 	esm?: boolean;
 	/** Enable EDS (Execution Data Storage) tracking */
 	eds?: boolean;
+	/** Programmatic plugins; config-file plugins are appended after these */
+	plugins?: TacticaPlugin[];
 }
 
 /**
@@ -102,7 +106,7 @@ function parseArgs (args: string[]): CLIOptions {
  */
 function printHelp (): void {
 	console.log(`
-Tactica - TypeScript Language Service Plugin for Mnemonica
+Tactica - Type definition generator for Mnemonica
 
 Usage: tactica [options]
 
@@ -119,6 +123,15 @@ Options:
   --no-eds                  Disable EDS tracking
   -v, --verbose             Enable verbose logging
   -h, --help                Show this help message
+
+Configuration:
+  Framework instrumentation vocabulary is supplied by plugins. Place a
+  .tactica.js (or tactica.config.js) next to your tsconfig.json:
+
+      module.exports = { plugins: [ 'your-framework-adapter/tactica' ] };
+
+  Entries are module specifiers (required relative to the config file) or
+  inline plugin objects. Without plugins, instrumentation.json points = [].
 
 Examples:
   tactica                              # Generate types with global augmentation (default)
@@ -353,6 +366,79 @@ function scanTopologicaDirectories (projectDir: string, customDirs?: string[]): 
 }
 
 /**
+ * Config file candidates (eslint-style project config), searched next to
+ * the resolved tsconfig first, then in the current working directory.
+ */
+const CONFIG_FILE_NAMES = [ '.tactica.js', 'tactica.config.js' ];
+
+interface TacticaConfigFile {
+	plugins?: Array<TacticaPlugin | string>;
+}
+
+/**
+ * Load framework-vocabulary plugins: programmatic options first, then the
+ * project config file. String entries are module specifiers required
+ * relative to the config file (e.g. an adapter package's plugin subpath).
+ * Without a config file and without programmatic plugins the analyzer
+ * stays framework-blind and instrumentation.json carries empty points.
+ */
+function loadTacticaPlugins (projectDir: string, options: CLIOptions): TacticaPlugin[] {
+	const plugins: TacticaPlugin[] = [ ...(options.plugins || []) ];
+
+	const searchDirs = [ projectDir ];
+	const cwd = process.cwd();
+	if (cwd !== projectDir) {
+		searchDirs.push(cwd);
+	}
+
+	let configPath: string | undefined;
+	for (const dir of searchDirs) {
+		for (const name of CONFIG_FILE_NAMES) {
+			const candidate = path.join(dir, name);
+			if (fs.existsSync(candidate)) {
+				configPath = candidate;
+				break;
+			}
+		}
+		if (configPath) {
+			break;
+		}
+	}
+
+	if (!configPath) {
+		return plugins;
+	}
+
+	// createRequire anchored at the config file: the config's own imports
+	// and string plugin specifiers resolve against the project's modules
+	const configRequire = createRequire(configPath);
+	const loaded = configRequire(configPath);
+	const config: TacticaConfigFile = loaded && typeof loaded === 'object' && 'default' in loaded
+		? loaded.default
+		: loaded;
+	const entries = config && Array.isArray(config.plugins) ? config.plugins : [];
+
+	for (const entry of entries) {
+		if (typeof entry !== 'string') {
+			plugins.push(entry);
+			continue;
+		}
+		const mod = configRequire(entry);
+		const plugin: TacticaPlugin = mod && typeof mod === 'object' && 'default' in mod
+			? mod.default
+			: mod;
+		plugins.push(plugin);
+	}
+
+	if (options.verbose) {
+		const names = plugins.map(plugin => plugin.name || '(unnamed)').join(', ');
+		console.log(`Loaded tactica config: ${configPath} (plugins: ${names || 'none'})`);
+	}
+
+	return plugins;
+}
+
+/**
  * Run type generation
  */
 function run (options: CLIOptions): void {
@@ -367,11 +453,16 @@ function run (options: CLIOptions): void {
 		console.log(`Using tsconfig: ${tsconfigPath}`);
 	}
 
+	// Framework vocabulary arrives via plugins — a config file next to the
+	// tsconfig (or in cwd) and/or programmatic options. None loaded means
+	// the analyzer detects zero instrumentation points.
+	const plugins = loadTacticaPlugins(path.dirname(path.resolve(tsconfigPath)), options);
+
 	// Load TypeScript program
 	const program = loadProgram(tsconfigPath);
 
 	// Create analyzer
-	const analyzer = new MnemonicaAnalyzer(program);
+	const analyzer = new MnemonicaAnalyzer(program, plugins);
 
 	// Determine output directory for exclusion
 	const outputDir = options.outputDir || '.tactica';
@@ -656,9 +747,10 @@ export * from './registry${options.esm ? '.js' : ''}';
 	const creationGraphBuilder = new CreationGraphBuilder(moduleGraph, scopeAnalysis, scopeWalker, sourceFilesByPath);
 	const creationGraph = creationGraphBuilder.build(usages);
 
-	// Always generate instrumentation.json (NestJS lifecycle crossroads —
-	// syntactic detection needs no dive dependency, unlike eds.json). v2
-	// carries the creation graph alongside the points.
+	// Always generate instrumentation.json (framework lifecycle crossroads
+	// from the loaded plugins — syntactic detection needs no dive
+	// dependency, unlike eds.json). v2 carries the creation graph
+	// alongside the points.
 	const instrumentation = analyzer.getInstrumentationPoints();
 	const instrumentationPath = writer.writeInstrumentationFile(instrumentation, creationGraph);
 	if (options.verbose) {

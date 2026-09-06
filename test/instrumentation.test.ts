@@ -6,12 +6,95 @@ import * as path from 'path';
 import { MnemonicaAnalyzer } from '../src/analyzer';
 import { TypesWriter } from '../src/writer';
 import { InstrumentationPoint, CreationGraph } from '../src/types';
+import { TacticaPlugin } from '../src/plugins';
+
+// Test-double plugin: supplies the framework vocabulary the analyzer
+// matches. Tactica core ships NO vocabulary of its own — framework
+// adapters provide a plugin like this one via the project config file.
+const frameworkFixturePlugin: TacticaPlugin = {
+	name                      : 'framework-fixture',
+	instrumentationInterfaces : {
+		NestInterceptor : 'interceptor',
+		CanActivate     : 'guard',
+		PipeTransform   : 'pipe',
+		ExceptionFilter : 'filter',
+		NestMiddleware  : 'middleware',
+	},
+	useDecorators : {
+		UseGuards       : 'guard',
+		UseInterceptors : 'interceptor',
+		UsePipes        : 'pipe',
+	},
+	appTokens : {
+		APP_GUARD       : 'guard',
+		APP_PIPE        : 'pipe',
+		APP_INTERCEPTOR : 'interceptor',
+		APP_FILTER      : 'filter',
+	},
+	middlewareWiring : true,
+};
 
 describe('MnemonicaAnalyzer - Instrumentation Points', () => {
 	let analyzer: MnemonicaAnalyzer;
 
 	beforeEach(() => {
-		analyzer = new MnemonicaAnalyzer();
+		analyzer = new MnemonicaAnalyzer(undefined, [ frameworkFixturePlugin ]);
+	});
+
+	describe('plugin gating', () => {
+		it('should detect nothing without plugins (framework-blind core)', () => {
+			const source = `
+				export class LoggingInterceptor implements NestInterceptor {
+					intercept (context: unknown, next: unknown) {
+						return next;
+					}
+				}
+
+				@UseGuards(AuthGuard)
+				export class UserController {}
+
+				const providers = [
+					{ provide: APP_GUARD, useClass: GlobalAuthGuard },
+				];
+
+				export class AppModule {
+					configure (consumer: unknown) {
+						consumer.apply(LoggerMiddleware).forRoutes('users');
+					}
+				}
+			`;
+
+			const blind = new MnemonicaAnalyzer();
+			blind.analyzeSource(source);
+			const points = blind.getInstrumentationPoints();
+			expect(points).to.deep.equal([]);
+		});
+
+		it('should skip middleware wiring when no plugin opts in', () => {
+			const noWiring = new MnemonicaAnalyzer(undefined, [ {
+				instrumentationInterfaces : { NestMiddleware : 'middleware' },
+			} ]);
+			const source = `
+				export class LoggerMiddleware implements NestMiddleware {
+					use (req: unknown, res: unknown, next: unknown) {
+						return next;
+					}
+				}
+
+				export class AppModule {
+					configure (consumer: unknown) {
+						consumer.apply(LoggerMiddleware).forRoutes('users');
+					}
+				}
+			`;
+
+			noWiring.analyzeSource(source);
+			const points = noWiring.getInstrumentationPoints();
+			// Only the heritage declaration point — no consumer.apply site
+			expect(points).to.have.length(1);
+			expect(points[ 0 ].scope).to.equal('module');
+			expect(points[ 0 ].targets).to.deep.equal([]);
+		});
 	});
 
 	describe('heritage detection', () => {

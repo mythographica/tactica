@@ -208,7 +208,7 @@ export interface EDSJson {
 }
 
 /**
- * Instrumentation kind for NestJS lifecycle crossroads
+ * Instrumentation kind for framework lifecycle crossroads
  */
 export type InstrumentationKind =
 	| 'interceptor'
@@ -219,7 +219,7 @@ export type InstrumentationKind =
 
 /**
  * Instrumentation scope: where the point attaches.
- * 'global' for APP_* provider registrations, 'module' for middleware wired
+ * 'global' for provider-token registrations, 'module' for middleware wired
  * via consumer.apply() AND for bare heritage declarations whose attachment
  * is statically unknown, `controller:Name` / `method:Class.method` for
  * decorator-scoped attachments.
@@ -231,17 +231,19 @@ export type InstrumentationScope =
 	| `method:${string}`;
 
 /**
- * Instrumentation point: a NestJS lifecycle crossroad (interceptor, guard,
- * pipe, filter, middleware) detected syntactically.
+ * Instrumentation point: a framework lifecycle crossroad (interceptor,
+ * guard, pipe, filter, middleware) detected syntactically. The vocabulary
+ * that turns a syntactic shape into a point comes from plugins — with no
+ * plugin loaded, no points are collected.
  *
  * Dedupe/scope decision: points are keyed by (kind, className, location,
  * scope) and duplicates merge their `targets`. A class detected both by
- * heritage (`implements NestInterceptor`) and by a decorator site
- * (`@UseInterceptors(X)`) yields SEPARATE entries — the class-declaration
- * point keeps scope 'module' (attachment unknown) while each registration
- * site carries its own scope. One point serving multiple scopes via merged
- * scope lists was rejected: consumers (mnemographica diamonds) key off a
- * single scope per point, and separate entries keep that contract simple.
+ * heritage (a plugin-listed `implements` interface) and by a decorator
+ * site yields SEPARATE entries — the class-declaration point keeps scope
+ * 'module' (attachment unknown) while each registration site carries its
+ * own scope. One point serving multiple scopes via merged scope lists was
+ * rejected: consumers (mnemographica diamonds) key off a single scope per
+ * point, and separate entries keep that contract simple.
  */
 export interface InstrumentationPoint {
 	/** Kind of lifecycle crossroad */

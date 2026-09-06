@@ -3,7 +3,7 @@
 import * as pkg from '../package.json';
 
 /**
- * Tactica - TypeScript Language Service Plugin for Mnemonica
+ * Tactica - Type definition generator for Mnemonica
  *
  * Generates type definitions for Mnemonica's dynamic nested constructors,
  * enabling TypeScript to understand runtime type hierarchies created through
@@ -19,6 +19,10 @@ export { ModuleGraphBuilder } from './module-graph';
 export { LocalScopeWalker } from './scopes';
 export type { ScopeTypeResolver } from './scopes';
 export { CreationGraphBuilder } from './creation-graph';
+export { mergeTacticaPlugins } from './plugins';
+export type {
+	TacticaPlugin, InstrumentationVocabulary
+} from './plugins';
 
 
 export type {

@@ -24,8 +24,9 @@ import { CreationGraph, ModuleGraph, ScopeAnalysis, UsageInfo } from './types';
  *   pass-as-arg, rebinding); type-position references are not filtered.
  * - Module scopes end the invocation walk, but a terminal module still
  *   gains its IMPORTERS as callers: entry modules hand classes to the
- *   framework as values (`NestFactory.create(AppModule)`), which no
- *   call-walk can see — the import relation bridges them to the center.
+ *   framework as values (a bootstrap call receiving the root module),
+ *   which no call-walk can see — the import relation bridges them to
+ *   the center.
  */
 export declare class CreationGraphBuilder {
     private moduleGraph;

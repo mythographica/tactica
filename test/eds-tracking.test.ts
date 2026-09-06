@@ -130,7 +130,7 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 	describe('hookAttach detection', () => {
 		it('should detect attachHooks() with single type', () => {
 			const source = `
-				import { attachHooks } from '@mnemonica/nestjs';
+				import { attachHooks } from '@mnemonica/otel';
 				import { defaultTypes } from 'mnemonica';
 
 				attachHooks(defaultTypes);
@@ -147,7 +147,7 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 
 		it('should detect attachHooks() with array of types', () => {
 			const source = `
-				import { attachHooks } from '@mnemonica/nestjs';
+				import { attachHooks } from '@mnemonica/otel';
 				import { define } from 'mnemonica';
 
 				const TypeA = define('TypeA', function () { this.a = 1; });

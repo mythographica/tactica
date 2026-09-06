@@ -136,7 +136,7 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
 | `usages.json` | always | One entry per type, value is an array of `{ location, kind, code, holderScopeId?, constructorText? }` records — where each type is instantiated, referenced, accessed, or looked up. `holderScopeId` points into `scopes.json` (the innermost scope holding the usage); `constructorText` (instantiations only) is the constructor expression text actually used. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
-| `instrumentation.json` | always | v2 envelope. `points`: NestJS lifecycle crossroads (interceptors, guards, pipes, filters, middleware): heritage declarations, `@UseGuards`/`@UseInterceptors`/`@UsePipes` sites, `APP_*` providers, `consumer.apply()` wiring. Syntactic only — no dive dependency. `creationGraph`: the inside-out walk from every instantiation site out to the starters — see "Creation graph" below. |
+| `instrumentation.json` | always | v2 envelope. `points`: framework lifecycle crossroads (interceptors, guards, pipes, filters, middleware) detected via **plugin-supplied vocabulary** — heritage declarations, decorator sites, provider-token registrations, `consumer.apply()` wiring. Syntactic only — no dive dependency; with no plugins loaded, `points` is `[]`. `creationGraph`: the inside-out walk from every instantiation site out to the starters — see "Creation graph" below. |
 | `modules.json` | always | Module-scope graph: every module's `exportedBindings`/`importedBindings` (functions, classes, consts, types — not only mnemonica types), project-internal `dependencies`, `builtinSpecifiers` (Node builtins are skipped entirely — both `'path'` and `'node:path'` forms), `unresolvedSpecifiers`, circular-import `cycles`, and cross-module mnemonica-type `edges`. Resolution uses `ts.resolveModuleName` with the project's compilerOptions (tsconfig `paths`, extensionless imports, index files) — no type checker. Bindings resolved into `node_modules` are marked `external: true` and never enter `dependencies`. |
 | `scopes.json` | always | Local-scope graph: function/method/arrow scopes only (no block scopes) plus one module scope per file; variables with `typePath` (mnemonica type when known), `isParameter`, `isMutable`, and `reassignments` — each reassignment of a mutable binding is a flow-termination point. |
 | `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
@@ -477,7 +477,7 @@ When inference fails the property's type falls back to `unknown` (or `any` in so
 
 ```ts
 class MnemonicaAnalyzer {
-    constructor(program?: ts.Program);
+    constructor(program?: ts.Program, plugins?: TacticaPlugin[]);
 
     analyzeFile(sourceFile: ts.SourceFile): AnalyzeResult;
     analyzeSource(sourceCode: string, fileName?: string): AnalyzeResult;
@@ -619,7 +619,7 @@ class TypesWriter {
 
 ### Types
 
-`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson`, `ModuleBindingKind`, `ModuleImportKind`, `ModuleBinding`, `ModuleInfo`, `CrossModuleUsage`, `ModuleGraph`, `ModulesJson`, `ScopeKind`, `ScopeInfo`, `ScopeVariable`, `ScopeAnalysis`, `ScopesJson`, `CreationGraphNode`, `CreationGraphEdge`, `CreationAnchor`, `CreationGraph` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema.
+`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson`, `ModuleBindingKind`, `ModuleImportKind`, `ModuleBinding`, `ModuleInfo`, `CrossModuleUsage`, `ModuleGraph`, `ModulesJson`, `ScopeKind`, `ScopeInfo`, `ScopeVariable`, `ScopeAnalysis`, `ScopesJson`, `CreationGraphNode`, `CreationGraphEdge`, `CreationAnchor`, `CreationGraph`, `TacticaPlugin`, `InstrumentationVocabulary` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema. The `mergeTacticaPlugins(plugins)` helper merges plugin vocabulary the same way the analyzer does.
 
 ## EDS (Execution Data Storage) Tracking
 
@@ -629,7 +629,7 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 |---|---|---|
 | `wrap(fn)`, `wrapConstructorArg(fn, parent)`, `upgradeConstructorArg(arg, inst)`, `wrapInstanceMethods(obj)` | `wrap` | Wrap a function / constructor argument / instance methods for context propagation and tracing (`@mnemonica/dive`) |
 | `current()`, `getErrorInstance(err)`, `getFlow(target?)` | `contextConsume` | Read the current context, the error-pinned instance, or the recorded flow (`@mnemonica/dive`) |
-| `attachHooks(collection)` | `hookAttach` | Wire a TypesCollection to dive's lifecycle tracing (`@mnemonica/nestjs`) |
+| `attachHooks(collection)` | `hookAttach` | Wire a TypesCollection to dive's lifecycle tracing (`@mnemonica/otel`) |
 
 `eds.json` structure:
 
@@ -661,14 +661,39 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 
 ## Instrumentation Points
 
-Tactica statically detects NestJS lifecycle crossroads — interceptors, guards, pipes, exception filters, middleware — purely syntactically (no type checker), and always emits `.tactica/instrumentation.json`. Detection covers:
+Tactica statically detects framework lifecycle crossroads — interceptors, guards, pipes, exception filters, middleware — purely syntactically (no type checker), and always emits `.tactica/instrumentation.json`. **Tactica core ships no framework vocabulary**: detection is driven entirely by plugins, so with no plugins loaded `points` is `[]`. Framework adapters ship a plugin; projects enable it through a `.tactica.js` (or `tactica.config.js`) config file next to `tsconfig.json`:
 
-- **Heritage** — `class X implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware` (matched by interface identifier name).
-- **Decorator sites** — `@UseGuards(X)`, `@UseInterceptors(X)`, `@UsePipes(X)` on controller classes or methods, including inline instances (`@UsePipes(new ValidationPipe(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>`.
-- **Global providers** — `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }` object literals → scope `global`. `useExisting`/`useFactory` without `useClass` are skipped.
-- **Middleware wiring** — `consumer.apply(Mw).forRoutes(...)` inside a class's `configure()` method → scope `module`, targets from `forRoutes` arguments when statically readable.
+```js
+// .tactica.js
+module.exports = {
+    plugins: [ '@mnemonica/example-adapter/tactica' ],
+};
+```
 
-When a referenced class is declared in the analyzed project, the point's `location`/`code` resolve to the class declaration; external classes (e.g. `ValidationPipe` from `@nestjs/common`) keep the registration site. Points are deduped by `(kind, className, location, scope)` with `targets` merged — a class seen via both heritage and a decorator yields separate entries per scope, with the bare declaration carrying scope `module`.
+Plugin entries are module specifiers (required relative to the config file) or inline plugin objects. A plugin is a plain object:
+
+```ts
+interface TacticaPlugin {
+    name?: string;
+    // `implements X` heritage matches: interface identifier -> kind
+    instrumentationInterfaces?: Record<string, InstrumentationKind>;
+    // `@X(Impl)` decorator sites: decorator identifier -> kind
+    useDecorators?: Record<string, InstrumentationKind>;
+    // `{ provide: TOKEN, useClass: Impl }` registrations: token identifier -> kind
+    appTokens?: Record<string, InstrumentationKind>;
+    // opt in to shape-based `consumer.apply(Mw).forRoutes(...)` detection
+    middlewareWiring?: boolean;
+}
+```
+
+Programmatic callers pass plugins directly: `new MnemonicaAnalyzer(program, plugins)` or `run({ …, plugins })`; config-file plugins append after programmatic ones, and later plugins override earlier ones on the same identifier key. Detection covers:
+
+- **Heritage** — `class X implements <plugin-listed interface>` (matched by interface identifier name). Bare declarations carry scope `module` (attachment statically unknown).
+- **Decorator sites** — plugin-listed decorators on classes or methods, including inline instances (`@Register(new Impl(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>`.
+- **Global providers** — `{ provide: <plugin-listed token>, useClass: X }` object literals → scope `global`. `useExisting`/`useFactory` without `useClass` are skipped.
+- **Middleware wiring** — `consumer.apply(Mw).forRoutes(...)` inside a class's `configure()` method → scope `module`, targets from `forRoutes` arguments when statically readable. Requires `middlewareWiring: true` from any loaded plugin.
+
+When a referenced class is declared in the analyzed project, the point's `location`/`code` resolve to the class declaration; external classes keep the registration site. Points are deduped by `(kind, className, location, scope)` with `targets` merged — a class seen via both heritage and a decorator yields separate entries per scope, with the bare declaration carrying scope `module`.
 
 `instrumentation.json` structure (v2):
 
@@ -679,9 +704,9 @@ When a referenced class is declared in the analyzed project, the point's `locati
     "points": [
         {
             "kind": "pipe",
-            "className": "ValidationPipe",
+            "className": "PayloadPipe",
             "location": "/project/src/user.controller.ts:49:2",
-            "code": "@UsePipes(new ValidationPipe({ transform: true }))",
+            "code": "@RegisterPipe(new PayloadPipe({ transform: true }))",
             "scope": "method:UserController.createUser",
             "targets": ["UserController"]
         }

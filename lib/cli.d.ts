@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { TacticaConfig } from './types';
+import { TacticaPlugin } from './plugins';
 /**
  * CLI entry point for Tactica
  *
- * Can be used standalone without the Language Service Plugin
+ * Runs the analyzer over a tsconfig project and writes .tactica/ output
  */
 interface CLIOptions extends TacticaConfig {
     watch?: boolean;
@@ -15,6 +16,8 @@ interface CLIOptions extends TacticaConfig {
     esm?: boolean;
     /** Enable EDS (Execution Data Storage) tracking */
     eds?: boolean;
+    /** Programmatic plugins; config-file plugins are appended after these */
+    plugins?: TacticaPlugin[];
 }
 /**
  * Parse command line arguments

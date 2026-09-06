@@ -31,8 +31,9 @@ import {
  *   pass-as-arg, rebinding); type-position references are not filtered.
  * - Module scopes end the invocation walk, but a terminal module still
  *   gains its IMPORTERS as callers: entry modules hand classes to the
- *   framework as values (`NestFactory.create(AppModule)`), which no
- *   call-walk can see — the import relation bridges them to the center.
+ *   framework as values (a bootstrap call receiving the root module),
+ *   which no call-walk can see — the import relation bridges them to
+ *   the center.
  */
 export class CreationGraphBuilder {
 	private moduleGraph: ModuleGraph;
@@ -97,8 +98,9 @@ export class CreationGraphBuilder {
 				// Module scopes END the invocation walk — nobody invokes a
 				// module (a module-scope creation is labeled rooted on the
 				// anchor instead). But entry modules hand their classes to
-				// the framework as VALUES (`NestFactory.create(AppModule)`,
-				// `@Module({ controllers: [...] })`), invisible to
+				// the framework as VALUES (a bootstrap call receiving the
+				// root module, or framework metadata listing controllers),
+				// invisible to
 				// call-walking — so a terminal module still gains its
 				// IMPORTERS as callers: main.ts importing AppModule yields
 				// the main.ts → app.module edge the pure call graph misses.

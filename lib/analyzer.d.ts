@@ -1,8 +1,13 @@
 import * as ts from 'typescript';
 import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint } from './types';
 import { TypeGraphImpl } from './graph';
+import { TacticaPlugin } from './plugins';
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
+ *
+ * Framework-blind by construction: instrumentation detection vocabulary
+ * (interface names, decorator names, provider tokens, middleware wiring)
+ * comes entirely from plugins — with none loaded, zero points are collected.
  */
 export declare class MnemonicaAnalyzer {
     private errors;
@@ -24,7 +29,8 @@ export declare class MnemonicaAnalyzer {
     private collectionCounter;
     private instrumentationClassDecls;
     private instrumentationSites;
-    constructor(program?: ts.Program);
+    private instrumentationVocabulary;
+    constructor(program?: ts.Program, plugins?: TacticaPlugin[]);
     /**
      * Reset usage-related state for a fresh pass.
      * Call before the usage-collection pass to avoid duplicates from definition pass.
@@ -62,7 +68,8 @@ export declare class MnemonicaAnalyzer {
      * Get collected instrumentation points.
      * Registration sites referencing a class declared in the same project
      * resolve to the class declaration's location/code; external classes
-     * (e.g., ValidationPipe from node_modules) keep the registration site.
+     * (e.g., a framework-builtin implementation from node_modules) keep
+     * the registration site.
      * Deduped by kind+className+location+scope with targets merged — a
      * class detected by heritage AND by a decorator site yields separate
      * entries with distinct scopes (see InstrumentationPoint in types.ts).
@@ -475,27 +482,27 @@ export declare class MnemonicaAnalyzer {
              */
     private extractConstructorParamsFromConstructor;
     /**
-     * Collect NestJS instrumentation points (interceptors, guards, pipes,
-     * filters, middleware). Purely syntactic: heritage clauses, decorator
-     * application sites, APP_* provider object literals and
-     * consumer.apply().forRoutes() wiring. No import resolution beyond the
-     * identifier text — the type checker stays unused.
+     * Collect framework instrumentation points. Purely syntactic: heritage
+     * clauses, decorator application sites, provider-token object literals
+     * and consumer.apply().forRoutes() wiring. The vocabulary comes from
+     * plugins; identifier text is matched as-is — no import resolution,
+     * the type checker stays unused.
      */
     private collectInstrumentation;
     /**
      * Record a named class declaration for instrumentation site resolution
-     * and detect heritage-based kinds (`implements NestInterceptor`, etc.)
+     * and detect heritage-based kinds (`implements <plugin interface>`)
      */
     private collectInstrumentationClass;
     /**
-     * Detect decorator application sites: @UseGuards(X), @UseInterceptors(X),
-     * @UsePipes(X) on a controller class or one of its methods. One site per
+     * Detect decorator application sites: plugin-listed decorators applied
+     * with class arguments on a class or one of its methods. One site per
      * referenced class identifier.
      */
     private collectInstrumentationDecorator;
     /**
      * Detect global registrations: object literals shaped like
-     * `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }`.
+     * `{ provide: <plugin-listed token>, useClass: X }`.
      * useExisting/useFactory without a useClass identifier are not
      * statically obvious — skipped rather than guessed.
      */
@@ -504,7 +511,8 @@ export declare class MnemonicaAnalyzer {
      * Detect middleware wiring: `consumer.apply(Mw1, Mw2).forRoutes(...)`
      * inside a class's configure() method. Targets come from forRoutes
      * arguments when statically readable (string routes or controller
-     * identifiers), else [].
+     * identifiers), else []. Shape-based, so a plugin must opt in via
+     * `middlewareWiring: true`.
      */
     private collectInstrumentationMiddleware;
     /**

@@ -19,6 +19,6 @@ const viaNamespace = (): unknown => {
 
 viaNamespace();
 
-// Used the way NestFactory.create(AppModule) is: the registration
-// object crosses the module boundary as a VALUE, not a call
+// Used the way a framework bootstrap receives the root module: the
+// registration object crosses the module boundary as a VALUE, not a call
 void registry;

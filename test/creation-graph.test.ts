@@ -211,8 +211,8 @@ describe('CreationGraphBuilder', () => {
 
 		it('should bridge terminal modules to their importers (exports-and-usage)', () => {
 			// wired.ts registers WiredMaker at module level — a VALUE handoff,
-			// the way NestJS hands classes to the framework; no call connects
-			// main.ts to the module, only the import relation does
+			// the way frameworks receive entry classes as values; no call
+			// connects main.ts to the module, only the import relation does
 			const wiredModule = findNode(fixturePath('wired.ts'));
 			expect(wiredModule).to.exist;
 			expect(wiredModule?.kind).to.equal('module');

@@ -61,6 +61,7 @@ src/
 ├── module-graph.ts         # Module-scope walker: import/export bindings, resolution, cycles → modules.json
 ├── scopes.ts               # Local-scope walker: function/method/arrow scopes, variables, reassignments → scopes.json
 ├── creation-graph.ts       # Inside-out creation walker: instantiation anchors → caller chains → starters → instrumentation.json creationGraph
+├── plugins.ts              # TacticaPlugin interface + mergeTacticaPlugins — framework instrumentation vocabulary
 ├── topologica-analyzer.ts  # AST analyzer for Topologica directory structures
 ├── graph.ts                # Trie-based TypeGraphImpl
 ├── generator.ts            # generates types.ts / registry.ts / index.d.ts
@@ -68,7 +69,9 @@ src/
 └── cli.ts                  # CLI entry point, parseArgs, run, watch, main
 ```
 
-No `plugin.ts`. There is no plugin code anywhere.
+## Framework vocabulary is plugin-supplied
+
+Tactica core is **framework-blind**: it ships no instrumentation vocabulary of its own. The analyzer's four detection channels (heritage interfaces, decorator sites, provider tokens, middleware wiring) read a merged plugin vocabulary (`src/plugins.ts`); with no plugins loaded, `instrumentation.json` carries `points: []`. Framework adapter packages ship a plugin; projects enable it via a `.tactica.js` / `tactica.config.js` config file next to their tsconfig (`module.exports = { plugins: [ 'adapter-package/tactica' ] }` — string specifiers are required relative to the config file; inline objects also work). The CLI appends config plugins after programmatic `run({ plugins })` entries. Never hardcode framework identifier names into `src/` — they belong in adapter packages.
 
 ## Code style
 
@@ -296,10 +299,10 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 }
 ```
 
-- **Points (v1 contract, unchanged):** NestJS lifecycle crossroads detected syntactically (no type checker, no dive dependency): heritage (`implements NestInterceptor | CanActivate | PipeTransform | ExceptionFilter | NestMiddleware`), decorator sites (`@UseGuards` / `@UseInterceptors` / `@UsePipes`, incl. `new X(...)` args), `APP_*` provider object literals (scope `global`), and `consumer.apply(Mw).forRoutes(...)` inside `configure()` (scope `module`).
+- **Points (v1 contract, unchanged):** framework lifecycle crossroads detected syntactically (no type checker, no dive dependency), driven by the merged plugin vocabulary: heritage (`implements` a plugin-listed interface), decorator sites (plugin-listed decorators, incl. `new X(...)` args), provider-token object literals (`{ provide: TOKEN, useClass: X }`, scope `global`), and `consumer.apply(Mw).forRoutes(...)` inside `configure()` (scope `module`; requires a plugin with `middlewareWiring: true`). No plugins → `points: []`.
 - `scope` ∈ `'global' | 'module' | 'controller:<Name>' | 'method:<Class>.<method>'`; a bare heritage declaration carries scope `'module'` (attachment statically unknown).
 - Points referencing a class declared in the analyzed project resolve `location`/`code` to the class declaration; external classes keep the registration site. Deduped by `(kind, className, location, scope)` with `targets` merged — heritage + decorator for the same class yields separate entries per scope (documented on `InstrumentationPoint` in `src/types.ts`).
-- **`creationGraph` (v2, always present from the CLI):** the inside-out walk — anchors are the `instantiation` usages (each pinned to its `holderScopeId`), edges point `caller → callee` (callee closer to the creation site), nodes with no discovered callers are `starter: true`. Module-scope creations are `rooted: true` anchors (labeled, not policed). Module scopes end the invocation walk, but a terminal module gains its IMPORTERS as callers (the exports-and-usage bridge): entry modules hand classes to frameworks as values — `NestFactory.create(AppModule)` — which no call-walk can see, so the import relation connects them to the center instead. `constructorText` records the constructor expression actually used (decision 1: `strictChain: false` permits non-linear construction); `variable`/`terminatedAt` come from the same-line variable heuristic, `terminatedAt` being the first reassignment site (decision 6 flow termination). Deliberate approximations: namespace imports count any alias reference; method holders bind to their class name; any non-declaration identifier counts as a reference; export wiring alone creates no edge.
+- **`creationGraph` (v2, always present from the CLI):** the inside-out walk — anchors are the `instantiation` usages (each pinned to its `holderScopeId`), edges point `caller → callee` (callee closer to the creation site), nodes with no discovered callers are `starter: true`. Module-scope creations are `rooted: true` anchors (labeled, not policed). Module scopes end the invocation walk, but a terminal module gains its IMPORTERS as callers (the exports-and-usage bridge): entry modules hand classes to frameworks as values — a bootstrap call receiving the root module — which no call-walk can see, so the import relation connects them to the center instead. `constructorText` records the constructor expression actually used (decision 1: `strictChain: false` permits non-linear construction); `variable`/`terminatedAt` come from the same-line variable heuristic, `terminatedAt` being the first reassignment site (decision 6 flow termination). Deliberate approximations: namespace imports count any alias reference; method holders bind to their class name; any non-declaration identifier counts as a reference; export wiring alone creates no edge.
 - **Consumed by:** mnemographica's creation graph layer — holder scopes render as diamond knots tangent to their created type's sphere (the v1-points diamond rendering was reverted; diamonds carry creation semantics now). `loadInstrumentation()` ignores `version` and unknown top-level keys, so v2 is backward compatible.
 - Source: points from `MnemonicaAnalyzer.getInstrumentationPoints()`, creation graph from `CreationGraphBuilder` (`src/creation-graph.ts`) → `TypesWriter.writeInstrumentationFile(points, creationGraph)`.
 

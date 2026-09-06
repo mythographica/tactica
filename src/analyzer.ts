@@ -9,6 +9,9 @@ import {
 	InstrumentationScope
 } from './types';
 import { TypeGraphImpl } from './graph';
+import {
+	InstrumentationVocabulary, TacticaPlugin, mergeTacticaPlugins
+} from './plugins';
 
 interface CollectionInfo {
 	variableName: string;
@@ -40,32 +43,12 @@ interface InstrumentationSite {
 	targets: string[];
 }
 
-/** NestJS interface identifier -> instrumentation kind (matched by simple name only) */
-const INSTRUMENTATION_INTERFACE_KINDS: Record<string, InstrumentationKind> = {
-	NestInterceptor : 'interceptor',
-	CanActivate     : 'guard',
-	PipeTransform   : 'pipe',
-	ExceptionFilter : 'filter',
-	NestMiddleware  : 'middleware',
-};
-
-/** @UseXxx decorator identifier -> instrumentation kind */
-const USE_DECORATOR_KINDS: Record<string, InstrumentationKind> = {
-	UseGuards       : 'guard',
-	UseInterceptors : 'interceptor',
-	UsePipes        : 'pipe',
-};
-
-/** APP_* provider token identifier -> instrumentation kind */
-const APP_TOKEN_KINDS: Record<string, InstrumentationKind> = {
-	APP_GUARD       : 'guard',
-	APP_PIPE        : 'pipe',
-	APP_INTERCEPTOR : 'interceptor',
-	APP_FILTER      : 'filter',
-};
-
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
+ *
+ * Framework-blind by construction: instrumentation detection vocabulary
+ * (interface names, decorator names, provider tokens, middleware wiring)
+ * comes entirely from plugins — with none loaded, zero points are collected.
  */
 export class MnemonicaAnalyzer {
 	private errors: AnalyzeError[] = [];
@@ -105,13 +88,17 @@ export class MnemonicaAnalyzer {
 	// every named class declaration by simple name, for resolving
 	// registration sites to declaration locations (best effort, last wins)
 	private instrumentationClassDecls = new Map<string, InstrumentationClassDecl>();
-	// Registration sites: decorator applications, APP_* providers,
-	// consumer.apply() middleware wiring
+	// Registration sites: decorator applications, provider-token object
+	// literals, consumer.apply() middleware wiring
 	private instrumentationSites: InstrumentationSite[] = [];
+	// Merged plugin vocabulary for instrumentation detection (empty when
+	// no plugins were passed — the analyzer then collects no points)
+	private instrumentationVocabulary: InstrumentationVocabulary;
 
-	constructor (program?: ts.Program) {
+	constructor (program?: ts.Program, plugins: TacticaPlugin[] = []) {
 		// Store program for future use (currently unused but kept for extensibility)
 		void program;
+		this.instrumentationVocabulary = mergeTacticaPlugins(plugins);
 	}
 
 	/**
@@ -198,7 +185,8 @@ export class MnemonicaAnalyzer {
 	 * Get collected instrumentation points.
 	 * Registration sites referencing a class declared in the same project
 	 * resolve to the class declaration's location/code; external classes
-	 * (e.g., ValidationPipe from node_modules) keep the registration site.
+	 * (e.g., a framework-builtin implementation from node_modules) keep
+	 * the registration site.
 	 * Deduped by kind+className+location+scope with targets merged — a
 	 * class detected by heritage AND by a decorator site yields separate
 	 * entries with distinct scopes (see InstrumentationPoint in types.ts).
@@ -330,8 +318,8 @@ export class MnemonicaAnalyzer {
 		// Check for native flow patterns (property access, method calls, etc.)
 		this.collectFlow(node, sourceFile);
 
-		// Check for NestJS instrumentation points (interceptors, guards,
-		// pipes, filters, middleware) — syntactic only
+		// Check for framework instrumentation points (vocabulary supplied
+		// by plugins; syntactic only — no type checker)
 		this.collectInstrumentation(node, sourceFile);
 
 		// Collect type aliases for resolving type references
@@ -2854,7 +2842,7 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
-		// attachHooks(collection) — from @mnemonica/nestjs, wires a
+		// attachHooks(collection) — from @mnemonica/otel, wires a
 		// TypesCollection to dive's lifecycle tracing
 		if (funcName === 'attachHooks' && node.arguments.length > 0) {
 			const [ arg ] = node.arguments;
@@ -3614,11 +3602,11 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Collect NestJS instrumentation points (interceptors, guards, pipes,
-	 * filters, middleware). Purely syntactic: heritage clauses, decorator
-	 * application sites, APP_* provider object literals and
-	 * consumer.apply().forRoutes() wiring. No import resolution beyond the
-	 * identifier text — the type checker stays unused.
+	 * Collect framework instrumentation points. Purely syntactic: heritage
+	 * clauses, decorator application sites, provider-token object literals
+	 * and consumer.apply().forRoutes() wiring. The vocabulary comes from
+	 * plugins; identifier text is matched as-is — no import resolution,
+	 * the type checker stays unused.
 	 */
 	private collectInstrumentation (node: ts.Node, sourceFile: ts.SourceFile): void {
 		if (ts.isClassDeclaration(node) && node.name) {
@@ -3637,7 +3625,7 @@ export class MnemonicaAnalyzer {
 
 	/**
 	 * Record a named class declaration for instrumentation site resolution
-	 * and detect heritage-based kinds (`implements NestInterceptor`, etc.)
+	 * and detect heritage-based kinds (`implements <plugin interface>`)
 	 */
 	private collectInstrumentationClass (node: ts.ClassDeclaration, sourceFile: ts.SourceFile): void {
 		if (!node.name) {
@@ -3662,7 +3650,7 @@ export class MnemonicaAnalyzer {
 					if (!ts.isIdentifier(type.expression)) {
 						continue;
 					}
-					const matched = INSTRUMENTATION_INTERFACE_KINDS[ type.expression.text ];
+					const matched = this.instrumentationVocabulary.interfaces[ type.expression.text ];
 					if (matched) {
 						kind = matched;
 					}
@@ -3681,8 +3669,8 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Detect decorator application sites: @UseGuards(X), @UseInterceptors(X),
-	 * @UsePipes(X) on a controller class or one of its methods. One site per
+	 * Detect decorator application sites: plugin-listed decorators applied
+	 * with class arguments on a class or one of its methods. One site per
 	 * referenced class identifier.
 	 */
 	private collectInstrumentationDecorator (node: ts.Decorator, sourceFile: ts.SourceFile): void {
@@ -3690,7 +3678,7 @@ export class MnemonicaAnalyzer {
 		if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) {
 			return;
 		}
-		const kind = USE_DECORATOR_KINDS[ expression.expression.text ];
+		const kind = this.instrumentationVocabulary.useDecorators[ expression.expression.text ];
 		if (!kind) {
 			return;
 		}
@@ -3724,8 +3712,8 @@ export class MnemonicaAnalyzer {
 		const code = node.getText(sourceFile).slice(0, 100);
 
 		for (const arg of expression.arguments) {
-			// Class reference: @UseGuards(AuthGuard) or an inline instance:
-			// @UsePipes(new ValidationPipe({ transform: true }))
+			// Class reference: @Register(Impl) or an inline instance:
+			// @Register(new Impl({ ...options }))
 			let className: string | undefined;
 			if (ts.isIdentifier(arg)) {
 				className = arg.text;
@@ -3748,7 +3736,7 @@ export class MnemonicaAnalyzer {
 
 	/**
 	 * Detect global registrations: object literals shaped like
-	 * `{ provide: APP_GUARD | APP_PIPE | APP_INTERCEPTOR | APP_FILTER, useClass: X }`.
+	 * `{ provide: <plugin-listed token>, useClass: X }`.
 	 * useExisting/useFactory without a useClass identifier are not
 	 * statically obvious — skipped rather than guessed.
 	 */
@@ -3765,7 +3753,7 @@ export class MnemonicaAnalyzer {
 				continue;
 			}
 			if (prop.name.text === 'provide') {
-				kind = APP_TOKEN_KINDS[ prop.initializer.text ];
+				kind = this.instrumentationVocabulary.appTokens[ prop.initializer.text ];
 			}
 			if (prop.name.text === 'useClass') {
 				useClassName = prop.initializer.text;
@@ -3797,9 +3785,13 @@ export class MnemonicaAnalyzer {
 	 * Detect middleware wiring: `consumer.apply(Mw1, Mw2).forRoutes(...)`
 	 * inside a class's configure() method. Targets come from forRoutes
 	 * arguments when statically readable (string routes or controller
-	 * identifiers), else [].
+	 * identifiers), else []. Shape-based, so a plugin must opt in via
+	 * `middlewareWiring: true`.
 	 */
 	private collectInstrumentationMiddleware (node: ts.CallExpression, sourceFile: ts.SourceFile): void {
+		if (!this.instrumentationVocabulary.middlewareWiring) {
+			return;
+		}
 		if (
 			!ts.isPropertyAccessExpression(node.expression) ||
 			node.expression.name.text !== 'forRoutes'

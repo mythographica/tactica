@@ -111,8 +111,8 @@ describe('parseArgs()', () => {
 
 describe('run() exclusion', () => {
 	// The fixture tsconfig deliberately includes ".tactica/*.ts" (the real-world
-	// trap: the nestjs example does this). The conventional project .tactica
-	// dir must be excluded anyway, even when --output points elsewhere.
+	// trap: the tactica-nestjs example does this). The conventional project
+	// .tactica dir must be excluded anyway, even when --output points elsewhere.
 	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-exclusion');
 
 	it('should always exclude the project-conventional .tactica directory', () => {
@@ -129,6 +129,63 @@ describe('run() exclusion', () => {
 			const keys = Object.keys(modulesJson.modules);
 			expect(keys.filter(k => k.includes(`${path.sep}.tactica${path.sep}`))).to.deep.equal([]);
 			expect(keys.some(k => k.endsWith(path.join('src', 'main.ts')))).to.be.true;
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+	});
+});
+
+describe('run() plugin config', () => {
+	// Framework instrumentation vocabulary arrives via plugins: a
+	// .tactica.js config next to the fixture tsconfig loads one plugin by
+	// string specifier and one inline. Without a config file, the analyzer
+	// stays framework-blind.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-plugin');
+
+	it('should load plugins from the project .tactica.js config', () => {
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-plugin-'));
+		try {
+			run({
+				project : path.join(fixtureDir, 'tsconfig.json'),
+				outputDir,
+			});
+
+			const instrumentationJson = JSON.parse(
+				fs.readFileSync(path.join(outputDir, 'instrumentation.json'), 'utf-8')
+			);
+			const points = instrumentationJson.points as Array<Record<string, unknown>>;
+
+			// String-loaded plugin: heritage interface match
+			const stringPoint = points.find(p => p.className === 'FixtureGuard' && p.scope === 'module');
+			expect(stringPoint).to.exist;
+			expect(stringPoint!.kind).to.equal('guard');
+
+			// Inline plugin: heritage interface match
+			const inlinePoint = points.find(p => p.className === 'InlineGuard');
+			expect(inlinePoint).to.exist;
+
+			// Inline plugin: provider-token registration, global scope
+			const tokenPoint = points.find(p => p.scope === 'global');
+			expect(tokenPoint).to.exist;
+			expect(tokenPoint!.className).to.equal('FixtureGuard');
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+	});
+
+	it('should emit empty points without a config file or programmatic plugins', () => {
+		const exclusionFixture = path.join(__dirname, 'fixtures', 'cli-exclusion');
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-noplugin-'));
+		try {
+			run({
+				project : path.join(exclusionFixture, 'tsconfig.json'),
+				outputDir,
+			});
+
+			const instrumentationJson = JSON.parse(
+				fs.readFileSync(path.join(outputDir, 'instrumentation.json'), 'utf-8')
+			);
+			expect(instrumentationJson.points).to.deep.equal([]);
 		} finally {
 			fs.rmSync(outputDir, { recursive : true, force : true });
 		}
