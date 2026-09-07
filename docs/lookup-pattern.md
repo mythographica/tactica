@@ -105,6 +105,5 @@ If any box is unchecked, the integration is incomplete.
 
 ## See Also
 
-- **Agent guide:** `mnemonica/core/.ai/TACTICA.md`
-- **Comprehensive technical guide:** `mnemonica/MNEMONICA-TACTICA-PATTERN.md`
-- **Human-friendly explanation:** `mnemonica/core/docs/tactica-pattern.md`
+- **Canonical typing guide:** [`core/docs/typed-lookup.md`](https://github.com/wentout/mnemonica/blob/master/docs/typed-lookup.md) — builder mode, the one-line `RegistryOf` bridge, and the augmented mode this repo generates for
+- **Library landing:** [`core/README.md`](https://github.com/wentout/mnemonica) — the thesis, the four data mistakes, the three type-system paths
