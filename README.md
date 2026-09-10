@@ -138,7 +138,7 @@ Tactica writes everything under the `--output` directory (default `.tactica/`):
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
 | `instrumentation.json` | always | v2 envelope. `points`: framework lifecycle crossroads (interceptors, guards, pipes, filters, middleware) detected via **plugin-supplied vocabulary** — heritage declarations, decorator sites, provider-token registrations, `consumer.apply()` wiring. Syntactic only — no dive dependency; with no plugins loaded, `points` is `[]`. `creationGraph`: the inside-out walk from every instantiation site out to the starters — see "Creation graph" below. |
 | `modules.json` | always | Module-scope graph: every module's `exportedBindings`/`importedBindings` (functions, classes, consts, types — not only mnemonica types), project-internal `dependencies`, `builtinSpecifiers` (Node builtins are skipped entirely — both `'path'` and `'node:path'` forms), `unresolvedSpecifiers`, circular-import `cycles`, and cross-module mnemonica-type `edges`. Resolution uses `ts.resolveModuleName` with the project's compilerOptions (tsconfig `paths`, extensionless imports, index files) — no type checker. Bindings resolved into `node_modules` are marked `external: true` and never enter `dependencies`. |
-| `scopes.json` | always | Local-scope graph: function/method/arrow scopes only (no block scopes) plus one module scope per file; variables with `typePath` (mnemonica type when known), `isParameter`, `isMutable`, and `reassignments` — each reassignment of a mutable binding is a flow-termination point. |
+| `scopes.json` | always | Local-scope graph: function/method/arrow scopes only (no block scopes) plus one module scope per file; variables with `typePath` (mnemonica type when known), `isParameter`, `isMutable`, and `reassignments` — each reassignment of a mutable binding is a flow-termination point. `lookup()` initializers resolve through the same tier law as the analyzer (scope-chain receiver first, then the analyzer's source-relative/root law), so scopes metadata never disagrees with the hard-fail verdicts. |
 | `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
 
 ### Default mode (types.ts + registry.ts)
@@ -471,6 +471,131 @@ The analyzer infers property types from constructor bodies and class members. Su
 
 When inference fails the property's type falls back to `unknown` (or `any` in some Topologica paths) — safe, and you can refine manually.
 
+### Referenced types in constructor signatures
+
+A constructor parameter that references a named type (`record: SharedShape`) resolves **through the importing file's own import statements** — relative and tsconfig-paths imports are followed to the declaration (chasing re-export barrels), and imported classes/interfaces/type aliases with extractable fields are expanded inline. An import is never shadowed by a same-named declaration elsewhere in the program. A reference that resolves not at all (a ghost name, declared nowhere) emits `unknown` — generated `.tactica/types.ts` carries no import statements of its own, so a bare unresolvable name is never emitted. A reference that resolves *ambiguously* — several of your project's files declare the name and no import chooses between them — is **fatal** like the mnemonica-graph identity law below: tactica prints the reference site and every declaration site, exits non-zero, and writes no output. An import anchoring the reference is never ambiguity (the import wins, duplicate declarations or not), and package-declared same-named types never count — a user-local declaration always wins over a node_modules `.d.ts`. Two same-named interfaces in one file are legal TypeScript merging, not ambiguity (see Known Limitations for the last-wins caveat).
+
+**Ambiguous plain-TypeScript reference — fails, and how to fix it.** Two plain interfaces named `SharedShape` exist in different files, and a third file references a bare `SharedShape` with nothing anchoring it:
+
+```ts
+// a.ts                              // b.ts
+export interface SharedShape {      export interface SharedShape {
+	a: string;                       	b: number;
+}                                    }
+
+// consumer.ts — FATAL: which SharedShape?
+import { define } from 'mnemonica';
+
+export const Crate = define('Crate', function (this: Crate, data: SharedShape) {
+	this.item = data;
+});
+```
+
+```
+tactica: Ambiguous reference to type 'SharedShape': 2 declarations share the name and no import disambiguates — import the one you mean
+  at src/consumer.ts:6:67
+  at /abs/path/src/a.ts:1:1
+  at /abs/path/src/b.ts:1:1
+tactica: aborting — 1 resolution failure(s); no .tactica output written
+```
+
+Fix it by importing the declaration you mean — the file's own import wins over every other tier:
+
+```ts
+// consumer.ts — OK: the import anchors SharedShape → a.ts
+import { define } from 'mnemonica';
+import { SharedShape } from './a';
+
+export const Crate = define('Crate', function (this: Crate, data: SharedShape) {
+	this.item = data; // item: { a: string }
+});
+```
+
+Qualified references through a namespace import resolve one level per segment: `models.SharedShape` finds the declaration in the namespace import's module; multi-level paths (`holders.Inner.Crate`, `barrel.Deep.Gadget`) descend through namespace declarations, `export * as ns from '…'` barrels, and named re-exports of namespaces — each segment disambiguates, so two namespaces may declare the same name without colliding. What is *not* followed: ambient string-named modules (`declare module '…'`), default-export shapes behind a namespace segment, and type-only constructs with no extractable fields (unions of literals, mapped types) — those emit `unknown` like any other unresolvable reference.
+
+References to **mnemonica graph types** (types declared via `define()`, as opposed to plain TypeScript declarations) follow the runtime lookup law instead: the file's own value bindings and imports anchor the name first, then the defining type's own chain relative-first, then its collection's roots, then a program-wide search that must be unique. Same-namespace duplicate definitions (which the mnemonica runtime rejects with `ALREADY_DECLARED`) and graph references that stay ambiguous or unresolved are fatal: tactica prints every location, exits non-zero, and writes no `.tactica` output at all.
+
+**Ambiguous reference — fails, and how to fix it.** Two types named `Token` exist under different parents, and a third file references a bare `Token` with nothing anchoring it:
+
+```ts
+// defs.ts
+export const Holder = define('Holder', function (this: Holder) { /* … */ });
+export const Token = Holder.define('Token', function (this: Token, data: { mark: string }) { /* … */ });
+
+// other.ts
+export const Other = define('Other', function (this: Other) { /* … */ });
+Other.define('Token', function (this: Token, data: { hue: string }) { /* … */ });
+
+// consumer.ts — FATAL: which Token?
+export const Crate = define('Crate', function (this: Crate, data: Token) {
+	this.item = data;
+});
+```
+
+```
+tactica: Ambiguous reference to mnemonica type 'Token': 2 types share the name and neither the parent chain nor the imports disambiguate
+  at src/consumer.ts:7:67
+  at src/defs.ts:8:29
+  at src/other.ts:9:7
+tactica: aborting — 1 resolution failure(s); no .tactica output written
+```
+
+Fix it by anchoring the reference — either import the constructor you mean (the import wins over every other tier), or use the full generated name:
+
+```ts
+// consumer.ts — OK: the import anchors Token → Holder.Token
+import { Token } from './defs';
+export const Crate = define('Crate', function (this: Crate, data: Token) {
+	this.item = data;
+});
+
+// or — OK: fully-qualified generated type name
+export const Crate = define('Crate', function (this: Crate, data: Holder_Token) {
+	this.item = data;
+});
+```
+
+**Duplicate in one namespace — fails, and there is only one fix.** Two types with the same name under the same parent (or two same-named roots) are what the mnemonica runtime rejects with `ALREADY_DECLARED`; tactica fails the generation instead of emitting a wrong graph:
+
+```ts
+// dup-a.ts                     // dup-b.ts
+export const A = define(        export const B = define(
+	'DupRoot', …);              	'DupRoot', …);
+```
+
+```
+tactica: Duplicate definition of 'DupRoot' in one namespace — the mnemonica runtime would throw ALREADY_DECLARED
+  at src/dup-a.ts:3:22
+  at src/dup-b.ts:6:23
+tactica: aborting — 1 resolution failure(s); no .tactica output written
+```
+
+Rename one of them. Same-named types under **different** parents (`User.Address` and `Company.Address`) are legal mnemonica and never reported.
+
+**Unresolved `lookup()` path — fails, with a did-you-mean.** Literal `lookup()` paths are validated against the complete graph after analysis. A path matching no type is what the runtime answers with `undefined` — the `TypeError` arrives one line later at the `new` — so it is fatal too, and same-named types elsewhere in the graph are listed as candidates:
+
+```ts
+// consumer.ts — FATAL: no root 'Token'; Holder.Token and Other.Token exist
+const TokenCtor = lookup('Token');
+export const instance = new TokenCtor({ mark: 'x' });
+```
+
+```
+tactica: Unresolved lookup of mnemonica type 'Token': the runtime would return undefined — 2 graph type(s) carry the name off-root (Holder.Token, Other.Token); use the full dotted path
+  at src/consumer.ts:6:19
+  at src/defs.ts:8:29
+  at src/other.ts:9:7
+tactica: aborting — 1 resolution failure(s); no .tactica output written
+```
+
+```ts
+// OK: dotted absolute path, or receiver-relative resolution
+const ByPath     = lookup('Holder.Token');
+const ByReceiver = Holder.lookup('Token');
+```
+
+Non-literal lookup arguments (computed strings) stay best-effort and are not validated.
+
 ## API Reference
 
 ### `MnemonicaAnalyzer`
@@ -491,6 +616,7 @@ class MnemonicaAnalyzer {
     getEDSUsages():   Map<string, EDSInfo[]>;
     getFlowUsages():  Map<string, FlowInfo[]>;
     getInstrumentationPoints(): InstrumentationPoint[];
+    getResolutionErrors(): ResolutionError[];  // fatal duplicate/ambiguous graph + plain-TS references (hard-fail law)
 }
 ```
 
@@ -658,6 +784,7 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 - `scopeId` — the scopeId of the scope holding the wrap call site (fallback join).
 - `wrapsTypePath` — the mnemonica fullPath of the instance argument, resolved through the scope-variable chain (innermost binding wins; an untyped local shadows a typed outer one rather than being guessed).
 - `via` — the location of the enclosing wrap site when the call is nested inside another wrapped body (or returns a function): the wrappers-graph generation chain is built from it.
+- `scope` — the enclosing mnemonica type path. Lexical scoping (the owning `define()`/`lazy()` handler or `@decorate()`-ed class) wins; a wrap site outside any handler — the fire-and-forget-wrapper shape — is attributed through its instance/context argument (a tracked assignment like `const holder = new Holder(…)`, or the enclosing function's parameter annotation resolved through the graph law), and nested sites (function-valued returns, lexically nested wraps) inherit the causing wrap site's scope down the `via` chain. Sites attributable to nothing stay under the `unknown` key with `scope` absent.
 
 ## Instrumentation Points
 
@@ -681,6 +808,9 @@ interface TacticaPlugin {
     useDecorators?: Record<string, InstrumentationKind>;
     // `{ provide: TOKEN, useClass: Impl }` registrations: token identifier -> kind
     appTokens?: Record<string, InstrumentationKind>;
+    // factory calls inside listed decorators' args: factory method name ->
+    // kind + which factory-call argument holds the target class (default 0)
+    decoratorArgFactories?: Record<string, { kind: InstrumentationKind; targetArg?: number }>;
     // opt in to shape-based `consumer.apply(Mw).forRoutes(...)` detection
     middlewareWiring?: boolean;
 }
@@ -689,7 +819,8 @@ interface TacticaPlugin {
 Programmatic callers pass plugins directly: `new MnemonicaAnalyzer(program, plugins)` or `run({ …, plugins })`; config-file plugins append after programmatic ones, and later plugins override earlier ones on the same identifier key. Detection covers:
 
 - **Heritage** — `class X implements <plugin-listed interface>` (matched by interface identifier name). Bare declarations carry scope `module` (attachment statically unknown).
-- **Decorator sites** — plugin-listed decorators on classes or methods, including inline instances (`@Register(new Impl(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>`.
+- **Decorator sites** — plugin-listed decorators on classes, methods, or method parameters, including inline instances (`@Register(new Impl(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>` (parameter-decorated sites take the enclosing method's scope — the attachment is the handler, not the argument name).
+- **Decorator-arg factories** — a `CallExpression` argument of the form `<anything>.<factory>(…)` inside a listed decorator's args (class, method, or parameter position), e.g. `@UsePipes(mvp.forType(Dto))` and the parameter form `@Body(mvp.forType(Entity, Dto))`: when `<factory>` is plugin-listed, a point of the configured `kind` is emitted with the class in `targetArg` (default 0) as the target. Factory calls whose method name is not listed are ignored, as are listed factories whose configured position is not an identifier. Points resolve `location`/`code` to the target's declaration and dedupe exactly like other decorator sites.
 - **Global providers** — `{ provide: <plugin-listed token>, useClass: X }` object literals → scope `global`. `useExisting`/`useFactory` without `useClass` are skipped.
 - **Middleware wiring** — `consumer.apply(Mw).forRoutes(...)` inside a class's `configure()` method → scope `module`, targets from `forRoutes` arguments when statically readable. Requires `middlewareWiring: true` from any loaded plugin.
 
@@ -806,7 +937,19 @@ Mnemonica accepts the `exposeInstanceMethods` option at runtime, but tactica's `
 
 ### Single-pass analysis without binding
 
-The analyzer does not use `ts.Program.getTypeChecker()` for resolution, so cross-file type references in unusual shapes may resolve to `unknown`.
+The analyzer does not use `ts.Program.getTypeChecker()` for resolution. Plain TypeScript references in constructor signatures resolve through the importing file's import statements first, then its local declarations, and only then a unique same-named declaration across the scanned files — so a reference whose name is genuinely absent (or lives behind unresolvable specifiers) resolves to `unknown`, while a name several of your own files declare with no import to disambiguate fails hard (see above). References to mnemonica graph types follow the path-aware lookup law described above and fail hard instead of degrading to `unknown`.
+
+### Same-file interface merging is last-wins
+
+Two same-named interfaces in ONE module are legal TypeScript declaration merging, and tactica does not treat them as ambiguity (the fatal class is same-named declarations across several files, unanchored by an import). Resolution keeps a single declaration per name per file, and it is the last one — members from earlier declarations are not combined:
+
+```ts
+// merged.ts — resolves to { b: number }; the `a: string` member is not picked up
+export interface SharedShape { a: string; }
+export interface SharedShape { b: number; }
+```
+
+**Workaround:** declare the merged shape once, or split the interfaces under distinct names and import the one you mean.
 
 ### Custom collection name conflicts
 

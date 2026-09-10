@@ -24,12 +24,17 @@ const frameworkFixturePlugin: TacticaPlugin = {
 		UseGuards       : 'guard',
 		UseInterceptors : 'interceptor',
 		UsePipes        : 'pipe',
+		Body            : 'pipe',
 	},
 	appTokens : {
 		APP_GUARD       : 'guard',
 		APP_PIPE        : 'pipe',
 		APP_INTERCEPTOR : 'interceptor',
 		APP_FILTER      : 'filter',
+	},
+	decoratorArgFactories : {
+		forType   : { kind : 'pipe', targetArg : 0 },
+		bindGuard : { kind : 'guard', targetArg : 1 },
 	},
 	middlewareWiring : true,
 };
@@ -271,6 +276,215 @@ describe('MnemonicaAnalyzer - Instrumentation Points', () => {
 				expect(point.scope).to.equal('method:OrderController.findAll');
 				expect(point.targets).to.deep.equal([ 'OrderController' ]);
 			}
+		});
+	});
+
+	describe('decorator-arg factory calls', () => {
+		it('should detect a plugin-listed factory call in a decorator arg (@UsePipes(mvp.forType(Dto)))', () => {
+			const source = `
+				import { UsePipes } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class CrateController {
+					@UsePipes(mvp.forType(CrateDto))
+					createCrate (data: unknown) {
+						return data;
+					}
+				}
+
+				export class CrateDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			const site = points.find(p => p.className === 'CrateDto');
+			expect(site).to.exist;
+			expect(site!.kind).to.equal('pipe');
+			expect(site!.scope).to.equal('method:CrateController.createCrate');
+			expect(site!.targets).to.deep.equal([ 'CrateController' ]);
+			// declared in-project: location/code resolve to the declaration
+			// (CrateDto's declaration at line 12, not the decorator site at line 6)
+			expect(site!.location).to.match(/temp\.ts:12:/);
+		});
+
+		it('should read the target from a non-zero factory argument position when configured', () => {
+			const source = `
+				import { UseGuards } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class GadgetController {
+					@UseGuards(mvp.bindGuard('gadgets:write', GadgetGuard))
+					replaceGadget () {
+						return true;
+					}
+				}
+
+				export class GadgetGuard {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			const site = points.find(p => p.className === 'GadgetGuard');
+			expect(site).to.exist;
+			expect(site!.kind).to.equal('guard');
+			expect(site!.scope).to.equal('method:GadgetController.replaceGadget');
+		});
+
+		it('should ignore factory calls whose method name is not plugin-listed', () => {
+			const source = `
+				import { UsePipes } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class TokenController {
+					@UsePipes(mvp.unlisted(TokenDto))
+					mintToken (data: unknown) {
+						return data;
+					}
+				}
+
+				export class TokenDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			expect(points.find(p => p.className === 'TokenDto')).to.equal(undefined);
+		});
+
+		it('should skip a listed factory whose configured target position is not an identifier', () => {
+			const source = `
+				import { UsePipes } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class HolderController {
+					@UsePipes(mvp.forType(buildDto()))
+					makeHolder (data: unknown) {
+						return data;
+					}
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			expect(points.filter(p => p.scope === 'method:HolderController.makeHolder')).to.deep.equal([]);
+		});
+
+		it('should keep plain Identifier and new-expression args working alongside factory calls', () => {
+			const source = `
+				import { UsePipes } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class MixedController {
+					@UsePipes(PlainPipe, new InlinePipe(), mvp.forType(FactoryDto))
+					updateMixed () {
+						return true;
+					}
+				}
+
+				export class PlainPipe {}
+				export class InlinePipe {}
+				export class FactoryDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			const byName = new Map(points.map(p => [ p.className, p ]));
+			expect(byName.get('PlainPipe')?.kind).to.equal('pipe');
+			expect(byName.get('InlinePipe')?.kind).to.equal('pipe');
+			expect(byName.get('FactoryDto')?.kind).to.equal('pipe');
+			expect(points.filter(p => p.scope === 'method:MixedController.updateMixed')).to.have.length(3);
+		});
+	});
+
+	describe('parameter decorator parents', () => {
+		it('should detect a parameter-decorated factory call (@Body(mvp.forType(Dto)) on a handler argument)', () => {
+			const source = `
+				import { Body } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export class InvoiceController {
+					issueInvoice (@Body(mvp.forType(InvoiceDto)) data: unknown) {
+						return data;
+					}
+				}
+
+				export class InvoiceDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			const site = points.find(p => p.className === 'InvoiceDto');
+			expect(site).to.exist;
+			expect(site!.kind).to.equal('pipe');
+			expect(site!.scope).to.equal('method:InvoiceController.issueInvoice');
+			expect(site!.targets).to.deep.equal([ 'InvoiceController' ]);
+			// declared in-project: location/code resolve to the declaration
+			expect(site!.location).to.match(/temp\.ts:11:/);
+		});
+
+		it('should detect a parameter-decorated plain listed decorator (no factory call)', () => {
+			const source = `
+				import { UsePipes } from '@nestjs/common';
+
+				export class HolderController {
+					updateHolder (@UsePipes(HolderPipe) data: unknown) {
+						return data;
+					}
+				}
+
+				export class HolderPipe {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			const site = points.find(p => p.className === 'HolderPipe');
+			expect(site).to.exist;
+			expect(site!.kind).to.equal('pipe');
+			expect(site!.scope).to.equal('method:HolderController.updateHolder');
+			expect(site!.targets).to.deep.equal([ 'HolderController' ]);
+		});
+
+		it('should stay silent for a parameter decorator that is not plugin-listed', () => {
+			const source = `
+				import { Headers, Body } from '@nestjs/common';
+
+				export class QuietController {
+					ping (@Headers('x-token') token: string, @Body() data: unknown) {
+						return data;
+					}
+				}
+
+				export class QuietDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			expect(points.filter(p => p.scope === 'method:QuietController.ping')).to.deep.equal([]);
+		});
+
+		it('should stay silent for a parameter decorator on a non-method host (function parameter)', () => {
+			const source = `
+				import { Body } from '@nestjs/common';
+				import { mvp } from '@mnemonica/nestjs';
+
+				export function standalone (@Body(mvp.forType(StandaloneDto)) data: unknown) {
+					return data;
+				}
+
+				export class StandaloneDto {}
+			`;
+
+			analyzer.analyzeSource(source);
+			const points = analyzer.getInstrumentationPoints();
+
+			expect(points.find(p => p.className === 'StandaloneDto')).to.equal(undefined);
 		});
 	});
 

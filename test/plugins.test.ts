@@ -7,10 +7,11 @@ describe('mergeTacticaPlugins()', () => {
 	it('should return an empty vocabulary for no plugins', () => {
 		const merged = mergeTacticaPlugins([]);
 		expect(merged).to.deep.equal({
-			interfaces       : {},
-			useDecorators    : {},
-			appTokens        : {},
-			middlewareWiring : false,
+			interfaces            : {},
+			useDecorators         : {},
+			appTokens             : {},
+			decoratorArgFactories : {},
+			middlewareWiring      : false,
 		});
 	});
 
@@ -53,6 +54,17 @@ describe('mergeTacticaPlugins()', () => {
 			{ name : 'c' },
 		]);
 		expect(merged.middlewareWiring).to.be.true;
+	});
+
+	it('should merge decoratorArgFactories with later plugins overriding the same factory name', () => {
+		const merged = mergeTacticaPlugins([
+			{ decoratorArgFactories : { forType : { kind : 'pipe', targetArg : 0 } } },
+			{ decoratorArgFactories : { forType : { kind : 'guard' }, bindToken : { kind : 'pipe', targetArg : 1 } } },
+		]);
+		expect(merged.decoratorArgFactories).to.deep.equal({
+			forType   : { kind : 'guard' },
+			bindToken : { kind : 'pipe', targetArg : 1 },
+		});
 	});
 
 	it('should not mutate the given plugin objects', () => {

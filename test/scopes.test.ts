@@ -3,6 +3,7 @@
 import { expect } from 'chai';
 import * as path from 'path';
 import * as ts from 'typescript';
+import { MnemonicaAnalyzer } from '../src/analyzer';
 import { LocalScopeWalker, ScopeTypeResolver } from '../src/scopes';
 import { ScopeAnalysis, ScopeVariable, UsageInfo } from '../src/types';
 
@@ -300,6 +301,168 @@ describe('LocalScopeWalker', () => {
 			const scopeId = `${virtualPath('lookup-computed.ts')}:1:1`;
 			const variable = analysis.variables.get(`${scopeId}#Ctor`);
 			expect(variable?.typePath).to.equal(undefined);
+		});
+
+		it('should delegate receiver lookups the scope chain cannot see to the resolver\'s lookup law', () => {
+			// `Holder` is an import, not a scope variable — receiver-relative
+			// through the scope chain sees nothing; the analyzer's law
+			// (import scope → source-relative) resolves Holder.lookup('Token')
+			const code = [
+				'import { Holder } from \'./defs\';',
+				'const ByReceiver = Holder.lookup(\'Token\');',
+				'',
+			].join('\n');
+			const lawResolver: ScopeTypeResolver = {
+				resolveByName : (name: string): string | undefined => {
+					const result = name === 'Holder' ? 'Holder' : undefined;
+					return result;
+				},
+				hasPath : (fullPath: string): boolean => {
+					const result = [ 'Holder', 'Holder.Token' ].includes(fullPath);
+					return result;
+				},
+				resolveLookup : (call: ts.CallExpression): string | undefined => {
+					// the analyzer-law stand-in: receiver-relative first
+					const text = call.getText();
+					const result = text.includes('Holder') ? 'Holder.Token' : undefined;
+					return result;
+				},
+			};
+			const { analysis } = walkInline({ 'lookup-import.ts' : code }, lawResolver);
+			const variable = analysis.variables.get(`${virtualPath('lookup-import.ts')}#ByReceiver`);
+			expect(variable?.typePath).to.equal('Holder.Token');
+		});
+
+		it('should keep the scope-chain value tier ahead of the delegate (innermost binding wins)', () => {
+			const code = [
+				'function boot () {',
+				'\tconst user = new UserEntity({});',
+				'\tconst response = user.lookup(\'UserResponse\');',
+				'\treturn response;',
+				'}',
+				'',
+			].join('\n');
+			const lawResolver: ScopeTypeResolver = {
+				resolveByName : (name: string): string | undefined => {
+					const result = name === 'UserEntity' ? 'UserEntity' : undefined;
+					return result;
+				},
+				hasPath : (fullPath: string): boolean => {
+					const result = [ 'UserEntity', 'UserEntity.UserResponse' ].includes(fullPath);
+					return result;
+				},
+				resolveLookup : (): string | undefined => {
+					// the delegate must not override the scope-chain tier
+					const result = 'Elsewhere.UserResponse';
+					return result;
+				},
+			};
+			const { analysis } = walkInline({ 'lookup-precedence.ts' : code }, lawResolver);
+			const scopeId = `${virtualPath('lookup-precedence.ts')}:1:1`;
+			const variable = analysis.variables.get(`${scopeId}#response`);
+			expect(variable?.typePath).to.equal('UserEntity.UserResponse');
+		});
+
+		it('should ignore a delegate result the graph does not know', () => {
+			const code = [
+				'const ByReceiver = Holder.lookup(\'Token\');',
+				'',
+			].join('\n');
+			const lawResolver: ScopeTypeResolver = {
+				resolveByName : (): string | undefined => undefined,
+				hasPath       : (fullPath: string): boolean => {
+					const result = fullPath === 'Holder';
+					return result;
+				},
+				resolveLookup : (): string | undefined => {
+					// unknown paths stay typePath-less (the analyzer hard-fails
+					// the run; scopes keeps no stale metadata)
+					const result = 'Holder.Token';
+					return result;
+				},
+			};
+			const { analysis } = walkInline({ 'lookup-unknown.ts' : code }, lawResolver);
+			const variable = analysis.variables.get(`${virtualPath('lookup-unknown.ts')}#ByReceiver`);
+			expect(variable?.typePath).to.equal(undefined);
+		});
+	});
+
+	describe('lookup() law consistency with the analyzer (graph-lookup-valid fixture)', () => {
+		const fixtureDir = path.join(__dirname, 'fixtures', 'graph-lookup-valid');
+		let analysis: ScopeAnalysis;
+
+		before(() => {
+			const tsconfigPath = path.join(fixtureDir, 'tsconfig.json');
+			const configFile = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
+			const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, fixtureDir);
+			const program = ts.createProgram({
+				rootNames : parsed.fileNames,
+				options   : parsed.options,
+			});
+			const sourceFiles = program.getSourceFiles().filter(sourceFile =>
+				!sourceFile.isDeclarationFile &&
+				path.resolve(sourceFile.fileName).startsWith(path.resolve(fixtureDir) + path.sep));
+
+			// the CLI's two passes: definitions first, then usages against the
+			// complete graph (only pass-2 resolution is authoritative)
+			const analyzer = new MnemonicaAnalyzer(program);
+			for (const sourceFile of sourceFiles) {
+				analyzer.analyzeFile(sourceFile);
+			}
+			analyzer.resetUsages();
+			for (const sourceFile of sourceFiles) {
+				analyzer.analyzeFile(sourceFile);
+			}
+
+			// the CLI's wiring: scopeResolver backed by the analyzer's lookup law
+			const definitions = analyzer.getDefinitions();
+			const walker = new LocalScopeWalker();
+			for (const sourceFile of sourceFiles) {
+				walker.addFile(sourceFile);
+			}
+			const lawResolver: ScopeTypeResolver = {
+				resolveByName : (name: string): string | undefined => {
+					if (definitions.has(name)) {
+						return name;
+					}
+					let found: string | undefined;
+					for (const [ fullPath, definition ] of definitions) {
+						if (definition.name !== name) {
+							continue;
+						}
+						if (found) {
+							return undefined;
+						}
+						found = fullPath;
+					}
+					return found;
+				},
+				hasPath : (fullPath: string): boolean => {
+					const result = definitions.has(fullPath);
+					return result;
+				},
+				resolveLookup : (call: ts.CallExpression): string | undefined => {
+					const resolved = analyzer.resolveLookupCallPath(call);
+					return resolved;
+				},
+			};
+			analysis = walker.build(lawResolver);
+		});
+
+		it('should resolve a dotted lookup() initializer to the fullPath', () => {
+			const consumerPath = path.resolve(fixtureDir, 'src', 'consumer.ts');
+			const variable = analysis.variables.get(`${consumerPath}#ByPath`);
+			expect(variable?.typePath).to.equal('Holder.Token');
+		});
+
+		it('should resolve an import-anchored receiver lookup the scope chain cannot see', () => {
+			// `Holder` is an import binding — no scope variable carries its
+			// typePath, so without the analyzer-law delegate this variable
+			// used to get NO typePath (and the second `Token` in other.ts
+			// makes the byName fallback ambiguous)
+			const consumerPath = path.resolve(fixtureDir, 'src', 'consumer.ts');
+			const variable = analysis.variables.get(`${consumerPath}#ByReceiver`);
+			expect(variable?.typePath).to.equal('Holder.Token');
 		});
 	});
 

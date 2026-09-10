@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint, ResolutionError } from './types';
 import { TypeGraphImpl } from './graph';
 import { TacticaPlugin } from './plugins';
 /**
@@ -20,7 +20,6 @@ export declare class MnemonicaAnalyzer {
     private functionBindings;
     private nestedWrapVia;
     private wrapEntryByNode;
-    private typeAliases;
     private variableToTypeMap;
     private moduleObjectVariables;
     private createTypesCollectionVariables;
@@ -30,6 +29,26 @@ export declare class MnemonicaAnalyzer {
     private instrumentationClassDecls;
     private instrumentationSites;
     private instrumentationVocabulary;
+    private referencedTypeDecls;
+    private referencedTypeImports;
+    private referencedTypeReExports;
+    private referencedTypeExportStars;
+    private referencedTypeExportAliases;
+    private referencedTypeNamespaces;
+    private referencedTypeNamespaceStars;
+    private referencedTypeResolutionCache;
+    private referencedTypeCompilerOptions;
+    private currentReferencedTypeFile;
+    private expandingReferencedAliases;
+    private defineSites;
+    private graphReferenceErrors;
+    private lookupReferencesValidated;
+    private lookupReferences;
+    private plainTypeReferencesValidated;
+    private plainTypeReferences;
+    private fileGraphBindings;
+    private currentGraphAnchor;
+    private processedCalls;
     constructor(program?: ts.Program, plugins?: TacticaPlugin[]);
     /**
      * Reset usage-related state for a fresh pass.
@@ -93,6 +112,196 @@ export declare class MnemonicaAnalyzer {
      * createTypesCollection are recognized without relying on the type checker.
      */
     private trackImports;
+    /**
+     * Record a named referenced-type declaration (type alias, class, or
+     * interface) for the file currently being visited.
+     */
+    private trackReferencedTypeDeclaration;
+    /**
+     * Record the importing file's named/namespace/default import bindings so
+     * referenced-type names resolve through the file's own import statements
+     * (F10) rather than a program-wide name map.
+     */
+    private trackReferencedTypeImport;
+    /**
+     * Record re-export wiring (`export { X } from '…'`, `export * from '…'`,
+     * `export { X as Y }`) so resolution can chase barrels to the origin
+     * module. Mirrors ModuleGraphBuilder.resolveOrigin, name-based only.
+     */
+    private trackReferencedTypeReExport;
+    /**
+     * Resolve a module specifier from a containing file with the program's
+     * compilerOptions (tsconfig `paths`, extensionless imports, index files).
+     * Module resolution only — the no-getTypeChecker() precedent stays.
+     */
+    private resolveReferencedTypeModule;
+    /**
+     * Look up a name in one resolved module, chasing re-export barrels with a
+     * bounded depth. External (node_modules) modules hold no in-project
+     * declarations and stop the chase.
+     */
+    private findReferencedTypeInModule;
+    /**
+     * Resolve a referenced type name as used in fromFile, import-aware:
+     *   1. the file's own import statements (relative + tsconfig paths,
+     *      chased through re-export barrels),
+     *   2. the file's local declarations,
+     *   3. the unique same-named declaration across scanned files.
+     * Returns undefined when nothing matches (or the match is ambiguous),
+     * in which case the caller falls back to `unknown`.
+     */
+    private resolveReferencedTypeDeclaration;
+    /**
+     * External/ambient declaration files (.d.ts, anything under
+     * node_modules) never participate in plain-TS referenced-type
+     * resolution or the ambiguity law: they are not project source, the
+     * CLI never analyzes them, and a user-local declaration always wins
+     * over a package-declared same-named type.
+     */
+    private isExternalDeclFile;
+    /**
+     * Properties of a referenced class/interface/alias-of-literal declaration,
+     * shared by `this:`-parameter expansion and inline type emission.
+     */
+    private referencedDeclarationProperties;
+    /**
+     * Expand a referenced-type declaration to a self-contained type string
+     * for emission into generated files: type aliases through inferType,
+     * classes and interfaces through their (public, non-method) fields.
+     * Nested references resolve against the declaring file while expanding.
+     */
+    private expandReferencedTypeDeclaration;
+    private expandReferencedTypeDeclarationInner;
+    /**
+     * Resolve a simple (non-qualified) type reference: import-aware
+     * declaration expansion first, then the InstanceType<typeof X> pattern,
+     * then mnemonica graph types; known globals keep their bare name and
+     * anything else falls back to `unknown` so generated files never carry
+     * an unresolvable bare name. Returns undefined when the caller should
+     * keep the generic spelling (handled separately).
+     */
+    private resolveSimpleTypeReference;
+    /**
+     * Resolve a qualified type reference (models.Inner.Crate) through the
+     * current file's namespace imports. The chain's head must be a namespace
+     * import; middle segments descend through namespace declarations, named
+     * re-exports of namespaces, and `export * as ns from '…'` barrels (each
+     * segment consumed exactly once, so the walk cannot cycle); the final
+     * segment resolves to a declaration which is expanded inline. When the
+     * precise walk finds nothing, the legacy rightmost-name lookup in the
+     * head module keeps one-level forms (models.Type) working — nested
+     * declarations are recorded by plain name there too. Returns undefined
+     * when the head is not a namespace import or nothing resolves.
+     */
+    private inferQualifiedTypeReference;
+    /**
+     * Find a namespace declaration by name directly inside a module block.
+     */
+    private findNamespaceInBlock;
+    /**
+     * Find a named type declaration (alias, class, interface) directly inside
+     * a namespace block — the final segment of a descended qualified chain.
+     */
+    private findReferencedTypeInBlock;
+    /**
+     * Fallback for a type-reference name that resolves to no declaration and
+     * no graph type: known globals keep their bare name (they resolve without
+     * an import); everything else becomes `unknown` so generated types.ts
+     * never carries an unresolvable bare name (README's documented behavior)
+     * and the site is recorded for the plain-TS ambiguity validation.
+     */
+    private unresolvedTypeReferenceFallback;
+    /**
+     * Record one define()/lazy()/@decorate() site under its runtime
+     * namespace key. Two sites in one namespace are a same-namespace
+     * duplicate (the runtime throws ALREADY_DECLARED); every site is kept
+     * so the failure can report all locations.
+     */
+    private recordDefineSite;
+    /**
+     * Fatal resolution failures (hard-fail law): same-namespace duplicate
+     * mnemonica definitions plus ambiguous/unresolved mnemonica-graph
+     * references. The CLI prints every location and writes no output.
+     */
+    getResolutionErrors(): ResolutionError[];
+    /**
+     * Resolve a reference to a mnemonica graph type name, import-aware and
+     * path-aware (the hard-fail identity law, mirroring the runtime):
+     *   1. value scope — a tracked top-level binding in the referencing file
+     *      (`const Address = User.define('Address', …)`),
+     *   2. import scope — a binding exported from a module this file imports
+     *      (barrels chased),
+     *   3. nearest-chain — the anchor type's own subtypes first, then each
+     *      ancestor level (relative-first),
+     *   4. root — roots of the anchor's collection,
+     *   5. program-wide — only when exactly one type carries the name.
+     * Ambiguity (several candidates and nothing disambiguates) and absence
+     * are both returned as such — the caller records a hard failure; a bare
+     * first-match name is never emitted.
+     */
+    private resolveGraphTypeName;
+    /**
+     * Find a graph constructor binding exported by a resolved module,
+     * chasing re-export barrels with a bounded depth.
+     */
+    private findGraphBindingInModule;
+    /**
+     * Validate literal lookup() paths recorded during the usages pass
+     * against the complete graph. A lookup path matching no type is what the
+     * runtime answers with `undefined` — the TypeError arrives one line
+     * later at the `new` — so it joins the hard-fail law. The relative-first
+     * step already ran inside resolveLookupPath; whatever was recorded is
+     * the root-resolution result, so a plain findType check is the exact
+     * runtime law. Same-named types elsewhere in the graph are listed as
+     * did-you-mean candidates. Runs once per usages pass (re-armed by
+     * resetUsages); non-literal lookup arguments are never recorded and
+     * stay best-effort.
+     */
+    private validateLookupReferences;
+    /**
+     * Record a plain-TS type reference site that resolved to nothing and
+     * fell back to `unknown`, for the lazily-run ambiguity validation.
+     * Deduped by (name, location): inferType can visit the same node more
+     * than once per pass (constructor params + property inference).
+     */
+    private recordPlainTypeReferenceSite;
+    /**
+     * Project-source declaration files carrying `name` — one entry per
+     * file, so same-file interface merging counts once (not ambiguous).
+     * External/ambient declarations (.d.ts, anything under node_modules)
+     * never count: a user-local declaration always wins over a package-
+     * declared same-named type, so an external collision stays soft.
+     */
+    private plainTypeDeclarationFiles;
+    /**
+     * Validate plain-TS type reference sites recorded during the usages
+     * pass against the complete declaration map. A name declared in
+     * several project-source files — with no import in the referencing
+     * file to anchor it — is ambiguous: silently emitting `unknown` would
+     * hide a real type the author meant, so it joins the hard-fail law
+     * (the plain-TS tier of the same identity law as graph references).
+     * Absence (ghost names) and external collisions stay soft `unknown`.
+     * Runs once per usages pass (re-armed by resetUsages), mirroring
+     * validateLookupReferences: recording happens on every pass, but only
+     * the usages pass sees the complete declaration map.
+     */
+    private validatePlainTypeReferences;
+    /**
+     * `file:line:column` of a recorded declaration, for the ambiguity
+     * report. Nodes recorded during traversal keep their positions; a
+     * synthetic/unpositioned node falls back to the file itself.
+     */
+    private plainDeclLocation;
+    /**
+     * Record a hard-fail graph reference error with the reference site and
+     * every candidate location.
+     */
+    private recordGraphReferenceError;
+    /**
+     * Location (`file:line:column`) of an AST node, derived without parent
+     * pointers when necessary.
+     */
+    private nodeLocation;
     /**
      * Track aliases of the mnemonica module object, e.g.:
      *   const m = mnemonica;
@@ -204,6 +413,12 @@ export declare class MnemonicaAnalyzer {
         */
     private trackVariableAssignment;
     /**
+     * Mirror a variable -> mnemonica fullPath binding into the per-file
+     * value-scope map (graph identity law: `typeof X` and bare references
+     * resolve through the file's own bindings first).
+     */
+    private trackFileGraphBinding;
+    /**
         * Track variable assignments from lookup() calls
         * e.g., const SentienceConstructor = lookup('Sentience') maps "SentienceConstructor" -> "Sentience"
         */
@@ -255,6 +470,15 @@ export declare class MnemonicaAnalyzer {
      *   collection.lookup('User.Admin')
      */
     private resolveLookupPath;
+    /**
+     * Lookup-law delegate for the local-scope walker (scopes.json typePath
+     * metadata): resolve a lookup() initializer call through exactly the
+     * tiers the usages pass resolved it against (same source resolution,
+     * same complete graph). The walker runs its own scope-chain value-scope
+     * tier before delegating; everything above value scope lands here, so
+     * scopes.json never disagrees with the hard-fail-law verdicts.
+     */
+    resolveLookupCallPath(call: ts.CallExpression): string | undefined;
     /**
         * Find a parent type by its name, searching in the graph.
         * When collectionId is provided, only types from that collection are considered.
@@ -339,10 +563,6 @@ export declare class MnemonicaAnalyzer {
         */
     private inferReturnTypeFromBody;
     /**
-        * Get full text from a qualified name (e.g., Namespace.Type)
-        */
-    private getQualifiedNameText;
-    /**
      * Infer type from initializer
      */
     private inferTypeFromInitializer;
@@ -374,6 +594,24 @@ export declare class MnemonicaAnalyzer {
      */
     private resolveEDSScope;
     /**
+     * Resolve a wrap site's instance/context argument to a mnemonica type
+     * path — the fire-and-forget-wrapper attribution fallback when the call
+     * sits outside any define()/lazy() handler: a tracked assignment
+     * (`const holder = new Holder(...)`), else the root identifier's
+     * (property-access roots included) parameter annotation resolved
+     * through the graph law. Ambiguity or absence stays silent — this is a
+     * metadata heuristic, not the identity-law surface.
+     */
+    private resolveWrapInstanceTypePath;
+    /**
+     * Resolve a bare-identifier type annotation of the nearest enclosing
+     * function's parameter through the mnemonica-graph tiers (value scope,
+     * imports, roots, program-wide-unique). Non-identifier and generic
+     * annotations are not graph references; ambiguity and absence yield
+     * undefined.
+     */
+    private resolveParameterAnnotationTypePath;
+    /**
      * Resolve a wrap() argument to its function node without the type
      * checker: direct function expressions/arrows, or same-file bindings
      * (`const fn = () => ...`, `function fn() ...`). Best effort — method
@@ -397,6 +635,8 @@ export declare class MnemonicaAnalyzer {
      * site (`via` = the site whose wrapping caused it) and recurse into
      * its own returns. Returns through identifiers resolve through the
      * same-file bindings table; unresolvable returns are simply skipped.
+     * A return declared outside any type scope inherits the causing wrap
+     * site's scope attribution (the generation chain is the only holder).
      */
     private recordWrappedReturn;
     /**

@@ -1,13 +1,21 @@
-import { TypeNode, GeneratedTypes } from './types';
+import { TypeNode, GeneratedTypes, ResolutionError } from './types';
 import { TypeGraphImpl } from './graph';
+/**
+ * Path-aware resolver for mnemonica graph type names referenced inside type
+ * strings while generating output. Returns the unique type, 'ambiguous', or
+ * undefined (resolves to nothing) — see resolveGraphTypeReference.
+ */
+export type GraphReferenceResolver = (simpleName: string, currentNode: TypeNode) => TypeNode | 'ambiguous' | undefined;
 /**
  * TypeScript declaration file generator
  */
 export declare class TypesGenerator {
     private graph;
+    private referenceResolver?;
     private esm;
     private outputDir;
-    constructor(graph: TypeGraphImpl, esm?: boolean, outputDir?: string);
+    private resolutionErrors;
+    constructor(graph: TypeGraphImpl, esm?: boolean, outputDir?: string, referenceResolver?: GraphReferenceResolver | undefined);
     /**
      * Get import path with optional .js extension for ESM NodeNext
      */
@@ -68,8 +76,19 @@ export declare class TypesGenerator {
     /**
      * Resolve a simple type name to its full path name
      * e.g., "DefinitionEntry" -> "Definitions_DefinitionEntry"
+     *
+     * With a referenceResolver installed (the CLI path), resolution is
+     * path-aware per the graph identity law: the resolver returns the unique
+     * type, 'ambiguous', or undefined — the latter two record a hard-fail
+     * ResolutionError and emit `unknown` instead of silently picking a
+     * first match. Without a resolver the legacy first-match scan stays.
      */
     private resolveTypeName;
+    /**
+     * Hard-fail graph reference errors recorded while generating (see
+     * referenceResolver). The CLI prints every location and writes no output.
+     */
+    getResolutionErrors(): ResolutionError[];
     /**
      * Resolve simple type names to full path names within a type string
      * Handles complex types like Array<UsageEntry>, Map<string, TypeEntry>, etc.

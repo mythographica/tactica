@@ -2,9 +2,19 @@
 
 import * as path from 'path';
 import {
-	TypeNode, GeneratedTypes 
+	TypeNode, GeneratedTypes, ResolutionError 
 } from './types';
 import { TypeGraphImpl } from './graph';
+
+/**
+ * Path-aware resolver for mnemonica graph type names referenced inside type
+ * strings while generating output. Returns the unique type, 'ambiguous', or
+ * undefined (resolves to nothing) — see resolveGraphTypeReference.
+ */
+export type GraphReferenceResolver = (
+	simpleName: string,
+	currentNode: TypeNode
+) => TypeNode | 'ambiguous' | undefined;
 
 /**
  * TypeScript declaration file generator
@@ -12,8 +22,14 @@ import { TypeGraphImpl } from './graph';
 export class TypesGenerator {
 	private esm: boolean;
 	private outputDir: string;
+	private resolutionErrors: ResolutionError[] = [];
 
-	constructor (private graph: TypeGraphImpl, esm = false, outputDir = '.tactica') {
+	constructor (
+		private graph: TypeGraphImpl,
+		esm = false,
+		outputDir = '.tactica',
+		private referenceResolver?: GraphReferenceResolver
+	) {
 		this.esm = esm;
 		this.outputDir = outputDir;
 	}
@@ -446,8 +462,34 @@ export class TypesGenerator {
 	/**
 	 * Resolve a simple type name to its full path name
 	 * e.g., "DefinitionEntry" -> "Definitions_DefinitionEntry"
+	 *
+	 * With a referenceResolver installed (the CLI path), resolution is
+	 * path-aware per the graph identity law: the resolver returns the unique
+	 * type, 'ambiguous', or undefined — the latter two record a hard-fail
+	 * ResolutionError and emit `unknown` instead of silently picking a
+	 * first match. Without a resolver the legacy first-match scan stays.
 	 */
 	private resolveTypeName (simpleName: string, currentNode: TypeNode): string {
+		if (this.referenceResolver) {
+			const resolved = this.referenceResolver(simpleName, currentNode);
+			if (resolved && resolved !== 'ambiguous') {
+				const instanceName = this.getInstanceTypeName(resolved);
+				return instanceName;
+			}
+			const anchorLocation = `${currentNode.sourceFile}:${currentNode.line}:${currentNode.column}`;
+			const ambiguousGenerationMessage = `Ambiguous reference to mnemonica type '${simpleName}' ` +
+				`while generating '${this.getFullPath(currentNode)}'`;
+			const unresolvedGenerationMessage = `Unresolved reference to mnemonica type '${simpleName}' ` +
+				`while generating '${this.getFullPath(currentNode)}'`;
+			const message = resolved === 'ambiguous'
+				? ambiguousGenerationMessage
+				: unresolvedGenerationMessage;
+			const error: ResolutionError = { message, locations : [ anchorLocation ] };
+			this.resolutionErrors.push(error);
+			const unknownResult = 'unknown';
+			return unknownResult;
+		}
+
 		// First check if it's the current node or its children
 		if (currentNode.name === simpleName) {
 			return this.getInstanceTypeName(currentNode);
@@ -464,6 +506,15 @@ export class TypesGenerator {
 			}
 		}
 		return simpleName;
+	}
+
+	/**
+	 * Hard-fail graph reference errors recorded while generating (see
+	 * referenceResolver). The CLI prints every location and writes no output.
+	 */
+	getResolutionErrors (): ResolutionError[] {
+		const result = [ ...this.resolutionErrors ];
+		return result;
 	}
 
 	/**
@@ -484,6 +535,12 @@ export class TypesGenerator {
 		// Replace each simple type name with its full path version
 		let result = typeStr;
 		for (const name of sortedNames) {
+			// Skip names that do not occur — with a referenceResolver installed,
+			// resolving absent names would record spurious errors
+			const occurs = new RegExp(`\\b${name}\\b`).test(result);
+			if (!occurs) {
+				continue;
+			}
 			// Use word boundary matching to avoid replacing partial names
 			const regex = new RegExp(`\\b${name}\\b`, 'g');
 			const fullTypeName = this.resolveTypeName(name, currentNode);

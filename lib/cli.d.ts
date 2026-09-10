@@ -24,9 +24,10 @@ interface CLIOptions extends TacticaConfig {
  */
 declare function parseArgs(args: string[]): CLIOptions;
 /**
- * Run type generation
+ * Run type generation. Returns 0 on success; 1 when the graph identity law
+ * aborted the run (failures printed, no .tactica output written).
  */
-declare function run(options: CLIOptions): void;
+declare function run(options: CLIOptions): number;
 /**
  * Watch mode
  */

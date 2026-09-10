@@ -442,7 +442,8 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			analyzer.analyzeSource(source);
 			const eds = analyzer.getEDSUsages();
 
-			const entries = Array.from(eds.values()).flat().filter(e => e.kind === 'wrap');
+			const entries = Array.from(eds.values()).flat()
+				.filter(e => e.kind === 'wrap');
 			const byCode = (needle: string) => entries.find(e => e.code.startsWith(needle));
 			expect(byCode('wrap(function')!.fn).to.equal('wrap');
 			expect(byCode('wrapConstructorArg(')!.fn).to.equal('wrapConstructorArg');
@@ -557,6 +558,136 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(Number(lineText)).to.equal(3);
 			const [ , , sourceLine ] = source.split('\n');
 			expect(sourceLine[ Number(colText) - 1 ]).to.equal('(');
+		});
+	});
+
+	describe('scope attribution through wrappers', () => {
+		it('should attribute a module-level wrap() through a tracked instance assignment', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const Holder = define('Holder', function (this: Holder) {
+					this.kind = 'holder';
+				});
+
+				const holder = new Holder();
+				const w = wrap(function () { return 1; }, holder, 'job:run');
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('Holder');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('Holder');
+			expect(wrapEntry!.instanceArg).to.equal('holder');
+		});
+
+		it('should attribute a wrap() in a wire-up helper through the parameter annotation', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const Holder = define('Holder', function (this: Holder) {
+					this.kind = 'holder';
+				});
+
+				function wire (holder: Holder) {
+					return wrap(function () { return 2; }, holder);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('Holder');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('Holder');
+			expect(wrapEntry!.instanceArg).to.equal('holder');
+		});
+
+		it('should keep the unknown key when neither a handler nor the instance arg attributes the site', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				const w = wrap(function () { return 3; }, untracked);
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+			const wrapEntry = unscoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.be.undefined;
+		});
+
+		it('should inherit the causing wrap site\'s scope for a function-valued return declared outside any handler', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const helper = function () {
+					return () => 3;
+				};
+
+				const MyService = define('MyService', function (this: MyService) {
+					const fn = function () {
+						return helper;
+					};
+					this.process = wrap(fn);
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyService');
+			expect(scoped).to.exist;
+			const rootEntry = scoped!.find(e => e.code.includes('wrap(fn)'));
+			expect(rootEntry).to.exist;
+			expect(rootEntry!.scope).to.equal('MyService');
+			// helper (and its returned arrow) live at module level — the
+			// generation chain is their only holder
+			const nested = scoped!.filter(e => e.via === rootEntry!.location);
+			expect(nested.length).to.be.greaterThan(0);
+			for (const entry of nested) {
+				expect(entry.scope).to.equal('MyService');
+			}
+		});
+
+		it('should back-patch the causing site\'s scope onto a lexically nested wrap', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const outer = function () {
+					const inner = wrap(function () { return 1; });
+					return inner;
+				};
+
+				const MyType = define('MyType', function (this: MyType) {
+					this.process = wrap(outer);
+				});
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('MyType');
+			expect(scoped).to.exist;
+			const rootEntry = scoped!.find(e => e.code.includes('wrap(outer)'));
+			expect(rootEntry).to.exist;
+			const nestedCall = Array.from(eds.values()).flat()
+				.find(e => e.code.includes('wrap(function'));
+			expect(nestedCall).to.exist;
+			expect(nestedCall!.via).to.equal(rootEntry!.location);
+			expect(nestedCall!.scope).to.equal('MyType');
 		});
 	});
 });

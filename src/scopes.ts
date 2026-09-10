@@ -16,6 +16,14 @@ export interface ScopeTypeResolver {
 	resolveByName(name: string): string | undefined;
 	/** True when the dotted path is a known mnemonica type */
 	hasPath(fullPath: string): boolean;
+	/**
+	 * Optional lookup-law delegate: resolve a `lookup()` initializer call
+	 * through the analyzer's full tier law (value scope, import scope,
+	 * source-relative, root). The walker runs its own scope-chain
+	 * value-scope tier first; this backs the tiers above it so scopes.json
+	 * typePaths agree with the analyzer's (hard-fail) verdicts.
+	 */
+	resolveLookup?(call: ts.CallExpression): string | undefined;
 }
 
 /**
@@ -45,6 +53,8 @@ interface PendingVariable {
 	lookupPath?: string;
 	/** Root identifier of the receiver for `receiver.lookup('A.B')` / `lookup(source, 'A.B')` */
 	lookupReceiver?: string;
+	/** The lookup() call node itself — handed to the resolver's lookup-law delegate */
+	lookupCall?: ts.CallExpression;
 	/** Raw type annotation text (e.g. 'UserEntity_UserResponse') */
 	annotation?: string;
 	/** Scope chain from declaration site outward, for chain-root lookup */
@@ -470,6 +480,7 @@ export class LocalScopeWalker {
 			if (lookup) {
 				pendingEntry.lookupPath = lookup.path;
 				pendingEntry.lookupReceiver = lookup.receiver;
+				pendingEntry.lookupCall = initializer;
 			}
 		}
 		this.pending.push(pendingEntry);
@@ -642,7 +653,7 @@ export class LocalScopeWalker {
 		if (entry.lookupPath) {
 			// Receiver-relative first: `user.lookup('AdminEntity')` resolves
 			// against the receiver variable's typePath when that yields a
-			// known path (mirrors the analyzer's relative-then-root rule)
+			// known path (value-scope tier — innermost binding wins)
 			if (entry.lookupReceiver) {
 				for (const scopeId of entry.scopeChain) {
 					const receiverVariable = this.variables.get(`${scopeId}#${entry.lookupReceiver}`);
@@ -653,6 +664,16 @@ export class LocalScopeWalker {
 					if (resolver.hasPath(candidate)) {
 						return candidate;
 					}
+				}
+			}
+			// The analyzer's tier law above value scope (import scope,
+			// source-relative, root): an imported `Holder.lookup('Token')`
+			// or `lookup(App, 'Crate')` resolves exactly as the usages pass
+			// resolved it, so scopes.json agrees with the hard-fail verdicts
+			if (resolver.resolveLookup && entry.lookupCall) {
+				const resolved = resolver.resolveLookup(entry.lookupCall);
+				if (resolved && resolver.hasPath(resolved)) {
+					return resolved;
 				}
 			}
 			if (resolver.hasPath(entry.lookupPath)) {

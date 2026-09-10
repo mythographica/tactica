@@ -6,9 +6,11 @@ import {
 	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
 	DefinitionInfo, UsageInfo, ConstructorParamInfo,
 	EDSInfo, FlowInfo, InstrumentationKind, InstrumentationPoint,
-	InstrumentationScope
+	InstrumentationScope, ResolutionError
 } from './types';
-import { TypeGraphImpl } from './graph';
+import {
+	TypeGraphImpl, resolveGraphTypeReference, GraphTypeReferenceResult 
+} from './graph';
 import {
 	InstrumentationVocabulary, TacticaPlugin, mergeTacticaPlugins
 } from './plugins';
@@ -44,6 +46,62 @@ interface InstrumentationSite {
 }
 
 /**
+ * A named referenced-type declaration (type alias, class, or interface)
+ * recorded per file, so references can be resolved through the importing
+ * file's own imports instead of a program-wide last-wins name map (F10).
+ */
+interface ReferencedTypeDeclaration {
+	kind: 'alias' | 'class' | 'interface';
+	node: ts.TypeAliasDeclaration | ts.ClassDeclaration | ts.InterfaceDeclaration;
+	/** file that declares the type — nested references resolve against it */
+	file: string;
+}
+
+/**
+ * One import binding of a referenced type: the local name under which the
+ * file knows it, the original exported name in the source module, and the
+ * specifier it came from.
+ */
+interface ReferencedTypeImport {
+	originalName: string;
+	specifier: string;
+	isNamespace: boolean;
+}
+
+/**
+ * Result of resolving one module specifier from one containing file.
+ */
+interface ReferencedTypeResolution {
+	resolvedPath: string;
+	isExternal: boolean;
+}
+
+/**
+ * Global/builtin type names that are safe to emit bare into generated files
+ * — they resolve in any TypeScript compilation without an import.
+ */
+const KNOWN_GLOBAL_TYPES = new Set([
+	'Date', 'RegExp', 'Error', 'EvalError', 'RangeError', 'ReferenceError',
+	'SyntaxError', 'TypeError', 'URIError', 'AggregateError',
+	'Map', 'Set', 'WeakMap', 'WeakSet', 'WeakRef', 'FinalizationRegistry',
+	'Promise', 'Array', 'ReadonlyArray', 'Record', 'Partial', 'Required',
+	'Readonly', 'Pick', 'Omit', 'Exclude', 'Extract', 'NonNullable',
+	'ReturnType', 'InstanceType', 'Parameters', 'ConstructorParameters',
+	'ThisType', 'ThisParameterType', 'OmitThisParameter',
+	'Uppercase', 'Lowercase', 'Capitalize', 'Uncapitalize',
+	'String', 'Number', 'Boolean', 'Symbol', 'BigInt', 'Object', 'Function',
+	'Iterable', 'Iterator', 'Generator', 'AsyncIterable', 'AsyncIterator',
+	'AsyncGenerator', 'IterableIterator', 'AsyncIterableIterator',
+	'PropertyKey', 'ArrayBuffer', 'SharedArrayBuffer', 'DataView',
+	'Int8Array', 'Uint8Array', 'Uint8ClampedArray', 'Int16Array',
+	'Uint16Array', 'Int32Array', 'Uint32Array', 'Float32Array',
+	'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Intl'
+]);
+
+// Bound for chasing re-export barrels (export { X } from '…', export * from '…')
+const MAX_REEXPORT_CHASE_DEPTH = 5;
+
+/**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
  *
  * Framework-blind by construction: instrumentation detection vocabulary
@@ -65,14 +123,15 @@ export class MnemonicaAnalyzer {
 	// Same-file function bindings (`fileName#name` -> function node) for
 	// resolving wrap(fn) arguments syntactically — the checker stays unused
 	private functionBindings = new Map<string, ts.FunctionLikeDeclaration>();
-	// wrap call node -> location of the enclosing wrap site, so nested
-	// wrap() calls inside a wrapped body carry the `via` link
-	private nestedWrapVia = new Map<ts.Node, string>();
+	// wrap call node -> location of the enclosing wrap site (plus that
+	// site's scope attribution), so nested wrap() calls inside a wrapped
+	// body carry the `via` link — and inherit the scope when they have
+	// none of their own
+	private nestedWrapVia = new Map<ts.Node, { via: string; scope?: string }>();
 	// wrap call node -> its collected entry, so a lexically nested wrap
 	// (visited BEFORE the outer wrap call, per source order) gets its
 	// `via` back-patched when the outer body is analysed
 	private wrapEntryByNode = new Map<ts.Node, EDSInfo>();
-	private typeAliases = new Map<string, ts.TypeNode>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
 	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
@@ -94,10 +153,87 @@ export class MnemonicaAnalyzer {
 	// Merged plugin vocabulary for instrumentation detection (empty when
 	// no plugins were passed — the analyzer then collects no points)
 	private instrumentationVocabulary: InstrumentationVocabulary;
+	// Referenced-type resolution (F10): per-file declarations and imports.
+	// A type name used in file X resolves through X's own import statements
+	// first (relative + tsconfig-paths, via ts.resolveModuleName), then
+	// X's local declarations, then — only when nothing imports or declares
+	// the name — the unique same-named declaration across scanned files.
+	// Genuine ambiguity or an unresolvable reference yields `unknown`, never
+	// a bare emitted name: generated types.ts carries no imports of its own.
+	private referencedTypeDecls = new Map<string, Map<string, ReferencedTypeDeclaration>>();
+	private referencedTypeImports = new Map<string, Map<string, ReferencedTypeImport>>();
+	// file -> (exported name -> re-export specifier) for `export { X } from '…'`
+	private referencedTypeReExports = new Map<string, Map<string, string>>();
+	// file -> specifiers of `export * from '…'`
+	private referencedTypeExportStars = new Map<string, string[]>();
+	// file -> (exported name -> local name) for `export { X as Y }`
+	private referencedTypeExportAliases = new Map<string, Map<string, string>>();
+	// file -> (namespace name -> namespace declaration) — middle segments
+	// of qualified references (models.Inner.Crate) descend through these
+	private referencedTypeNamespaces = new Map<string, Map<string, ts.ModuleDeclaration>>();
+	// file -> (namespace name -> specifier) for `export * as ns from '…'`
+	// barrels — a nested module namespace one segment deep
+	private referencedTypeNamespaceStars = new Map<string, Map<string, string>>();
+	// `${containingFile}::${specifier}` -> resolution (undefined = failed)
+	private referencedTypeResolutionCache = new Map<string, ReferencedTypeResolution | undefined>();
+	private referencedTypeCompilerOptions: ts.CompilerOptions;
+	// File whose AST is currently being visited; references resolve against it
+	private currentReferencedTypeFile = '';
+	// Alias names currently being expanded (cycle guard)
+	private expandingReferencedAliases = new Set<string>();
+	// Mnemonica-graph identity law (hard fail): every define()/lazy()/
+	// @decorate() site keyed by its runtime namespace (collection roots:
+	// `<collection>::<name>`; subtypes: `<parentFullPath>.<name>`). Two
+	// sites in one namespace are a same-namespace duplicate — the runtime
+	// throws ALREADY_DECLARED — and must abort generation.
+	private defineSites = new Map<string, string[]>();
+	// Mnemonica-graph references that stayed ambiguous after path-aware
+	// resolution or resolved to nothing (hard-fail class 2)
+	private graphReferenceErrors: ResolutionError[] = [];
+	// Guards lookup()-path validation so it runs once per usages pass
+	// (getResolutionErrors may be called repeatedly); resetUsages re-arms it
+	private lookupReferencesValidated = false;
+	// Literal lookup() call sites with their resolved paths. Kept apart from
+	// the usages map on purpose: addUsage drops paths the graph does not
+	// know (usages.json indexes references to KNOWN types), but an unknown
+	// lookup path is exactly the hard-fail case — the runtime returns
+	// undefined there and the TypeError arrives one line later
+	private lookupReferences: { path: string; location: string }[] = [];
+	// Guards plain-TS reference validation so it runs once per usages pass
+	// (getResolutionErrors may be called repeatedly); resetUsages re-arms it
+	private plainTypeReferencesValidated = false;
+	// Plain-TS type reference sites whose resolution fell through imports,
+	// locals, the program-wide scan, and the graph to a soft `unknown`.
+	// Validated lazily from getResolutionErrors against the complete
+	// declaration map: a name several project-source files declare — with
+	// no import in the referencing file to anchor it — is the plain-TS
+	// ambiguity hard-fail class (one tier below the graph identity law);
+	// absence (ghost names) stays soft. Recording happens on every pass,
+	// the verdict only here — pass 1 sees an incomplete declaration map,
+	// so only the usages pass is authoritative (mirrors lookup references)
+	private plainTypeReferences: { name: string; location: string; file: string }[] = [];
+	// Per-file top-level variable -> mnemonica fullPath bindings (value
+	// scope): `const Address = User.define('Address', …)` makes `Address`
+	// denote User.Address wherever that file's references are resolved
+	private fileGraphBindings = new Map<string, Map<string, string>>();
+	// The graph type whose constructor is currently being extracted;
+	// anchors relative-first graph reference resolution
+	private currentGraphAnchor: TypeNode | undefined;
+	// define()/lazy() calls already extracted this pass. The CLI re-analyzes
+	// every file after resetUsages(); clearing the set lets the second pass
+	// re-extract every constructor against the COMPLETE graph — pass 1 sees
+	// forward references as `none` (soft unknown) because later files have
+	// not been visited yet, so only pass-2 resolution is authoritative for
+	// the hard-fail identity law. The stamp lives here rather than on the
+	// AST node so it can actually be cleared. (Chained calls visit the same
+	// node twice within one pass; the in-pass dedup below stays.)
+	private processedCalls = new Set<ts.CallExpression>();
 
 	constructor (program?: ts.Program, plugins: TacticaPlugin[] = []) {
-		// Store program for future use (currently unused but kept for extensibility)
-		void program;
+		// Compiler options drive ts.resolveModuleName for import-aware
+		// referenced-type resolution (tsconfig `paths`, extensionless
+		// imports); the type checker itself stays unused.
+		this.referencedTypeCompilerOptions = program?.getCompilerOptions() ?? {};
 		this.instrumentationVocabulary = mergeTacticaPlugins(plugins);
 	}
 
@@ -116,6 +252,17 @@ export class MnemonicaAnalyzer {
 		this.nestedWrapVia.clear();
 		// Note: moduleObjectVariables and collectionVariables intentionally persist
 		// across definition and usage passes.
+		// Re-extraction in the usages pass is what makes graph reference
+		// resolution authoritative: pass 1 resolves against an incomplete
+		// graph (forward references read as `none`), pass 2 against all of it.
+		this.processedCalls.clear();
+		// lookup()-path validation runs against the recorded sites; a fresh
+		// pass must re-record and re-validate (pass-1 results would be
+		// premature — the graph is still incomplete)
+		this.lookupReferencesValidated = false;
+		this.lookupReferences = [];
+		this.plainTypeReferencesValidated = false;
+		this.plainTypeReferences = [];
 	}
 
 	/**
@@ -123,6 +270,8 @@ export class MnemonicaAnalyzer {
 	 */
 	analyzeFile (sourceFile: ts.SourceFile): AnalyzeResult {
 		this.errors = [];
+		// Referenced-type names in this file resolve against its own imports
+		this.currentReferencedTypeFile = nodePath.resolve(sourceFile.fileName);
 		// Ensure parent nodes are set for AST traversal
 		this.setParentNodesInSourceFile(sourceFile);
 		this.visitNode(sourceFile, sourceFile);
@@ -322,10 +471,11 @@ export class MnemonicaAnalyzer {
 		// by plugins; syntactic only — no type checker)
 		this.collectInstrumentation(node, sourceFile);
 
-		// Collect type aliases for resolving type references
-		if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
-			this.typeAliases.set(node.name.text, node.type);
-		}
+		// Collect referenced-type declarations (aliases, classes, interfaces)
+		// per file, and the file's import wiring, for import-aware resolution
+		this.trackReferencedTypeDeclaration(node);
+		this.trackReferencedTypeImport(node);
+		this.trackReferencedTypeReExport(node);
 
 		// Track same-file function bindings so EDS can resolve wrap(fn)
 		// arguments without the type checker (best effort, last wins)
@@ -397,6 +547,1014 @@ export class MnemonicaAnalyzer {
 		if (clause.name) {
 			this.moduleObjectVariables.add(clause.name.text);
 		}
+	}
+
+	/**
+	 * Record a named referenced-type declaration (type alias, class, or
+	 * interface) for the file currently being visited.
+	 */
+	private trackReferencedTypeDeclaration (node: ts.Node): void {
+		// Namespaces are the middle segments of qualified references
+		// (models.Inner.Crate) — recorded separately from the plain-name
+		// declaration table (string-named `module '…'` declarations are
+		// ambient externals and stay out)
+		if (ts.isModuleDeclaration(node) && ts.isIdentifier(node.name) &&
+			node.body && ts.isModuleBlock(node.body)) {
+			const namespaceFilePath = this.currentReferencedTypeFile;
+			let namespaces = this.referencedTypeNamespaces.get(namespaceFilePath);
+			if (!namespaces) {
+				namespaces = new Map<string, ts.ModuleDeclaration>();
+				this.referencedTypeNamespaces.set(namespaceFilePath, namespaces);
+			}
+			namespaces.set(node.name.text, node);
+			return;
+		}
+
+		let name = '';
+		let kind: ReferencedTypeDeclaration['kind'] | undefined;
+		let declNode: ReferencedTypeDeclaration['node'] | undefined;
+
+		if (ts.isTypeAliasDeclaration(node) && ts.isIdentifier(node.name)) {
+			name = node.name.text;
+			kind = 'alias';
+			declNode = node;
+		} else if (ts.isClassDeclaration(node) && node.name) {
+			name = node.name.text;
+			kind = 'class';
+			declNode = node;
+		} else if (ts.isInterfaceDeclaration(node) && ts.isIdentifier(node.name)) {
+			name = node.name.text;
+			kind = 'interface';
+			declNode = node;
+		}
+
+		if (!kind || !declNode || !name) {
+			return;
+		}
+
+		const filePath = this.currentReferencedTypeFile;
+		let decls = this.referencedTypeDecls.get(filePath);
+		if (!decls) {
+			decls = new Map<string, ReferencedTypeDeclaration>();
+			this.referencedTypeDecls.set(filePath, decls);
+		}
+		const entry: ReferencedTypeDeclaration = { kind, node : declNode, file : filePath };
+		decls.set(name, entry);
+
+		// `export default class Foo {}` is also reachable under the 'default'
+		// binding for default importers
+		if (kind === 'class') {
+			const classNode = declNode as ts.ClassDeclaration;
+			const isExported = classNode.modifiers?.some(m => m.kind === ts.SyntaxKind.ExportKeyword) ?? false;
+			const isDefault = classNode.modifiers?.some(m => m.kind === ts.SyntaxKind.DefaultKeyword) ?? false;
+			if (isExported && isDefault) {
+				decls.set('default', entry);
+			}
+		}
+	}
+
+	/**
+	 * Record the importing file's named/namespace/default import bindings so
+	 * referenced-type names resolve through the file's own import statements
+	 * (F10) rather than a program-wide name map.
+	 */
+	private trackReferencedTypeImport (node: ts.Node): void {
+		if (!ts.isImportDeclaration(node)) {
+			return;
+		}
+		const { moduleSpecifier } = node;
+		if (!ts.isStringLiteral(moduleSpecifier)) {
+			return;
+		}
+		const clause = node.importClause;
+		if (!clause) {
+			return;
+		}
+
+		const filePath = this.currentReferencedTypeFile;
+		let imports = this.referencedTypeImports.get(filePath);
+		if (!imports) {
+			imports = new Map<string, ReferencedTypeImport>();
+			this.referencedTypeImports.set(filePath, imports);
+		}
+
+		// import { SharedShape } from '…' / import { SharedShape as S } from '…'
+		if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+			for (const element of clause.namedBindings.elements) {
+				const localName = element.name.text;
+				const originalName = element.propertyName ? element.propertyName.text : localName;
+				imports.set(localName, {
+					originalName,
+					specifier   : moduleSpecifier.text,
+					isNamespace : false
+				});
+			}
+		}
+
+		// import * as models from '…' — resolved when a qualified name
+		// (models.SharedShape) is encountered
+		if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
+			imports.set(clause.namedBindings.name.text, {
+				originalName : '',
+				specifier    : moduleSpecifier.text,
+				isNamespace  : true
+			});
+		}
+
+		// import SharedShape from '…' (default import)
+		if (clause.name) {
+			imports.set(clause.name.text, {
+				originalName : 'default',
+				specifier    : moduleSpecifier.text,
+				isNamespace  : false
+			});
+		}
+	}
+
+	/**
+	 * Record re-export wiring (`export { X } from '…'`, `export * from '…'`,
+	 * `export { X as Y }`) so resolution can chase barrels to the origin
+	 * module. Mirrors ModuleGraphBuilder.resolveOrigin, name-based only.
+	 */
+	private trackReferencedTypeReExport (node: ts.Node): void {
+		if (!ts.isExportDeclaration(node)) {
+			return;
+		}
+		const filePath = this.currentReferencedTypeFile;
+		const { moduleSpecifier } = node;
+		const specifierText = moduleSpecifier && ts.isStringLiteral(moduleSpecifier)
+			? moduleSpecifier.text
+			: undefined;
+
+		if (node.exportClause && ts.isNamedExports(node.exportClause)) {
+			for (const element of node.exportClause.elements) {
+				const exportedName = element.name.text;
+				const localName = element.propertyName ? element.propertyName.text : exportedName;
+				if (specifierText) {
+					// export { X } from '…' / export { X as Y } from '…'
+					let reExports = this.referencedTypeReExports.get(filePath);
+					if (!reExports) {
+						reExports = new Map<string, string>();
+						this.referencedTypeReExports.set(filePath, reExports);
+					}
+					reExports.set(exportedName, specifierText);
+				} else if (localName !== exportedName) {
+					// export { X as Y } — same-file alias of a local declaration
+					let aliases = this.referencedTypeExportAliases.get(filePath);
+					if (!aliases) {
+						aliases = new Map<string, string>();
+						this.referencedTypeExportAliases.set(filePath, aliases);
+					}
+					aliases.set(exportedName, localName);
+				}
+			}
+			return;
+		}
+
+		if (node.exportClause && ts.isNamespaceExport(node.exportClause)) {
+			// `export * as ns from '…'` — a nested module namespace; middle
+			// segments of qualified references (barrel.Deep.Gadget) chase it
+			if (specifierText) {
+				let stars = this.referencedTypeNamespaceStars.get(filePath);
+				if (!stars) {
+					stars = new Map<string, string>();
+					this.referencedTypeNamespaceStars.set(filePath, stars);
+				}
+				stars.set(node.exportClause.name.text, specifierText);
+			}
+			return;
+		}
+
+		if (!node.exportClause && specifierText) {
+			// export * from '…'
+			let stars = this.referencedTypeExportStars.get(filePath);
+			if (!stars) {
+				stars = [];
+				this.referencedTypeExportStars.set(filePath, stars);
+			}
+			stars.push(specifierText);
+		}
+	}
+
+	/**
+	 * Resolve a module specifier from a containing file with the program's
+	 * compilerOptions (tsconfig `paths`, extensionless imports, index files).
+	 * Module resolution only — the no-getTypeChecker() precedent stays.
+	 */
+	private resolveReferencedTypeModule (specifier: string, containingFile: string):
+		ReferencedTypeResolution | undefined {
+		const cacheKey = `${containingFile}::${specifier}`;
+		if (this.referencedTypeResolutionCache.has(cacheKey)) {
+			const cached = this.referencedTypeResolutionCache.get(cacheKey);
+			return cached === undefined ? undefined : cached;
+		}
+
+		const resolution = ts.resolveModuleName(
+			specifier,
+			containingFile,
+			this.referencedTypeCompilerOptions,
+			ts.sys
+		).resolvedModule;
+
+		const result: ReferencedTypeResolution | undefined = resolution
+			? {
+				resolvedPath : nodePath.resolve(resolution.resolvedFileName),
+				isExternal   : !!resolution.isExternalLibraryImport
+			}
+			: undefined;
+
+		this.referencedTypeResolutionCache.set(cacheKey, result);
+		const finalResult = result;
+		return finalResult;
+	}
+
+	/**
+	 * Look up a name in one resolved module, chasing re-export barrels with a
+	 * bounded depth. External (node_modules) modules hold no in-project
+	 * declarations and stop the chase.
+	 */
+	private findReferencedTypeInModule (
+		modulePath: string,
+		name: string,
+		depth: number
+	): ReferencedTypeDeclaration | undefined {
+		if (depth > MAX_REEXPORT_CHASE_DEPTH) {
+			return undefined;
+		}
+
+		const decls = this.referencedTypeDecls.get(modulePath);
+		const direct = decls?.get(name);
+		if (direct) {
+			return direct;
+		}
+		// export { X as Y } — resolve through the local name
+		const localAlias = this.referencedTypeExportAliases.get(modulePath)?.get(name);
+		if (localAlias) {
+			const aliased = decls?.get(localAlias);
+			if (aliased) {
+				return aliased;
+			}
+		}
+
+		const reExports = this.referencedTypeReExports.get(modulePath);
+		const reExportSpecifier = reExports?.get(name);
+		if (reExportSpecifier) {
+			const nextResolution = this.resolveReferencedTypeModule(reExportSpecifier, modulePath);
+			if (nextResolution && !nextResolution.isExternal) {
+				const found = this.findReferencedTypeInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		const stars = this.referencedTypeExportStars.get(modulePath);
+		if (stars) {
+			for (const starSpecifier of stars) {
+				const nextResolution = this.resolveReferencedTypeModule(starSpecifier, modulePath);
+				if (!nextResolution || nextResolution.isExternal) {
+					continue;
+				}
+				const found = this.findReferencedTypeInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Resolve a referenced type name as used in fromFile, import-aware:
+	 *   1. the file's own import statements (relative + tsconfig paths,
+	 *      chased through re-export barrels),
+	 *   2. the file's local declarations,
+	 *   3. the unique same-named declaration across scanned files.
+	 * Returns undefined when nothing matches (or the match is ambiguous),
+	 * in which case the caller falls back to `unknown`.
+	 */
+	private resolveReferencedTypeDeclaration (
+		name: string,
+		fromFile: string
+	): ReferencedTypeDeclaration | undefined {
+		// 1. the file's own imports win — an import is never shadowed by a
+		// same-named local declaration elsewhere in the program (F10)
+		const imported = this.referencedTypeImports.get(fromFile)?.get(name);
+		if (imported && !imported.isNamespace) {
+			const resolution = this.resolveReferencedTypeModule(imported.specifier, fromFile);
+			if (resolution && !resolution.isExternal) {
+				const found = this.findReferencedTypeInModule(resolution.resolvedPath, imported.originalName, 0);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		// 2. local declaration in the referencing file itself
+		const local = this.referencedTypeDecls.get(fromFile)?.get(name);
+		if (local) {
+			return local;
+		}
+
+		// 3. program-wide fallback, unique declaration only — ambiguity and
+		// absence both yield undefined (the caller emits `unknown`).
+		// External/ambient declarations (.d.ts, node_modules) do not
+		// participate: a user-local declaration always wins over a
+		// package-declared same-named type (the plain-TS tier of the
+		// identity law; ambiguity among the remaining declarations is
+		// validated separately as a hard fail)
+		let unique: ReferencedTypeDeclaration | undefined;
+		let count = 0;
+		for (const [ filePath, decls ] of this.referencedTypeDecls) {
+			if (this.isExternalDeclFile(filePath)) {
+				continue;
+			}
+			const candidate = decls.get(name);
+			if (candidate) {
+				count++;
+				unique = candidate;
+				if (count > 1) {
+					return undefined;
+				}
+			}
+		}
+
+		const result = count === 1 ? unique : undefined;
+		return result;
+	}
+
+	/**
+	 * External/ambient declaration files (.d.ts, anything under
+	 * node_modules) never participate in plain-TS referenced-type
+	 * resolution or the ambiguity law: they are not project source, the
+	 * CLI never analyzes them, and a user-local declaration always wins
+	 * over a package-declared same-named type.
+	 */
+	private isExternalDeclFile (file: string): boolean {
+		const external = file.endsWith('.d.ts') ||
+			file.includes(`${nodePath.sep}node_modules${nodePath.sep}`);
+		return external;
+	}
+
+	/**
+	 * Properties of a referenced class/interface/alias-of-literal declaration,
+	 * shared by `this:`-parameter expansion and inline type emission.
+	 */
+	private referencedDeclarationProperties (decl: ReferencedTypeDeclaration):
+		Map<string, PropertyInfo> {
+		const properties = new Map<string, PropertyInfo>();
+
+		if (decl.kind === 'class') {
+			const classProps = this.extractClassProperties(decl.node as ts.ClassDeclaration);
+			for (const [ name, info ] of classProps) {
+				properties.set(name, info);
+			}
+			return properties;
+		}
+
+		let members: readonly ts.TypeElement[] = [];
+		if (decl.kind === 'interface') {
+			const iface = decl.node as ts.InterfaceDeclaration;
+			members = [ ...iface.members ];
+		} else {
+			const aliasType = (decl.node as ts.TypeAliasDeclaration).type;
+			if (ts.isTypeLiteralNode(aliasType)) {
+				members = [ ...aliasType.members ];
+			} else {
+				return properties;
+			}
+		}
+
+		for (const member of members) {
+			if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
+				const propName = member.name.text;
+				const type = this.inferType(member.type);
+				properties.set(propName, {
+					name     : propName,
+					type,
+					optional : !!member.questionToken,
+				});
+			}
+		}
+
+		return properties;
+	}
+
+	/**
+	 * Expand a referenced-type declaration to a self-contained type string
+	 * for emission into generated files: type aliases through inferType,
+	 * classes and interfaces through their (public, non-method) fields.
+	 * Nested references resolve against the declaring file while expanding.
+	 */
+	private expandReferencedTypeDeclaration (decl: ReferencedTypeDeclaration): string | undefined {
+		const referencingFile = this.currentReferencedTypeFile;
+		this.currentReferencedTypeFile = decl.file;
+		try {
+			const result = this.expandReferencedTypeDeclarationInner(decl);
+			return result;
+		} finally {
+			this.currentReferencedTypeFile = referencingFile;
+		}
+	}
+
+	private expandReferencedTypeDeclarationInner (decl: ReferencedTypeDeclaration): string | undefined {
+		if (decl.kind === 'alias') {
+			const aliasNode = decl.node as ts.TypeAliasDeclaration;
+			const aliasName = ts.isIdentifier(aliasNode.name) ? aliasNode.name.text : '';
+			if (aliasName && this.expandingReferencedAliases.has(aliasName)) {
+				// Self-referential alias chain — bail out
+				return 'unknown';
+			}
+			if (aliasName) {
+				this.expandingReferencedAliases.add(aliasName);
+			}
+			const expanded = this.inferType(aliasNode.type);
+			if (aliasName) {
+				this.expandingReferencedAliases.delete(aliasName);
+			}
+			return expanded;
+		}
+
+		const declProperties = this.referencedDeclarationProperties(decl);
+		const props = Array.from(declProperties.entries()).map(([ propName, info ]) => {
+			const optional = info.optional ? '?' : '';
+			return `${propName}${optional}: ${info.type}`;
+		});
+
+		const result = `{ ${props.join('; ')} }`;
+		return result;
+	}
+
+	/**
+	 * Resolve a simple (non-qualified) type reference: import-aware
+	 * declaration expansion first, then the InstanceType<typeof X> pattern,
+	 * then mnemonica graph types; known globals keep their bare name and
+	 * anything else falls back to `unknown` so generated files never carry
+	 * an unresolvable bare name. Returns undefined when the caller should
+	 * keep the generic spelling (handled separately).
+	 */
+	private resolveSimpleTypeReference (
+		typeName: string,
+		typeArgs?: ts.NodeArray<ts.TypeNode>,
+		refNode?: ts.Node
+	): string | undefined {
+		// Import-aware referenced-type declaration (F10)
+		const decl = this.resolveReferencedTypeDeclaration(typeName, this.currentReferencedTypeFile);
+		if (decl) {
+			const expanded = this.expandReferencedTypeDeclaration(decl);
+			if (expanded !== undefined) {
+				return expanded;
+			}
+			const unknownResult = 'unknown';
+			return unknownResult;
+		}
+
+		// Mnemonica-graph identity law: path-aware resolution (value scope,
+		// imports, nearest-chain, root, program-wide). Ambiguity between
+		// real graph types is a hard failure; a name no graph type carries
+		// stays in the plain-TS soft scope and falls to `unknown`.
+		const graphResult = this.resolveGraphTypeName(typeName);
+		if (graphResult.status === 'unique') {
+			// Handle InstanceType<typeof X> pattern -> convert to Parent_X
+			if (typeName === 'InstanceType' && typeArgs && typeArgs.length === 1) {
+				const [ arg ] = typeArgs;
+				if (arg.kind === ts.SyntaxKind.TypeQuery) {
+					const typeQuery = arg as ts.TypeQueryNode;
+					if (ts.isIdentifier(typeQuery.exprName)) {
+						const queryResult = this.resolveGraphTypeName(typeQuery.exprName.text);
+						if (queryResult.status === 'unique') {
+							// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
+							return queryResult.node.fullPath.replace(/\./g, '_');
+						}
+						if (queryResult.status === 'ambiguous') {
+							this.recordGraphReferenceError(typeQuery.exprName.text, typeQuery, queryResult);
+						}
+						// Not a known mnemonica type — no bare emission
+						return 'unknown';
+					}
+				}
+			}
+			if (!typeArgs || typeArgs.length === 0) {
+				// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
+				return graphResult.node.fullPath.replace(/\./g, '_');
+			}
+			// Generic use of a graph type keeps its simple name; the
+			// generator upgrades it to the full-path instance type name
+			return `${typeName}<${typeArgs.map(a => this.inferType(a)).join(', ')}>`;
+		}
+		if (graphResult.status === 'ambiguous') {
+			this.recordGraphReferenceError(typeName, refNode ?? this.currentReferencedTypeFile, graphResult);
+		}
+
+		if (typeArgs && typeArgs.length > 0) {
+			if (KNOWN_GLOBAL_TYPES.has(typeName)) {
+				const genericResult = `${typeName}<${typeArgs.map(a => this.inferType(a)).join(', ')}>`;
+				return genericResult;
+			}
+			// Generic reference to a non-global, non-graph type cannot be
+			// emitted bare into the generated file
+			if (refNode) {
+				this.recordPlainTypeReferenceSite(typeName, refNode);
+			}
+			return 'unknown';
+		}
+
+		const fallbackResult = this.unresolvedTypeReferenceFallback(typeName, refNode);
+		return fallbackResult;
+	}
+
+	/**
+	 * Resolve a qualified type reference (models.Inner.Crate) through the
+	 * current file's namespace imports. The chain's head must be a namespace
+	 * import; middle segments descend through namespace declarations, named
+	 * re-exports of namespaces, and `export * as ns from '…'` barrels (each
+	 * segment consumed exactly once, so the walk cannot cycle); the final
+	 * segment resolves to a declaration which is expanded inline. When the
+	 * precise walk finds nothing, the legacy rightmost-name lookup in the
+	 * head module keeps one-level forms (models.Type) working — nested
+	 * declarations are recorded by plain name there too. Returns undefined
+	 * when the head is not a namespace import or nothing resolves.
+	 */
+	private inferQualifiedTypeReference (typeRef: ts.TypeReferenceNode): string | undefined {
+		if (!ts.isQualifiedName(typeRef.typeName)) {
+			return undefined;
+		}
+
+		// flatten the qualified name chain: models.Inner.Crate → ['models', 'Inner', 'Crate']
+		const segments: string[] = [];
+		let chain: ts.EntityName = typeRef.typeName;
+		while (ts.isQualifiedName(chain)) {
+			segments.unshift(chain.right.text);
+			chain = chain.left;
+		}
+		segments.unshift(chain.text);
+
+		const namespaceImport = this.referencedTypeImports.get(this.currentReferencedTypeFile)?.get(segments[ 0 ]);
+		if (!namespaceImport || !namespaceImport.isNamespace) {
+			return undefined;
+		}
+
+		const resolution = this.resolveReferencedTypeModule(namespaceImport.specifier, this.currentReferencedTypeFile);
+		if (!resolution || resolution.isExternal) {
+			return undefined;
+		}
+
+		// descend the middle segments: a module context resolves the segment
+		// as a namespace declaration / namespace re-export; a namespace-block
+		// context resolves it as a nested namespace declaration
+		let qualifier: { modulePath: string; block?: ts.ModuleBlock } | undefined = {
+			modulePath : resolution.resolvedPath
+		};
+		for (let i = 1; i < segments.length - 1 && qualifier; i++) {
+			const segment = segments[ i ];
+			if (qualifier.block) {
+				const nested = this.findNamespaceInBlock(qualifier.block, segment);
+				if (nested?.body && ts.isModuleBlock(nested.body)) {
+					qualifier = { modulePath : qualifier.modulePath, block : nested.body };
+					continue;
+				}
+				qualifier = undefined;
+				break;
+			}
+			const namespaceDecl: ts.ModuleDeclaration | undefined =
+				this.referencedTypeNamespaces.get(qualifier.modulePath)?.get(segment);
+			if (namespaceDecl?.body && ts.isModuleBlock(namespaceDecl.body)) {
+				qualifier = { modulePath : qualifier.modulePath, block : namespaceDecl.body };
+				continue;
+			}
+			const starSpecifier = this.referencedTypeNamespaceStars.get(qualifier.modulePath)?.get(segment);
+			if (starSpecifier) {
+				const nextResolution = this.resolveReferencedTypeModule(starSpecifier, qualifier.modulePath);
+				if (nextResolution && !nextResolution.isExternal) {
+					qualifier = { modulePath : nextResolution.resolvedPath };
+					continue;
+				}
+			}
+			const reExportSpecifier = this.referencedTypeReExports.get(qualifier.modulePath)?.get(segment);
+			if (reExportSpecifier) {
+				const nextResolution = this.resolveReferencedTypeModule(reExportSpecifier, qualifier.modulePath);
+				const reExported: ts.ModuleDeclaration | undefined =
+					nextResolution && !nextResolution.isExternal
+						? this.referencedTypeNamespaces.get(nextResolution.resolvedPath)?.get(segment)
+						: undefined;
+				if (reExported?.body && ts.isModuleBlock(reExported.body)) {
+					qualifier = { modulePath : nextResolution!.resolvedPath, block : reExported.body };
+					continue;
+				}
+			}
+			qualifier = undefined;
+		}
+
+		const finalName = segments[ segments.length - 1 ];
+		let decl: ReferencedTypeDeclaration | undefined;
+		if (qualifier?.block) {
+			decl = this.findReferencedTypeInBlock(qualifier.block, qualifier.modulePath, finalName);
+		} else if (qualifier) {
+			decl = this.findReferencedTypeInModule(qualifier.modulePath, finalName, 0);
+		}
+		// legacy fallback: rightmost name anywhere in the head module
+		// (namespace-nested declarations are also recorded by plain name)
+		if (!decl) {
+			decl = this.findReferencedTypeInModule(resolution.resolvedPath, finalName, 0);
+		}
+		if (!decl) {
+			return undefined;
+		}
+
+		const expanded = this.expandReferencedTypeDeclaration(decl);
+		return expanded;
+	}
+
+	/**
+	 * Find a namespace declaration by name directly inside a module block.
+	 */
+	private findNamespaceInBlock (block: ts.ModuleBlock, name: string): ts.ModuleDeclaration | undefined {
+		for (const statement of block.statements) {
+			if (ts.isModuleDeclaration(statement) && ts.isIdentifier(statement.name) &&
+				statement.name.text === name) {
+				const result = statement;
+				return result;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Find a named type declaration (alias, class, interface) directly inside
+	 * a namespace block — the final segment of a descended qualified chain.
+	 */
+	private findReferencedTypeInBlock (
+		block: ts.ModuleBlock,
+		filePath: string,
+		name: string
+	): ReferencedTypeDeclaration | undefined {
+		for (const statement of block.statements) {
+			if (ts.isTypeAliasDeclaration(statement) && ts.isIdentifier(statement.name) &&
+				statement.name.text === name) {
+				const result: ReferencedTypeDeclaration = { kind : 'alias', node : statement, file : filePath };
+				return result;
+			}
+			if (ts.isClassDeclaration(statement) && statement.name && statement.name.text === name) {
+				const result: ReferencedTypeDeclaration = { kind : 'class', node : statement, file : filePath };
+				return result;
+			}
+			if (ts.isInterfaceDeclaration(statement) && ts.isIdentifier(statement.name) &&
+				statement.name.text === name) {
+				const result: ReferencedTypeDeclaration = { kind : 'interface', node : statement, file : filePath };
+				return result;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Fallback for a type-reference name that resolves to no declaration and
+	 * no graph type: known globals keep their bare name (they resolve without
+	 * an import); everything else becomes `unknown` so generated types.ts
+	 * never carries an unresolvable bare name (README's documented behavior)
+	 * and the site is recorded for the plain-TS ambiguity validation.
+	 */
+	private unresolvedTypeReferenceFallback (typeName: string, refNode?: ts.Node): string {
+		if (KNOWN_GLOBAL_TYPES.has(typeName)) {
+			return typeName;
+		}
+		if (refNode) {
+			this.recordPlainTypeReferenceSite(typeName, refNode);
+		}
+		const result = 'unknown';
+		return result;
+	}
+
+	/**
+	 * Record one define()/lazy()/@decorate() site under its runtime
+	 * namespace key. Two sites in one namespace are a same-namespace
+	 * duplicate (the runtime throws ALREADY_DECLARED); every site is kept
+	 * so the failure can report all locations.
+	 */
+	private recordDefineSite (namespaceKey: string, location: string): void {
+		let sites = this.defineSites.get(namespaceKey);
+		if (!sites) {
+			sites = [];
+			this.defineSites.set(namespaceKey, sites);
+		}
+		if (!sites.includes(location)) {
+			sites.push(location);
+		}
+	}
+
+	/**
+	 * Fatal resolution failures (hard-fail law): same-namespace duplicate
+	 * mnemonica definitions plus ambiguous/unresolved mnemonica-graph
+	 * references. The CLI prints every location and writes no output.
+	 */
+	getResolutionErrors (): ResolutionError[] {
+		this.validateLookupReferences();
+		this.validatePlainTypeReferences();
+		const errors: ResolutionError[] = [];
+		for (const [ namespaceKey, sites ] of this.defineSites) {
+			if (sites.length < 2) {
+				continue;
+			}
+			const displayName = namespaceKey.replace(/^[^:]+::/, '');
+			const message = `Duplicate definition of '${displayName}' in one namespace — ` +
+				'the mnemonica runtime would throw ALREADY_DECLARED';
+			errors.push({ message, locations : [ ...sites ] });
+		}
+		for (const error of this.graphReferenceErrors) {
+			errors.push(error);
+		}
+		const result = errors;
+		return result;
+	}
+
+	/**
+	 * Resolve a reference to a mnemonica graph type name, import-aware and
+	 * path-aware (the hard-fail identity law, mirroring the runtime):
+	 *   1. value scope — a tracked top-level binding in the referencing file
+	 *      (`const Address = User.define('Address', …)`),
+	 *   2. import scope — a binding exported from a module this file imports
+	 *      (barrels chased),
+	 *   3. nearest-chain — the anchor type's own subtypes first, then each
+	 *      ancestor level (relative-first),
+	 *   4. root — roots of the anchor's collection,
+	 *   5. program-wide — only when exactly one type carries the name.
+	 * Ambiguity (several candidates and nothing disambiguates) and absence
+	 * are both returned as such — the caller records a hard failure; a bare
+	 * first-match name is never emitted.
+	 */
+	private resolveGraphTypeName (name: string): GraphTypeReferenceResult {
+		// 1. value scope in the referencing file itself
+		const localBinding = this.fileGraphBindings.get(this.currentReferencedTypeFile)?.get(name);
+		if (localBinding) {
+			const node = this.graph.findType(localBinding);
+			if (node) {
+				const valueResult: GraphTypeReferenceResult = { status : 'unique', node };
+				return valueResult;
+			}
+		}
+
+		// 2. import scope — the imported module's exported binding
+		const imported = this.referencedTypeImports.get(this.currentReferencedTypeFile)?.get(name);
+		if (imported && !imported.isNamespace) {
+			const resolution = this.resolveReferencedTypeModule(imported.specifier, this.currentReferencedTypeFile);
+			if (resolution && !resolution.isExternal) {
+				const fullPath = this.findGraphBindingInModule(resolution.resolvedPath, imported.originalName, 0);
+				if (fullPath) {
+					const node = this.graph.findType(fullPath);
+					if (node) {
+						const importResult: GraphTypeReferenceResult = { status : 'unique', node };
+						return importResult;
+					}
+				}
+			}
+		}
+
+		// 3-5. chain / root / program-wide tiers
+		const result = resolveGraphTypeReference(this.graph, name, this.currentGraphAnchor);
+		return result;
+	}
+
+	/**
+	 * Find a graph constructor binding exported by a resolved module,
+	 * chasing re-export barrels with a bounded depth.
+	 */
+	private findGraphBindingInModule (modulePath: string, name: string, depth: number): string | undefined {
+		if (depth > MAX_REEXPORT_CHASE_DEPTH) {
+			return undefined;
+		}
+
+		const direct = this.fileGraphBindings.get(modulePath)?.get(name);
+		if (direct) {
+			return direct;
+		}
+
+		const reExports = this.referencedTypeReExports.get(modulePath);
+		const reExportSpecifier = reExports?.get(name);
+		if (reExportSpecifier) {
+			const nextResolution = this.resolveReferencedTypeModule(reExportSpecifier, modulePath);
+			if (nextResolution && !nextResolution.isExternal) {
+				const found = this.findGraphBindingInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		const stars = this.referencedTypeExportStars.get(modulePath);
+		if (stars) {
+			for (const starSpecifier of stars) {
+				const nextResolution = this.resolveReferencedTypeModule(starSpecifier, modulePath);
+				if (!nextResolution || nextResolution.isExternal) {
+					continue;
+				}
+				const found = this.findGraphBindingInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		return undefined;
+	}
+
+	/**
+	 * Validate literal lookup() paths recorded during the usages pass
+	 * against the complete graph. A lookup path matching no type is what the
+	 * runtime answers with `undefined` — the TypeError arrives one line
+	 * later at the `new` — so it joins the hard-fail law. The relative-first
+	 * step already ran inside resolveLookupPath; whatever was recorded is
+	 * the root-resolution result, so a plain findType check is the exact
+	 * runtime law. Same-named types elsewhere in the graph are listed as
+	 * did-you-mean candidates. Runs once per usages pass (re-armed by
+	 * resetUsages); non-literal lookup arguments are never recorded and
+	 * stay best-effort.
+	 */
+	private validateLookupReferences (): void {
+		if (this.lookupReferencesValidated) {
+			return;
+		}
+		this.lookupReferencesValidated = true;
+		// group sites by path: every failing site of the same path is listed
+		const sitesByPath = new Map<string, string[]>();
+		for (const ref of this.lookupReferences) {
+			const sites = sitesByPath.get(ref.path) ?? [];
+			sites.push(ref.location);
+			sitesByPath.set(ref.path, sites);
+		}
+		for (const [ typePath, sites ] of sitesByPath) {
+			if (this.graph.findType(typePath)) {
+				continue;
+			}
+			// did-you-mean: types carrying the same name anywhere in the
+			// graph (never a first-match pick — the full list only)
+			const unprefixed = typePath.replace(/^[^:]+::/, '');
+			const lastSegment = unprefixed.split('.').pop() ?? unprefixed;
+			const candidates = this.graph.getAllTypes().filter(t => t.name === lastSegment);
+			if (candidates.length === 0) {
+				const noneError: ResolutionError = {
+					message : `Unresolved lookup of mnemonica type '${typePath}': no type at that path — ` +
+						'the runtime would return undefined',
+					locations : sites,
+				};
+				this.graphReferenceErrors.push(noneError);
+				continue;
+			}
+			const candidateLocations = candidates.map(n => `${n.sourceFile}:${n.line}:${n.column}`);
+			const candidatePaths = candidates.map(n => n.fullPath).join(', ');
+			const ambiguousError: ResolutionError = {
+				message : `Unresolved lookup of mnemonica type '${typePath}': the runtime would return ` +
+					`undefined — ${candidates.length} graph type(s) carry the name ` +
+					`off-root (${candidatePaths}); use the full dotted path`,
+				locations : [ ...sites, ...candidateLocations ],
+			};
+			this.graphReferenceErrors.push(ambiguousError);
+		}
+	}
+
+	/**
+	 * Record a plain-TS type reference site that resolved to nothing and
+	 * fell back to `unknown`, for the lazily-run ambiguity validation.
+	 * Deduped by (name, location): inferType can visit the same node more
+	 * than once per pass (constructor params + property inference).
+	 */
+	private recordPlainTypeReferenceSite (name: string, refNode: ts.Node): void {
+		const location = this.nodeLocation(refNode);
+		const file = this.currentReferencedTypeFile;
+		const already = this.plainTypeReferences.some((ref) => ref.name === name && ref.location === location);
+		if (already) {
+			return;
+		}
+		this.plainTypeReferences.push({ name, location, file });
+	}
+
+	/**
+	 * Project-source declaration files carrying `name` — one entry per
+	 * file, so same-file interface merging counts once (not ambiguous).
+	 * External/ambient declarations (.d.ts, anything under node_modules)
+	 * never count: a user-local declaration always wins over a package-
+	 * declared same-named type, so an external collision stays soft.
+	 */
+	private plainTypeDeclarationFiles (name: string): string[] {
+		const files: string[] = [];
+		for (const [ file, decls ] of this.referencedTypeDecls) {
+			if (!this.isExternalDeclFile(file) && decls.has(name)) {
+				files.push(file);
+			}
+		}
+		return files;
+	}
+
+	/**
+	 * Validate plain-TS type reference sites recorded during the usages
+	 * pass against the complete declaration map. A name declared in
+	 * several project-source files — with no import in the referencing
+	 * file to anchor it — is ambiguous: silently emitting `unknown` would
+	 * hide a real type the author meant, so it joins the hard-fail law
+	 * (the plain-TS tier of the same identity law as graph references).
+	 * Absence (ghost names) and external collisions stay soft `unknown`.
+	 * Runs once per usages pass (re-armed by resetUsages), mirroring
+	 * validateLookupReferences: recording happens on every pass, but only
+	 * the usages pass sees the complete declaration map.
+	 */
+	private validatePlainTypeReferences (): void {
+		if (this.plainTypeReferencesValidated) {
+			return;
+		}
+		this.plainTypeReferencesValidated = true;
+		const sitesByName = new Map<string, { name: string; location: string; file: string }[]>();
+		for (const ref of this.plainTypeReferences) {
+			const sites = sitesByName.get(ref.name) ?? [];
+			sites.push(ref);
+			sitesByName.set(ref.name, sites);
+		}
+		for (const [ name, sites ] of sitesByName) {
+			// an import binding in the referencing file anchors the name —
+			// the author already disambiguated (the import may just point
+			// at an unanalyzable external module, which stays soft)
+			const unanchored = sites.filter((site) => !this.referencedTypeImports.get(site.file)?.has(name));
+			if (unanchored.length === 0) {
+				continue;
+			}
+			const declFiles = this.plainTypeDeclarationFiles(name);
+			if (declFiles.length < 2) {
+				continue;
+			}
+			const message = `Ambiguous reference to type '${name}': ${declFiles.length} declarations ` +
+				'share the name and no import disambiguates — import the one you mean';
+			const declLocations = declFiles.map((file) => this.plainDeclLocation(file, name));
+			const error: ResolutionError = {
+				message,
+				locations : [ ...unanchored.map((site) => site.location), ...declLocations ]
+			};
+			this.graphReferenceErrors.push(error);
+		}
+	}
+
+	/**
+	 * `file:line:column` of a recorded declaration, for the ambiguity
+	 * report. Nodes recorded during traversal keep their positions; a
+	 * synthetic/unpositioned node falls back to the file itself.
+	 */
+	private plainDeclLocation (file: string, name: string): string {
+		const decl = this.referencedTypeDecls.get(file)?.get(name);
+		const node = decl?.node;
+		let location = `${file}:1:1`;
+		if (node && node.pos >= 0) {
+			const sourceFile = node.getSourceFile();
+			const line = sourceFile.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+			const column = sourceFile.getLineAndCharacterOfPosition(node.getStart()).character + 1;
+			location = `${file}:${line}:${column}`;
+		}
+		const result = location;
+		return result;
+	}
+
+	/**
+	 * Record a hard-fail graph reference error with the reference site and
+	 * every candidate location.
+	 */
+	private recordGraphReferenceError (
+		name: string,
+		refNode: ts.Node | string,
+		result: Extract<GraphTypeReferenceResult, { status: 'ambiguous' | 'none' }>
+	): void {
+		const location = typeof refNode === 'string' ? refNode : this.nodeLocation(refNode);
+		if (result.status === 'ambiguous') {
+			const candidateLocations = result.candidates.map(n => `${n.sourceFile}:${n.line}:${n.column}`);
+			const ambiguousMessage = `Ambiguous reference to mnemonica type '${name}': ` +
+				`${result.candidates.length} types share the name and neither the parent chain ` +
+				'nor the imports disambiguate';
+			const ambiguousError: ResolutionError = {
+				message   : ambiguousMessage,
+				locations : [ location, ...candidateLocations ],
+			};
+			this.graphReferenceErrors.push(ambiguousError);
+			return;
+		}
+		const unresolvedMessage = `Unresolved reference to mnemonica type '${name}': no type matches ` +
+			'by value scope, imports, parent chain, or root path';
+		const unresolvedError: ResolutionError = { message : unresolvedMessage, locations : [ location ] };
+		this.graphReferenceErrors.push(unresolvedError);
+	}
+
+	/**
+	 * Location (`file:line:column`) of an AST node, derived without parent
+	 * pointers when necessary.
+	 */
+	private nodeLocation (node: ts.Node): string {
+		let current: ts.Node | undefined = node;
+		while (current && !ts.isSourceFile(current)) {
+			current = current.parent;
+		}
+		if (!current) {
+			const fallback = this.currentReferencedTypeFile;
+			return fallback;
+		}
+		const start = node.getStart(current);
+		const { line, character } = ts.getLineAndCharacterOfPosition(current, start);
+		const location = `${current.fileName}:${line + 1}:${character + 1}`;
+		return location;
 	}
 
 	/**
@@ -674,11 +1832,10 @@ export class MnemonicaAnalyzer {
 	 * Mark a call expression as processed and return whether it already was.
 	 */
 	private markProcessed (call: ts.CallExpression): boolean {
-		const marked = call as unknown as { __tactica_processed?: boolean };
-		if (marked.__tactica_processed) {
+		if (this.processedCalls.has(call)) {
 			return true;
 		}
-		marked.__tactica_processed = true;
+		this.processedCalls.add(call);
 		return false;
 	}
 
@@ -740,11 +1897,27 @@ export class MnemonicaAnalyzer {
 		);
 		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
 
-		// Extract properties from constructor function
-		node.properties = this.extractProperties(call);
+		// Same-namespace duplicate detection (hard-fail law): key by the
+		// runtime namespace — collection roots `<collection>::<name>`, or
+		// `<parentFullPath>.<name>` for subtypes
+		this.recordDefineSite(
+			parentNode ? `${parentNode.fullPath}.${typeName}` : `${collectionId ?? 'default'}::${typeName}`,
+			`${sourceFile.fileName}:${line + 1}:${character + 1}`
+		);
 
-		// Extract constructor parameters for TypeRegistry signature
-		node.constructorParams = this.extractConstructorParams(call);
+		// Extract properties from constructor function — the new node anchors
+		// relative-first graph reference resolution while its own signature
+		// is being read
+		const previousAnchor = this.currentGraphAnchor;
+		this.currentGraphAnchor = node;
+		try {
+			node.properties = this.extractProperties(call);
+
+			// Extract constructor parameters for TypeRegistry signature
+			node.constructorParams = this.extractConstructorParams(call);
+		} finally {
+			this.currentGraphAnchor = previousAnchor;
+		}
 
 		// Add to graph
 		if (parentNode) {
@@ -828,11 +2001,24 @@ export class MnemonicaAnalyzer {
 		);
 		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
 
-		// Extract properties from the constructor returned by the lazy getter
-		node.properties = this.extractProperties(call);
+		// Same-namespace duplicate detection (hard-fail law)
+		this.recordDefineSite(
+			parentNode ? `${parentNode.fullPath}.${typeName}` : `${collectionId ?? 'default'}::${typeName}`,
+			`${sourceFile.fileName}:${line + 1}:${character + 1}`
+		);
 
-		// Extract constructor parameters for TypeRegistry signature
-		node.constructorParams = this.extractConstructorParams(call);
+		// Extract properties from the constructor returned by the lazy getter
+		// — the new node anchors relative-first graph reference resolution
+		const previousAnchor = this.currentGraphAnchor;
+		this.currentGraphAnchor = node;
+		try {
+			node.properties = this.extractProperties(call);
+
+			// Extract constructor parameters for TypeRegistry signature
+			node.constructorParams = this.extractConstructorParams(call);
+		} finally {
+			this.currentGraphAnchor = previousAnchor;
+		}
 
 		// Add to graph
 		if (parentNode) {
@@ -1169,11 +2355,27 @@ export class MnemonicaAnalyzer {
 						return;
 					}
 					this.variableToTypeMap.set(varName, fullPath);
+					this.trackFileGraphBinding(varName, fullPath);
 				}
 				return;
 			}
 			current = current.parent;
 		}
+	}
+
+	/**
+	 * Mirror a variable -> mnemonica fullPath binding into the per-file
+	 * value-scope map (graph identity law: `typeof X` and bare references
+	 * resolve through the file's own bindings first).
+	 */
+	private trackFileGraphBinding (varName: string, fullPath: string): void {
+		const filePath = this.currentReferencedTypeFile;
+		let bindings = this.fileGraphBindings.get(filePath);
+		if (!bindings) {
+			bindings = new Map<string, string>();
+			this.fileGraphBindings.set(filePath, bindings);
+		}
+		bindings.set(varName, fullPath);
 	}
 	
 	/**
@@ -1189,6 +2391,7 @@ export class MnemonicaAnalyzer {
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
 					this.variableToTypeMap.set(varName, typePath);
+					this.trackFileGraphBinding(varName, typePath);
 				}
 				return;
 			}
@@ -1209,6 +2412,7 @@ export class MnemonicaAnalyzer {
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
 					this.variableToTypeMap.set(varName, typePath);
+					this.trackFileGraphBinding(varName, typePath);
 				}
 				return;
 			}
@@ -1346,9 +2550,22 @@ export class MnemonicaAnalyzer {
 		);
 		node.registryInterfaceName = this.getRegistryInterfaceName(node.collectionId);
 
-		// Extract properties and constructor parameters from class members
-		node.properties = this.extractClassProperties(classDecl);
-		node.constructorParams = this.extractClassConstructorParams(classDecl);
+		// Same-namespace duplicate detection (hard-fail law)
+		this.recordDefineSite(
+			parentNode ? `${parentNode.fullPath}.${typeName}` : `${collectionId ?? 'default'}::${typeName}`,
+			`${sourceFile.fileName}:${line + 1}:${character + 1}`
+		);
+
+		// Extract properties and constructor parameters from class members —
+		// the new node anchors relative-first graph reference resolution
+		const previousAnchor = this.currentGraphAnchor;
+		this.currentGraphAnchor = node;
+		try {
+			node.properties = this.extractClassProperties(classDecl);
+			node.constructorParams = this.extractClassConstructorParams(classDecl);
+		} finally {
+			this.currentGraphAnchor = previousAnchor;
+		}
 
 		// Add to graph
 		if (parentNode) {
@@ -1615,6 +2832,19 @@ export class MnemonicaAnalyzer {
 		}
 
 		return undefined;
+	}
+
+	/**
+	 * Lookup-law delegate for the local-scope walker (scopes.json typePath
+	 * metadata): resolve a lookup() initializer call through exactly the
+	 * tiers the usages pass resolved it against (same source resolution,
+	 * same complete graph). The walker runs its own scope-chain value-scope
+	 * tier before delegating; everything above value scope lands here, so
+	 * scopes.json never disagrees with the hard-fail-law verdicts.
+	 */
+	resolveLookupCallPath (call: ts.CallExpression): string | undefined {
+		const result = this.resolveLookupPath(call);
+		return result;
 	}
 
 	/**
@@ -2148,20 +3378,14 @@ export class MnemonicaAnalyzer {
 						? param.type.typeName.text
 						: '';
 
-					// Look up the type alias in our collected type aliases
-					const aliasedType = this.typeAliases.get(typeName);
-					if (aliasedType && ts.isTypeLiteralNode(aliasedType)) {
-						// Extract properties from the type literal
-						for (const member of aliasedType.members) {
-							if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
-								const propName = member.name.text;
-								const type = this.inferType(member.type);
-								properties.set(propName, {
-									name     : propName,
-									type,
-									optional : !!member.questionToken,
-								});
-							}
+					// Resolve through the referencing file's own imports first (F10)
+					const decl = typeName
+						? this.resolveReferencedTypeDeclaration(typeName, this.currentReferencedTypeFile)
+						: undefined;
+					if (decl) {
+						const declProperties = this.referencedDeclarationProperties(decl);
+						for (const [ propName, info ] of declProperties) {
+							properties.set(propName, info);
 						}
 					}
 				}
@@ -2255,50 +3479,29 @@ export class MnemonicaAnalyzer {
 		case ts.SyntaxKind.TypeReference: {
 			// Handle type references like Map<string, number>, PropertyInfo, etc.
 			const typeRef = typeNode as ts.TypeReferenceNode;
-			const typeName = ts.isIdentifier(typeRef.typeName)
-				? typeRef.typeName.text
-				: ts.isQualifiedName(typeRef.typeName)
-					? this.getQualifiedNameText(typeRef.typeName)
-					: 'unknown';
 
-			// Check if this is a type alias we can resolve
-			const aliasedType = this.typeAliases.get(typeName);
-			if (aliasedType) {
-				// Resolve the type alias
-				return this.inferType(aliasedType);
+			// Qualified names (Namespace.Type): resolve through namespace imports
+			if (ts.isQualifiedName(typeRef.typeName)) {
+				const resolvedQualified = this.inferQualifiedTypeReference(typeRef);
+				if (resolvedQualified !== undefined) {
+					return resolvedQualified;
+				}
+				// unresolved qualified references must not leak a bare name
+				return 'unknown';
 			}
 
-			// Handle InstanceType<typeof X> pattern -> convert to Parent_X
-			if (typeName === 'InstanceType' && typeRef.typeArguments && typeRef.typeArguments.length === 1) {
-				const [ arg ] = typeRef.typeArguments;
-				if (arg.kind === ts.SyntaxKind.TypeQuery) {
-					const typeQuery = arg as ts.TypeQueryNode;
-					if (ts.isIdentifier(typeQuery.exprName)) {
-						const queryTypeName = typeQuery.exprName.text;
-						// Look up the type in the graph to get full path
-						const matchedType = this.graph.findTypeByName(queryTypeName);
-						if (matchedType) {
-							// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-							return matchedType.fullPath.replace(/\./g, '_');
-						}
-						// Fallback: just use the type name if not found in graph
-						return queryTypeName;
-					}
-				}
-			}
+			const typeName = ts.isIdentifier(typeRef.typeName) ? typeRef.typeName.text : 'unknown';
 
-			if (!typeRef.typeArguments || typeRef.typeArguments.length === 0) {
-				// Check if this type exists in our graph - convert to full path format
-				const matchedType = this.graph.findTypeByName(typeName);
-				if (matchedType) {
-					// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-					return matchedType.fullPath.replace(/\./g, '_');
-				}
-				return typeName;
+			// Import-aware referenced-type resolution (F10): a declaration
+			// reached through the current file's own imports (or its locals,
+			// or a unique program-wide declaration) expands inline
+			const simpleRef = this.resolveSimpleTypeReference(typeName, typeRef.typeArguments, typeRef);
+			if (simpleRef !== undefined) {
+				return simpleRef;
 			}
 
 			// Build generic type arguments
-			const typeArgs = typeRef.typeArguments.map(arg => this.inferType(arg));
+			const typeArgs = (typeRef.typeArguments ?? []).map(arg => this.inferType(arg));
 			return `${typeName}<${typeArgs.join(', ')}>`;
 		}
 		case ts.SyntaxKind.UnionType: {
@@ -2338,12 +3541,17 @@ export class MnemonicaAnalyzer {
 			const indexed = typeNode as ts.IndexedAccessTypeNode;
 			let objectType = this.inferType(indexed.objectType);
 			const indexType = this.inferType(indexed.indexType);
-			// If objectType is 'object', try to resolve the underlying type alias
+			// If objectType is 'object', try to resolve the underlying referenced type
 			if (objectType === 'object' && ts.isTypeReferenceNode(indexed.objectType)) {
 				const refName = ts.isIdentifier(indexed.objectType.typeName) ? indexed.objectType.typeName.text : '';
-				const aliased = this.typeAliases.get(refName);
-				if (aliased) {
-					objectType = this.inferType(aliased);
+				if (refName) {
+					const decl = this.resolveReferencedTypeDeclaration(refName, this.currentReferencedTypeFile);
+					if (decl) {
+						const expanded = this.expandReferencedTypeDeclaration(decl);
+						if (expanded) {
+							objectType = expanded;
+						}
+					}
 				}
 			}
 			return `${objectType}[${indexType}]`;
@@ -2411,22 +3619,6 @@ export class MnemonicaAnalyzer {
 			return Array.from(returnTypes)[ 0 ];
 		}
 		return Array.from(returnTypes).join(' | ');
-	}
-
-	/**
-		* Get full text from a qualified name (e.g., Namespace.Type)
-		*/
-	private getQualifiedNameText (qualifiedName: ts.QualifiedName): string {
-		const parts: string[] = [];
-		let current: ts.QualifiedName | ts.Identifier = qualifiedName;
-
-		while (ts.isQualifiedName(current)) {
-			parts.unshift(current.right.text);
-			current = current.left;
-		}
-		parts.unshift(current.text);
-
-		return parts.join('.');
 	}
 
 	/**
@@ -2692,13 +3884,17 @@ export class MnemonicaAnalyzer {
 						sourceFile,
 						node.getStart(sourceFile)
 					);
+					const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
 					this.addUsage(typePath, {
-						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
-						kind     : 'lookup',
-						code     : node.getText(sourceFile).slice(0, 100),
+						location,
+						kind : 'lookup',
+						code : node.getText(sourceFile).slice(0, 100),
 					});
 					// Track variable assignment from lookup for instantiation tracking
 					this.trackLookupAssignment(node, typePath);
+					// Record for the hard-fail law even when addUsage dropped
+					// the path (unknown paths are exactly the failure class)
+					this.lookupReferences.push({ path : typePath, location });
 				}
 			}
 		}
@@ -2773,14 +3969,6 @@ export class MnemonicaAnalyzer {
 			funcName === 'wrapInstanceMethods'
 		) {
 			const targetType = this.resolveEDSArgumentType(node.arguments[ 0 ]);
-			const info: EDSInfo = {
-				location,
-				kind       : 'wrap',
-				code,
-				targetType : targetType || undefined,
-				scope,
-				fn         : funcName,
-			};
 			// dive's wrap-family signatures (dive/src/index.ts):
 			//   wrap(fn, label?) | wrap(fn, context?, label?)
 			//   wrapConstructorArg(fn, context)
@@ -2791,6 +3979,23 @@ export class MnemonicaAnalyzer {
 			const instanceArgNode = funcName === 'wrapInstanceMethods'
 				? node.arguments[ 0 ]
 				: node.arguments[ 1 ];
+			// Fire-and-forget wrappers (wire-up helpers, registration
+			// functions) sit outside any define()/lazy() handler, so the
+			// lexical scope is absent — attribute through the instance/context
+			// argument instead: a tracked assignment, else the enclosing
+			// function's parameter annotation resolved through the graph law
+			const instanceTypePath = instanceArgNode
+				? this.resolveWrapInstanceTypePath(instanceArgNode)
+				: undefined;
+			const effectiveScope = scope ?? instanceTypePath;
+			const info: EDSInfo = {
+				location,
+				kind       : 'wrap',
+				code,
+				targetType : targetType || undefined,
+				scope      : effectiveScope,
+				fn         : funcName,
+			};
 			if (instanceArgNode && ts.isIdentifier(instanceArgNode)) {
 				info.instanceArg = instanceArgNode.text;
 			}
@@ -2801,10 +4006,15 @@ export class MnemonicaAnalyzer {
 				}
 			}
 			// A wrap() call nested inside another wrapped body carries the
-			// link to the site whose runtime wrapping caused it
-			const via = this.nestedWrapVia.get(node);
-			if (via) {
-				info.via = via;
+			// link to the site whose runtime wrapping caused it — and, when
+			// the nested site has no scope of its own, the causing site's
+			// scope attribution travels with the link
+			const viaLink = this.nestedWrapVia.get(node);
+			if (viaLink) {
+				info.via = viaLink.via;
+				if (info.scope === undefined) {
+					info.scope = viaLink.scope;
+				}
 			}
 			// dive wraps returned functions too, and any mnemonica instance
 			// created inside the wrapped body is a guaranteed path hit —
@@ -2821,12 +4031,12 @@ export class MnemonicaAnalyzer {
 				const callbackFile = nodePath.resolve(sourceFile.fileName);
 				info.callbackScopeId = `${callbackFile}:${callbackPos.line + 1}:${callbackPos.character + 1}`;
 				const createsTypes = new Set<string>();
-				this.analyzeWrappedBody(wrapped, location, sourceFile, 0, new Set(), createsTypes);
+				this.analyzeWrappedBody(wrapped, location, sourceFile, 0, new Set(), createsTypes, effectiveScope);
 				if (createsTypes.size > 0) {
 					info.createsTypes = Array.from(createsTypes);
 				}
 			}
-			const stored = this.addEDS(targetType || scope || 'unknown', info);
+			const stored = this.addEDS(targetType || effectiveScope || 'unknown', info);
 			this.wrapEntryByNode.set(node, stored);
 			return;
 		}
@@ -2924,6 +4134,70 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Resolve a wrap site's instance/context argument to a mnemonica type
+	 * path — the fire-and-forget-wrapper attribution fallback when the call
+	 * sits outside any define()/lazy() handler: a tracked assignment
+	 * (`const holder = new Holder(...)`), else the root identifier's
+	 * (property-access roots included) parameter annotation resolved
+	 * through the graph law. Ambiguity or absence stays silent — this is a
+	 * metadata heuristic, not the identity-law surface.
+	 */
+	private resolveWrapInstanceTypePath (arg: ts.Expression): string | undefined {
+		const fromBinding = (name: string, from: ts.Node): string | undefined => {
+			const mapped = this.variableToTypeMap.get(name);
+			if (mapped) {
+				return mapped;
+			}
+			const annotationType = this.resolveParameterAnnotationTypePath(name, from);
+			return annotationType;
+		};
+
+		if (ts.isIdentifier(arg)) {
+			const result = fromBinding(arg.text, arg);
+			return result;
+		}
+		if (ts.isPropertyAccessExpression(arg)) {
+			const root = this.getRootIdentifier(arg);
+			if (root) {
+				const result = fromBinding(root.text, arg);
+				return result;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * Resolve a bare-identifier type annotation of the nearest enclosing
+	 * function's parameter through the mnemonica-graph tiers (value scope,
+	 * imports, roots, program-wide-unique). Non-identifier and generic
+	 * annotations are not graph references; ambiguity and absence yield
+	 * undefined.
+	 */
+	private resolveParameterAnnotationTypePath (name: string, from: ts.Node): string | undefined {
+		let current: ts.Node | undefined = from.parent;
+		while (current) {
+			if (ts.isFunctionLike(current)) {
+				for (const param of current.parameters ?? []) {
+					if (!ts.isIdentifier(param.name) || param.name.text !== name || !param.type ||
+						!ts.isTypeReferenceNode(param.type) ||
+						!ts.isIdentifier(param.type.typeName) ||
+						(param.type.typeArguments?.length ?? 0) > 0) {
+						continue;
+					}
+					const graphResult = this.resolveGraphTypeName(param.type.typeName.text);
+					if (graphResult.status === 'unique') {
+						const result = graphResult.node.fullPath;
+						return result;
+					}
+				}
+				return undefined;
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Resolve a wrap() argument to its function node without the type
 	 * checker: direct function expressions/arrows, or same-file bindings
 	 * (`const fn = () => ...`, `function fn() ...`). Best effort — method
@@ -2966,7 +4240,8 @@ export class MnemonicaAnalyzer {
 		sourceFile: ts.SourceFile,
 		depth: number,
 		visited: Set<ts.Node>,
-		createsTypes: Set<string>
+		createsTypes: Set<string>,
+		fallbackScope?: string
 	): void {
 		if (depth > 5 || visited.has(fn) || !fn.body) {
 			return;
@@ -2975,7 +4250,7 @@ export class MnemonicaAnalyzer {
 
 		// Arrow with expression body: implicit return
 		if (ts.isArrowFunction(fn) && !ts.isBlock(fn.body)) {
-			this.recordWrappedReturn(fn.body, viaLocation, sourceFile, depth, visited);
+			this.recordWrappedReturn(fn.body, viaLocation, sourceFile, depth, visited, fallbackScope);
 			return;
 		}
 
@@ -2990,7 +4265,7 @@ export class MnemonicaAnalyzer {
 				return;
 			}
 			if (ts.isReturnStatement(node) && node.expression) {
-				this.recordWrappedReturn(node.expression, viaLocation, sourceFile, depth, visited);
+				this.recordWrappedReturn(node.expression, viaLocation, sourceFile, depth, visited, fallbackScope);
 			}
 			if (ts.isNewExpression(node)) {
 				const created = this.resolveExpressionType(node.expression) ||
@@ -3011,12 +4286,16 @@ export class MnemonicaAnalyzer {
 				) {
 					// the nested call may already be collected (visited
 					// before this outer wrap site) — back-patch its entry,
-					// otherwise leave the link for collectEDS to pick up
+					// otherwise leave the link (with this site's scope) for
+					// collectEDS to pick up
 					const nestedEntry = this.wrapEntryByNode.get(node);
 					if (nestedEntry) {
 						nestedEntry.via = viaLocation;
+						if (nestedEntry.scope === undefined) {
+							nestedEntry.scope = fallbackScope;
+						}
 					} else {
-						this.nestedWrapVia.set(node, viaLocation);
+						this.nestedWrapVia.set(node, { via : viaLocation, scope : fallbackScope });
 					}
 				}
 			}
@@ -3030,13 +4309,16 @@ export class MnemonicaAnalyzer {
 	 * site (`via` = the site whose wrapping caused it) and recurse into
 	 * its own returns. Returns through identifiers resolve through the
 	 * same-file bindings table; unresolvable returns are simply skipped.
+	 * A return declared outside any type scope inherits the causing wrap
+	 * site's scope attribution (the generation chain is the only holder).
 	 */
 	private recordWrappedReturn (
 		expr: ts.Expression,
 		viaLocation: string,
 		sourceFile: ts.SourceFile,
 		depth: number,
-		visited: Set<ts.Node>
+		visited: Set<ts.Node>,
+		fallbackScope?: string
 	): void {
 		const returned = this.resolveFunctionArgument(expr, sourceFile);
 		if (!returned) {
@@ -3048,7 +4330,7 @@ export class MnemonicaAnalyzer {
 		);
 		const location = `${sourceFile.fileName}:${line + 1}:${character + 1}`;
 		const code = returned.getText(sourceFile).slice(0, 100);
-		const scope = this.resolveEDSScope(returned);
+		const scope = this.resolveEDSScope(returned) ?? fallbackScope;
 		const entry = this.addEDS(scope || 'unknown', {
 			location,
 			kind : 'wrap',
@@ -3061,7 +4343,7 @@ export class MnemonicaAnalyzer {
 		// the returned function's own returns are wrapped in turn; `via`
 		// chains to this nested entry's location
 		const nestedCreates = new Set<string>();
-		this.analyzeWrappedBody(returned, location, sourceFile, depth + 1, visited, nestedCreates);
+		this.analyzeWrappedBody(returned, location, sourceFile, depth + 1, visited, nestedCreates, scope);
 		if (nestedCreates.size > 0) {
 			entry.createsTypes = Array.from(nestedCreates);
 		}
@@ -3490,20 +4772,43 @@ export class MnemonicaAnalyzer {
 			return `{ ${props.join('; ')} }`;
 		}
 
-		// Type reference: usage, UserData, etc. - recursively expand
+		// Type reference: usage, UserData, etc. - resolve import-aware and
+		// expand the referenced declaration where possible (F10)
 		if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
 			const typeName = typeNode.typeName.text;
-			const aliasedType = this.typeAliases.get(typeName);
-			if (aliasedType) {
-				const expanded = this.resolveConstructorParamType(aliasedType);
+			const decl = this.resolveReferencedTypeDeclaration(typeName, this.currentReferencedTypeFile);
+			if (decl) {
+				const expanded = this.expandReferencedTypeDeclaration(decl);
 				if (expanded) return expanded;
+			}
+			// mnemonica graph types keep their simple name — the generator
+			// upgrades them to full-path instance type names. Resolution is
+			// path-aware (hard-fail law): ambiguity between real graph types
+			// records a fatal error instead of silently picking one.
+			const graphResult = this.resolveGraphTypeName(typeName);
+			if (graphResult.status === 'unique') {
+				const simpleResult = typeName;
+				return simpleResult;
+			}
+			if (graphResult.status === 'ambiguous') {
+				this.recordGraphReferenceError(typeName, typeNode, graphResult);
+				const unknownGraphResult = 'unknown';
+				return unknownGraphResult;
 			}
 			// If not an object type alias, return the type name with args
 			if (typeNode.typeArguments && typeNode.typeArguments.length > 0) {
-				const args = typeNode.typeArguments.map(arg => this.inferType(arg));
-				return `${typeName  }<${  args.join(', ')  }>`;
+				if (KNOWN_GLOBAL_TYPES.has(typeName)) {
+					const args = typeNode.typeArguments.map(arg => this.inferType(arg));
+					return `${typeName  }<${  args.join(', ')  }>`;
+				}
+				// generic reference to a non-global, non-graph type cannot be
+				// emitted bare into the generated file
+				this.recordPlainTypeReferenceSite(typeName, typeNode);
+				const unknownGenericResult = 'unknown';
+				return unknownGenericResult;
 			}
-			return typeName;
+			const fallbackResult = this.unresolvedTypeReferenceFallback(typeName, typeNode);
+			return fallbackResult;
 		}
 
 		return undefined;
@@ -3683,8 +4988,9 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
-		// The decorator's parent is the decorated node: a controller class
-		// or one of its methods
+		// The decorator's parent is the decorated node: a controller class,
+		// one of its methods, or one of its method parameters
+		// (@Body(mvp.forType(Dto)) on a handler argument)
 		const decorated = node.parent;
 		let scope: InstrumentationScope;
 		let targets: string[];
@@ -3700,6 +5006,26 @@ export class MnemonicaAnalyzer {
 			const className = decorated.parent.name.text;
 			scope = `method:${className}.${decorated.name.text}`;
 			targets = [ className ];
+		} else if (ts.isParameter(decorated)) {
+			// Parameter decorators take the enclosing method's scope — the
+			// attachment point is the handler, not the argument name; the
+			// same method:Class.method form as method-level sites. Params of
+			// constructors, functions, and unnameable hosts stay silent, the
+			// same convention as other unresolvable decorator parents
+			const host = decorated.parent;
+			if (
+				host &&
+				ts.isMethodDeclaration(host) &&
+				ts.isIdentifier(host.name) &&
+				ts.isClassDeclaration(host.parent) &&
+				host.parent.name
+			) {
+				const className = host.parent.name.text;
+				scope = `method:${className}.${host.name.text}`;
+				targets = [ className ];
+			} else {
+				return;
+			}
 		} else {
 			return;
 		}
@@ -3715,16 +5041,31 @@ export class MnemonicaAnalyzer {
 			// Class reference: @Register(Impl) or an inline instance:
 			// @Register(new Impl({ ...options }))
 			let className: string | undefined;
+			// per-arg kind: factory-call args carry their own configured
+			// kind, everything else takes the decorator's
+			let argKind = kind;
 			if (ts.isIdentifier(arg)) {
 				className = arg.text;
 			} else if (ts.isNewExpression(arg) && ts.isIdentifier(arg.expression)) {
 				className = arg.expression.text;
+			} else if (ts.isCallExpression(arg) && ts.isPropertyAccessExpression(arg.expression)) {
+				// Pipe-factory shape: @UsePipes(mvp.forType(Dto)) — the
+				// call's method name is plugin-listed, the target class sits
+				// in the configured argument position (default 0)
+				const factory = this.instrumentationVocabulary.decoratorArgFactories[ arg.expression.name.text ];
+				if (factory) {
+					const targetArg = arg.arguments[ factory.targetArg ?? 0 ];
+					if (targetArg && ts.isIdentifier(targetArg)) {
+						className = targetArg.text;
+						argKind = factory.kind;
+					}
+				}
 			}
 			if (!className) {
 				continue;
 			}
 			this.instrumentationSites.push({
-				kind,
+				kind : argKind,
 				className,
 				location,
 				code,

@@ -146,3 +146,97 @@ export class TypeGraphImpl implements TypeGraph {
 		return result;
 	}
 }
+
+/**
+ * Result of a path-aware mnemonica-graph type reference resolution.
+ */
+export type GraphTypeReferenceResult =
+	| { status: 'unique'; node: TypeNode }
+	| { status: 'ambiguous'; candidates: TypeNode[] }
+	| { status: 'none' };
+
+/**
+ * Path-aware resolution of a mnemonica graph type name, mirroring the
+ * runtime lookup law (relative-first, then root; subtypes of different
+ * parents may share names legally):
+ *   1. self — the anchor's own name (a handler's `this: OwnName`
+ *      annotation refers to the type being defined),
+ *   2. nearest-chain — walk the anchor's parent chain; the first level
+ *      whose subtypes contain the name wins (own subtypes, then up),
+ *   3. root — roots of the anchor's collection (default collection when
+ *      there is no anchor),
+ *   4. program-wide — the unique same-named type anywhere in the graph;
+ *      several candidates are a genuine ambiguity.
+ * Value-scope anchoring (local bindings / imports) is the caller's tier
+ * and runs before this function — see MnemonicaAnalyzer.
+ */
+export function resolveGraphTypeReference (
+	graph: TypeGraphImpl,
+	name: string,
+	anchor: TypeNode | undefined
+): GraphTypeReferenceResult {
+	// dotted paths resolve as absolute paths from the collection root
+	if (name.includes('.')) {
+		const direct = graph.findType(name);
+		if (direct) {
+			const result: GraphTypeReferenceResult = { status : 'unique', node : direct };
+			return result;
+		}
+		const dottedNoneResult: GraphTypeReferenceResult = { status : 'none' };
+		return dottedNoneResult;
+	}
+
+	// 1. self — a handler's `this: OwnName` annotation refers to the type
+	//    being defined; the anchor node is exactly that type
+	if (anchor && anchor.name === name) {
+		const selfResult: GraphTypeReferenceResult = { status : 'unique', node : anchor };
+		return selfResult;
+	}
+
+	// 2. nearest-chain: first level up the anchor chain with a subtype `name`
+	let level: TypeNode | undefined = anchor;
+	while (level) {
+		const child = level.children.get(name);
+		if (child) {
+			const result: GraphTypeReferenceResult = { status : 'unique', node : child };
+			return result;
+		}
+		level = level.parent;
+	}
+
+	// 2. root tier, scoped to the anchor's collection
+	const collectionId = anchor?.collectionId;
+	const rootMatches: TypeNode[] = [];
+	for (const root of graph.roots.values()) {
+		if (root.name === name && (root.collectionId ?? undefined) === collectionId) {
+			rootMatches.push(root);
+		}
+	}
+	if (rootMatches.length === 1) {
+		const result: GraphTypeReferenceResult = { status : 'unique', node : rootMatches[ 0 ] };
+		return result;
+	}
+	if (rootMatches.length > 1) {
+		const result: GraphTypeReferenceResult = { status : 'ambiguous', candidates : rootMatches };
+		return result;
+	}
+
+	// 3. program-wide unique match
+	const matches: TypeNode[] = [];
+	for (const type of graph.allTypes.values()) {
+		if (type.name === name) {
+			matches.push(type);
+		}
+	}
+	if (matches.length === 1) {
+		const result: GraphTypeReferenceResult = { status : 'unique', node : matches[ 0 ] };
+		return result;
+	}
+	if (matches.length > 1) {
+		const result: GraphTypeReferenceResult = { status : 'ambiguous', candidates : matches };
+		return result;
+	}
+
+	const noneResult: GraphTypeReferenceResult = { status : 'none' };
+	return noneResult;
+}

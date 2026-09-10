@@ -10,6 +10,14 @@ export interface ScopeTypeResolver {
     resolveByName(name: string): string | undefined;
     /** True when the dotted path is a known mnemonica type */
     hasPath(fullPath: string): boolean;
+    /**
+     * Optional lookup-law delegate: resolve a `lookup()` initializer call
+     * through the analyzer's full tier law (value scope, import scope,
+     * source-relative, root). The walker runs its own scope-chain
+     * value-scope tier first; this backs the tiers above it so scopes.json
+     * typePaths agree with the analyzer's (hard-fail) verdicts.
+     */
+    resolveLookup?(call: ts.CallExpression): string | undefined;
 }
 /**
  * Local-scope walker (instrumentation walker plan, Phase 2).

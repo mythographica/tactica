@@ -19,6 +19,16 @@ export interface TacticaPlugin {
     /** Provider token identifier -> kind (`{ provide: TOKEN, useClass: X }`) */
     appTokens?: Record<string, InstrumentationKind>;
     /**
+     * Decorator-arg factory method -> kind + target argument position
+     * (`@UsePipes(mvp.forType(Dto))`): a CallExpression arg whose callee is
+     * `<anything>.<name>(...)` matches when `name` is listed; the point's
+     * class is the identifier in `targetArg` (default 0).
+     */
+    decoratorArgFactories?: Record<string, {
+        kind: InstrumentationKind;
+        targetArg?: number;
+    }>;
+    /**
      * Enable middleware wiring detection: `consumer.apply(Mw).forRoutes(...)`
      * inside a `configure()` method. Shape-based (no vocabulary keys), so it
      * is opt-in per plugin.
@@ -33,6 +43,10 @@ export interface InstrumentationVocabulary {
     interfaces: Record<string, InstrumentationKind>;
     useDecorators: Record<string, InstrumentationKind>;
     appTokens: Record<string, InstrumentationKind>;
+    decoratorArgFactories: Record<string, {
+        kind: InstrumentationKind;
+        targetArg?: number;
+    }>;
     middlewareWiring: boolean;
 }
 /**

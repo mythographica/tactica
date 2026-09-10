@@ -42,3 +42,31 @@ export declare class TypeGraphImpl implements TypeGraph {
      */
     private nodeToHierarchy;
 }
+/**
+ * Result of a path-aware mnemonica-graph type reference resolution.
+ */
+export type GraphTypeReferenceResult = {
+    status: 'unique';
+    node: TypeNode;
+} | {
+    status: 'ambiguous';
+    candidates: TypeNode[];
+} | {
+    status: 'none';
+};
+/**
+ * Path-aware resolution of a mnemonica graph type name, mirroring the
+ * runtime lookup law (relative-first, then root; subtypes of different
+ * parents may share names legally):
+ *   1. self — the anchor's own name (a handler's `this: OwnName`
+ *      annotation refers to the type being defined),
+ *   2. nearest-chain — walk the anchor's parent chain; the first level
+ *      whose subtypes contain the name wins (own subtypes, then up),
+ *   3. root — roots of the anchor's collection (default collection when
+ *      there is no anchor),
+ *   4. program-wide — the unique same-named type anywhere in the graph;
+ *      several candidates are a genuine ambiguity.
+ * Value-scope anchoring (local bindings / imports) is the caller's tier
+ * and runs before this function — see MnemonicaAnalyzer.
+ */
+export declare function resolveGraphTypeReference(graph: TypeGraphImpl, name: string, anchor: TypeNode | undefined): GraphTypeReferenceResult;

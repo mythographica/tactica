@@ -158,7 +158,12 @@ export interface EDSInfo {
     code: string;
     /** Resolved target type if detectable */
     targetType?: string;
-    /** Enclosing mnemonica type path (define/lazy handler or decorated class) */
+    /**
+     * Enclosing mnemonica type path (define/lazy handler or decorated class);
+     * for wrap sites outside any handler, attributed through the instance/context
+     * argument (tracked assignment or parameter annotation), then inherited down
+     * the wrap generation chain (`via`)
+     */
     scope?: string;
     /** Location of the enclosing wrap site whose runtime wrapping caused this entry */
     via?: string;
@@ -530,4 +535,16 @@ export interface HierarchyNode {
     location: string;
     /** Child types in the Trie */
     children: HierarchyNode[];
+}
+/**
+ * A fatal resolution failure: same-namespace duplicate mnemonica
+ * definitions, or a mnemonica-graph type reference that stays ambiguous
+ * after path-aware resolution (or resolves to nothing). The CLI prints
+ * every location and writes no .tactica output at all.
+ */
+export interface ResolutionError {
+    /** human-readable description of the failure */
+    message: string;
+    /** every involved source location, `file:line:column` */
+    locations: string[];
 }
