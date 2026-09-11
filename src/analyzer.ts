@@ -3326,10 +3326,44 @@ export class MnemonicaAnalyzer {
 					}
 				}
 			} else {
-				// Store simple parameter types like `decorateValue: string`
-				const type = this.inferType(param.type);
-				if (type !== 'unknown') {
-					typeMap.set(paramName, type);
+				// Named type reference (alias/interface/class, imported or
+				// local — F14): decompose the resolved declaration into
+				// per-property entries through the same import-aware
+				// machinery as constructor signatures (F10), including the
+				// heritage walk (F13). Without this, `this.x = param.y`
+				// read `unknown` for named params — only inline literals
+				// were decomposed. Unresolvable → whole-param fallback
+				// below; a bare name is never emitted either way
+				let namedDecl: ReferencedTypeDeclaration | undefined;
+				if (ts.isTypeReferenceNode(param.type) && ts.isIdentifier(param.type.typeName)) {
+					const paramTypeName = param.type.typeName.text;
+					namedDecl = this.resolveReferencedTypeDeclaration(paramTypeName, this.currentReferencedTypeFile);
+				}
+				if (namedDecl) {
+					// member types resolve against the DECLARING file
+					const referencingFile = this.currentReferencedTypeFile;
+					this.currentReferencedTypeFile = namedDecl.file;
+					try {
+						const declProperties = this.referencedDeclarationProperties(namedDecl);
+						for (const [ propName, info ] of declProperties) {
+							typeMap.set(`${paramName}.${propName}`, info.type);
+						}
+					} finally {
+						this.currentReferencedTypeFile = referencingFile;
+					}
+					// keep the whole-param entry too: `this.x = data` (the
+					// bare parameter) assigns the full expanded shape —
+					// the same string constructor-signature emission uses
+					const wholeType = this.expandReferencedTypeDeclaration(namedDecl);
+					if (wholeType && wholeType !== 'unknown') {
+						typeMap.set(paramName, wholeType);
+					}
+				} else {
+					// Store simple parameter types like `decorateValue: string`
+					const type = this.inferType(param.type);
+					if (type !== 'unknown') {
+						typeMap.set(paramName, type);
+					}
 				}
 			}
 		}
@@ -3393,17 +3427,21 @@ export class MnemonicaAnalyzer {
 						// Don't overwrite a known type from a `this` annotation
 						// with an unknown-bearing inference: an empty-array
 						// initializer infers 'Array<unknown>', which must not
-						// clobber an annotated 'Array<{ id: number }>' either
+						// clobber an annotated 'Array<{ id: number }>' either.
+						// "Known" on the EXISTING side means the whole type IS
+						// `unknown` (exact match) — a substring match treats
+						// `Record<string, unknown>` as unknown-bearing and let
+						// inference clobber a good annotation (F14)
 						const existing = properties.get(name);
 						const typeHasUnknown = !type || type.includes('unknown');
-						const existingIsKnown = existing ? !existing.type.includes('unknown') : false;
+						const existingIsKnown = existing ? existing.type.trim() !== 'unknown' : false;
 						if (existingIsKnown && typeHasUnknown) {
 							// Keep the better type from explicit annotation
 						} else {
 							properties.set(name, {
 								name,
 								type,
-								optional : false,
+								optional : existing ? existing.optional : false,
 							});
 						}
 					}

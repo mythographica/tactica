@@ -464,10 +464,13 @@ The analyzer infers property types from constructor bodies and class members. Su
 | `this.x = a + b` (where `a, b: number`) | `number` |
 | `` this.x = `${a} ${b}` `` | `string` |
 | `this.x = data.field` | type of `data.field` from the parameter annotation |
+| `this.x = data.field` where `data: SomeNamedType` (alias/interface/class) | type of the field from the resolved declaration — import-aware, inherited members included; a bare `this.x = data` keeps the full expanded shape |
 | `this.x = data.field \|\| []` | type of the fallback expression |
 | `this.x = data.field ? a : b` | type of the truthy branch |
 | `Object.assign(this, data)` | all fields of `data`'s type annotation |
 | async / sync constructor functions | same rules |
+
+An existing annotation always beats a weaker inference: `unknown` (and `unknown`-bearing guesses like `Array<unknown>`) never overwrites a known type — `Record<string, unknown>` IS a known type — and an overwrite never drops an optionality modifier.
 
 When inference fails the property's type falls back to `unknown` (or `any` in some Topologica paths) — safe, and you can refine manually.
 

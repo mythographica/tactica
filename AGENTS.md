@@ -486,7 +486,7 @@ After changing analyzer behavior:
   - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
   - Constructor parameters are extracted from decorated classes and emitted in `registry.ts` / `types.ts` signatures.
 - `Object.assign(this, data)` (extracts from `data`'s type annotation).
-- Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`).
+- Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`), where the data parameter may be an inline literal or a NAMED alias/interface/class — named params decompose through the same import-aware referenced-type machinery as constructor signatures (inherited members included), and a bare `this.x = data` keeps the full expanded shape. Inference never overwrites a known annotation with `unknown` (`Record<string, unknown>` counts as known — exact whole-type match, not a substring) and never drops an optionality modifier.
 - Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback.
 - Async constructor functions.
 - `as TypeConstructor<{…}>` casting (and `as ConstructorFunction<{…}>` legacy alias) for plain function constructors.

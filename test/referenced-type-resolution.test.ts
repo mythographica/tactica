@@ -388,3 +388,131 @@ describe('Referenced type expansion fidelity (F13)', () => {
 		});
 	});
 });
+
+/**
+ * F14 regression: named-alias constructor params and the annotation
+ * merge guard. Field pattern (six consumer apps, 0.1.9 → 0.3.7):
+ *   interface PackFiles { header: PackHeader | null; info: Record<string, unknown> }
+ *   define('Pack', function (this: PackData, pageFiles: PackFiles) {
+ *       this.header = pageFiles.header;
+ *       this.info   = pageFiles.info;
+ *   });
+ * 0.3.7 emitted `header: unknown; info: unknown`. Two root causes:
+ *   1. buildDataTypeMap only decomposed INLINE type literals, so
+ *      `this.x = param.y` never resolved per-property types for a named
+ *      alias/interface param — now routed through the import-aware
+ *      declaration machinery (F10) including the heritage walk (F13).
+ *   2. the don't-clobber guard treated `Record<string, unknown>` (a good
+ *      annotation) as unknown-bearing via a substring match, so inferred
+ *      `unknown` overwrote it together with the optionality modifier —
+ *      the guard now fires only when the existing type IS `unknown`
+ *      (exact whole-type match), and a known overwrite keeps optionality.
+ */
+describe('Named-parameter property inference regression (F14)', () => {
+	const fixtureRoot = path.join(__dirname, 'fixtures', 'referenced-f14');
+	const modelsFile = path.join(fixtureRoot, 'src', 'models.ts');
+	const consumerFile = path.join(fixtureRoot, 'src', 'consumer.ts');
+
+	const analyzeFixture = (): MnemonicaAnalyzer => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(fs.readFileSync(modelsFile, 'utf8'), modelsFile);
+		analyzer.analyzeSource(fs.readFileSync(consumerFile, 'utf8'), consumerFile);
+		return analyzer;
+	};
+
+	const generateContent = (analyzer: MnemonicaAnalyzer): string => {
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const generated = generator.generateTypesFile();
+		return generated.content;
+	};
+
+	it('resolves this.x = param.y per-property types through named alias/interface params', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		// interface param: named members resolve through the import-aware
+		// machinery — no `unknown`, no bare names
+		expect(content).to.include('header: { title: string } | null');
+		expect(content).to.include('info: Record<string, unknown>');
+		expect(content).to.not.include('header: unknown');
+		expect(content).to.not.include('info: unknown');
+		// alias param decomposes the same way
+		expect(content).to.include('note: string');
+		expect(content).to.include('weight: number');
+		// bare names never leak into the generated file
+		expect(content).to.not.include('pageFiles');
+		expect(content).to.not.include('PackHeader');
+		expect(content).to.not.include('PackFiles');
+		expect(content).to.not.include('PackMeta');
+	});
+
+	it('keeps the annotated Record<string, unknown> field and its optionality', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		// unknown-bearing inference must not clobber the good annotation,
+		// and the `?` modifier must survive
+		expect(content).to.include('data?: Record<string, unknown>');
+		expect(content).to.not.include('data: unknown');
+		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
+	});
+
+	describe('CLI end-to-end (resolved types + optionality in generated output)', () => {
+		const runCapturingErrors = (options: Parameters<typeof run>[0]): { code: number; errors: string } => {
+			const originalError = console.error;
+			let captured = '';
+			console.error = (...args: unknown[]): void => {
+				captured += `${args.map(String).join(' ')  }\n`;
+			};
+			let code = 0;
+			try {
+				code = run(options);
+			} finally {
+				console.error = originalError;
+			}
+			const result = { code, errors : captured };
+			return result;
+		};
+
+		it('runs the fixture, exits 0, and the generated types.ts compiles clean', () => {
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-referenced-f14-'));
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureRoot, 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const typesPath = path.join(outputDir, 'types.ts');
+				const content = fs.readFileSync(typesPath, 'utf8');
+				expect(content).to.include('header: { title: string } | null');
+				expect(content).to.include('info: Record<string, unknown>');
+				expect(content).to.include('data?: Record<string, unknown>');
+				expect(content).to.not.include('unknown;');
+
+				// compile the generated file for real — the field regression
+				// was downstream consumer TS errors
+				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
+				const program = ts.createProgram([ typesPath ], {
+					strict           : true,
+					noEmit           : true,
+					target           : ts.ScriptTarget.ES2020,
+					module           : ts.ModuleKind.ES2020,
+					moduleResolution : ts.ModuleResolutionKind.Bundler,
+					baseUrl          : outputDir,
+					paths            : { mnemonica : [ mnemonicaTypes ] },
+				});
+				const diagnostics = ts.getPreEmitDiagnostics(program);
+				const compileErrors = diagnostics
+					.filter(d => d.category === ts.DiagnosticCategory.Error)
+					.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+
+				expect(compileErrors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		});
+	});
+});
