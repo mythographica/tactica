@@ -100,6 +100,9 @@ const KNOWN_GLOBAL_TYPES = new Set([
 
 // Bound for chasing re-export barrels (export { X } from '…', export * from '…')
 const MAX_REEXPORT_CHASE_DEPTH = 5;
+// Bound for walking class/interface extends chains during referenced-type
+// expansion (inherited members merge into the expanded fields)
+const MAX_HERITAGE_DEPTH = 8;
 
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -176,6 +179,13 @@ export class MnemonicaAnalyzer {
 	private referencedTypeNamespaceStars = new Map<string, Map<string, string>>();
 	// `${containingFile}::${specifier}` -> resolution (undefined = failed)
 	private referencedTypeResolutionCache = new Map<string, ReferencedTypeResolution | undefined>();
+	// file -> (const name -> array literal) for consts with array-literal
+	// initializers (`as const` / `satisfies` unwrapped), so a
+	// `typeof statusList[number]` field type expands to the element literal
+	// union instead of leaking a bare unresolvable `typeof` query into the
+	// generated file. Declarations persist across passes — entries stay
+	// valid after resetUsages(), same as referencedTypeDecls
+	private referencedTypeConstArrays = new Map<string, Map<string, ts.ArrayLiteralExpression>>();
 	private referencedTypeCompilerOptions: ts.CompilerOptions;
 	// File whose AST is currently being visited; references resolve against it
 	private currentReferencedTypeFile = '';
@@ -476,6 +486,7 @@ export class MnemonicaAnalyzer {
 		this.trackReferencedTypeDeclaration(node);
 		this.trackReferencedTypeImport(node);
 		this.trackReferencedTypeReExport(node);
+		this.trackReferencedTypeConstArray(node);
 
 		// Track same-file function bindings so EDS can resolve wrap(fn)
 		// arguments without the type checker (best effort, last wins)
@@ -611,6 +622,123 @@ export class MnemonicaAnalyzer {
 				decls.set('default', entry);
 			}
 		}
+	}
+
+	/**
+	 * Record consts initialized with an array literal (optionally wrapped in
+	 * `as const` / `satisfies`), so a `typeof statusList[number]` field type
+	 * expands to the element literal union — the generated file carries no
+	 * imports, so emitting the bare `typeof statusList` query would be an
+	 * unresolvable name downstream. First binding wins: a nested shadow
+	 * must not replace the module-level const the typeof refers to.
+	 */
+	private trackReferencedTypeConstArray (node: ts.Node): void {
+		if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name) || !node.initializer) {
+			return;
+		}
+		const { initializer: rawInitializer } = node;
+		let initializer: ts.Expression = rawInitializer;
+		while (ts.isAsExpression(initializer) || ts.isSatisfiesExpression(initializer)) {
+			initializer = initializer.expression;
+		}
+		if (!ts.isArrayLiteralExpression(initializer)) {
+			return;
+		}
+		const filePath = this.currentReferencedTypeFile;
+		let consts = this.referencedTypeConstArrays.get(filePath);
+		if (!consts) {
+			consts = new Map<string, ts.ArrayLiteralExpression>();
+			this.referencedTypeConstArrays.set(filePath, consts);
+		}
+		if (!consts.has(node.name.text)) {
+			consts.set(node.name.text, initializer);
+		}
+	}
+
+	/**
+	 * Find the array literal behind a module const referenced through
+	 * `typeof`: the declaring file's own consts first (the F13 case is a
+	 * NON-exported const in the same module as the expanded class), then —
+	 * when the file imports the name — the imported module's consts.
+	 * External modules are never analyzed, so those yield nothing.
+	 */
+	private findReferencedConstArray (
+		name: string,
+		fromFile: string
+	): ts.ArrayLiteralExpression | undefined {
+		const local = this.referencedTypeConstArrays.get(fromFile)?.get(name);
+		if (local) {
+			return local;
+		}
+		const imported = this.referencedTypeImports.get(fromFile)?.get(name);
+		if (!imported || imported.isNamespace) {
+			return undefined;
+		}
+		const resolution = this.resolveReferencedTypeModule(imported.specifier, fromFile);
+		if (!resolution || resolution.isExternal) {
+			return undefined;
+		}
+		const found = this.referencedTypeConstArrays.get(resolution.resolvedPath)?.get(imported.originalName);
+		return found;
+	}
+
+	/**
+	 * Element literal types of a tracked const array: every element must be
+	 * a plain literal (optionally wrapped in `as const` / `satisfies`) —
+	 * string, numeric, boolean, or null. Spreads, identifiers, and nested
+	 * arrays mean the union is not statically visible and yield undefined,
+	 * so the caller degrades the field to `unknown` rather than guessing.
+	 */
+	private literalTypesOfArray (arrayLiteral: ts.ArrayLiteralExpression): string[] | undefined {
+		const literals: string[] = [];
+		for (const element of arrayLiteral.elements) {
+			if (ts.isSpreadElement(element)) {
+				return undefined;
+			}
+			let expr: ts.Expression = element;
+			while (ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)) {
+				expr = expr.expression;
+			}
+			if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
+				literals.push(`'${expr.text}'`);
+			} else if (ts.isNumericLiteral(expr)) {
+				literals.push(expr.text);
+			} else if (expr.kind === ts.SyntaxKind.TrueKeyword) {
+				literals.push('true');
+			} else if (expr.kind === ts.SyntaxKind.FalseKeyword) {
+				literals.push('false');
+			} else if (expr.kind === ts.SyntaxKind.NullKeyword) {
+				literals.push('null');
+			} else {
+				return undefined;
+			}
+		}
+		if (literals.length === 0) {
+			return undefined;
+		}
+		const result = literals;
+		return result;
+	}
+
+	/**
+	 * Emit-type for `typeof name` when `name` is a tracked const array: the
+	 * union of its element literal types (`'active' | 'closed'`). Every
+	 * other typeof source — non-array consts, functions, classes, names not
+	 * tracked at all — yields undefined, so the caller degrades the field
+	 * to `unknown`: a bare `typeof name` emitted into types.ts has no
+	 * import to resolve against downstream.
+	 */
+	private typeOfConstArrayUnion (name: string, fromFile: string): string | undefined {
+		const arrayLiteral = this.findReferencedConstArray(name, fromFile);
+		if (!arrayLiteral) {
+			return undefined;
+		}
+		const literals = this.literalTypesOfArray(arrayLiteral);
+		if (!literals) {
+			return undefined;
+		}
+		const union = literals.join(' | ');
+		return union;
 	}
 
 	/**
@@ -900,32 +1028,71 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Properties of a referenced class/interface/alias-of-literal declaration,
 	 * shared by `this:`-parameter expansion and inline type emission.
+	 * Inherited members are included: the extends chain is walked
+	 * (depth-capped, cycle-guarded) and parent fields merge first, the
+	 * declaration's own fields overriding on name clash.
 	 */
 	private referencedDeclarationProperties (decl: ReferencedTypeDeclaration):
 		Map<string, PropertyInfo> {
-		const properties = new Map<string, PropertyInfo>();
+		const visited = new Set<string>();
+		const properties = this.referencedDeclarationPropertiesInner(decl, visited, 0);
+		return properties;
+	}
+
+	private referencedDeclarationPropertiesInner (
+		decl: ReferencedTypeDeclaration,
+		visited: Set<string>,
+		depth: number
+	): Map<string, PropertyInfo> {
+		const ownProperties = new Map<string, PropertyInfo>();
+		const declNode = decl.node as ts.ClassDeclaration | ts.InterfaceDeclaration;
+		const declName = declNode.name && ts.isIdentifier(declNode.name) ? declNode.name.text : '';
+		const visitKey = `${decl.kind}:${decl.file}:${declName}`;
+		if (depth > MAX_HERITAGE_DEPTH || visited.has(visitKey)) {
+			return ownProperties;
+		}
+		visited.add(visitKey);
 
 		if (decl.kind === 'class') {
 			const classProps = this.extractClassProperties(decl.node as ts.ClassDeclaration);
 			for (const [ name, info ] of classProps) {
-				properties.set(name, info);
+				ownProperties.set(name, info);
 			}
-			return properties;
-		}
-
-		let members: readonly ts.TypeElement[] = [];
-		if (decl.kind === 'interface') {
+		} else if (decl.kind === 'interface') {
 			const iface = decl.node as ts.InterfaceDeclaration;
-			members = [ ...iface.members ];
+			this.collectTypeElementProperties([ ...iface.members ], ownProperties);
 		} else {
 			const aliasType = (decl.node as ts.TypeAliasDeclaration).type;
 			if (ts.isTypeLiteralNode(aliasType)) {
-				members = [ ...aliasType.members ];
+				this.collectTypeElementProperties([ ...aliasType.members ], ownProperties);
 			} else {
-				return properties;
+				return ownProperties;
 			}
 		}
 
+		// heritage merges parent fields first; the declaration's own fields
+		// override on name clash (later bases override earlier ones)
+		const merged = new Map<string, PropertyInfo>();
+		for (const baseDecl of this.resolveHeritageDeclarations(decl)) {
+			const baseProps = this.referencedDeclarationPropertiesInner(baseDecl, visited, depth + 1);
+			for (const [ name, info ] of baseProps) {
+				merged.set(name, info);
+			}
+		}
+		for (const [ name, info ] of ownProperties) {
+			merged.set(name, info);
+		}
+		return merged;
+	}
+
+	/**
+	 * Property signatures of interface/alias type-literal members, into
+	 * the given map.
+	 */
+	private collectTypeElementProperties (
+		members: readonly ts.TypeElement[],
+		properties: Map<string, PropertyInfo>
+	): void {
 		for (const member of members) {
 			if (ts.isPropertySignature(member) && ts.isIdentifier(member.name)) {
 				const propName = member.name.text;
@@ -937,8 +1104,41 @@ export class MnemonicaAnalyzer {
 				});
 			}
 		}
+	}
 
-		return properties;
+	/**
+	 * Resolve the heritage clause of a class (`extends Base`) or interface
+	 * (`extends A, B`) to referenced-type declarations through the SAME
+	 * import-aware machinery as plain references (the declaring file's own
+	 * imports first, then its locals, then the unique program-wide
+	 * declaration). Unresolvable or external bases yield nothing — their
+	 * inherited fields simply stay absent, same as before this walk
+	 * existed. Mixin calls (`extends mixin(X)`) and namespace access are
+	 * not followed.
+	 */
+	private resolveHeritageDeclarations (decl: ReferencedTypeDeclaration): ReferencedTypeDeclaration[] {
+		const { heritageClauses } = (decl.node as ts.ClassDeclaration | ts.InterfaceDeclaration);
+		if (!heritageClauses) {
+			return [];
+		}
+		const bases: ReferencedTypeDeclaration[] = [];
+		for (const clause of heritageClauses) {
+			if (clause.token !== ts.SyntaxKind.ExtendsKeyword) {
+				continue;
+			}
+			for (const heritageType of clause.types) {
+				if (!ts.isIdentifier(heritageType.expression)) {
+					continue;
+				}
+				const baseName = heritageType.expression.text;
+				const baseDecl = this.resolveReferencedTypeDeclaration(baseName, decl.file);
+				if (baseDecl) {
+					bases.push(baseDecl);
+				}
+			}
+		}
+		const result = bases;
+		return result;
 	}
 
 	/**
@@ -3539,6 +3739,27 @@ export class MnemonicaAnalyzer {
 		case ts.SyntaxKind.IndexedAccessType: {
 			// Handle indexed access: T[K]
 			const indexed = typeNode as ts.IndexedAccessTypeNode;
+			// `typeof constArray[K]` — element type of a tracked const array:
+			// emit the element literal union directly (assembling
+			// `union[K]` text would misread precedence, and when the const
+			// is not statically visible the honest answer is `unknown`,
+			// never a bare `typeof name` query)
+			if (ts.isTypeQueryNode(indexed.objectType) && ts.isIdentifier(indexed.objectType.exprName)) {
+				const queryName = indexed.objectType.exprName.text;
+				const arrayLiteral = this.findReferencedConstArray(queryName, this.currentReferencedTypeFile);
+				const literals = arrayLiteral ? this.literalTypesOfArray(arrayLiteral) : undefined;
+				if (!literals) {
+					return 'unknown';
+				}
+				if (ts.isLiteralTypeNode(indexed.indexType) && ts.isNumericLiteral(indexed.indexType.literal)) {
+					const elementIndex = parseInt(indexed.indexType.literal.text, 10);
+					const element = literals[ elementIndex ];
+					const elementResult = element === undefined ? 'unknown' : element;
+					return elementResult;
+				}
+				const unionResult = literals.join(' | ');
+				return unionResult;
+			}
 			let objectType = this.inferType(indexed.objectType);
 			const indexType = this.inferType(indexed.indexType);
 			// If objectType is 'object', try to resolve the underlying referenced type
@@ -3563,10 +3784,18 @@ export class MnemonicaAnalyzer {
 			return `${operator} ${this.inferType(typeOp.type)}`;
 		}
 		case ts.SyntaxKind.TypeQuery: {
-			// Handle typeof expressions like `typeof UsageEntry`
+			// `typeof x` as a FIELD TYPE: the generated file has no imports,
+			// so a bare `typeof x` would be an unresolvable name downstream.
+			// When x is a tracked const array, emit its element literal
+			// union; otherwise degrade to `unknown`. (InstanceType<typeof X>
+			// graph types are handled in resolveSimpleTypeReference before
+			// inferType runs.)
 			const typeQuery = typeNode as ts.TypeQueryNode;
 			if (ts.isIdentifier(typeQuery.exprName)) {
-				return `typeof ${typeQuery.exprName.text}`;
+				const union = this.typeOfConstArrayUnion(typeQuery.exprName.text, this.currentReferencedTypeFile);
+				if (union) {
+					return union;
+				}
 			}
 			return 'unknown';
 		}

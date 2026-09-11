@@ -37,6 +37,7 @@ export declare class MnemonicaAnalyzer {
     private referencedTypeNamespaces;
     private referencedTypeNamespaceStars;
     private referencedTypeResolutionCache;
+    private referencedTypeConstArrays;
     private referencedTypeCompilerOptions;
     private currentReferencedTypeFile;
     private expandingReferencedAliases;
@@ -118,6 +119,40 @@ export declare class MnemonicaAnalyzer {
      */
     private trackReferencedTypeDeclaration;
     /**
+     * Record consts initialized with an array literal (optionally wrapped in
+     * `as const` / `satisfies`), so a `typeof statusList[number]` field type
+     * expands to the element literal union — the generated file carries no
+     * imports, so emitting the bare `typeof statusList` query would be an
+     * unresolvable name downstream. First binding wins: a nested shadow
+     * must not replace the module-level const the typeof refers to.
+     */
+    private trackReferencedTypeConstArray;
+    /**
+     * Find the array literal behind a module const referenced through
+     * `typeof`: the declaring file's own consts first (the F13 case is a
+     * NON-exported const in the same module as the expanded class), then —
+     * when the file imports the name — the imported module's consts.
+     * External modules are never analyzed, so those yield nothing.
+     */
+    private findReferencedConstArray;
+    /**
+     * Element literal types of a tracked const array: every element must be
+     * a plain literal (optionally wrapped in `as const` / `satisfies`) —
+     * string, numeric, boolean, or null. Spreads, identifiers, and nested
+     * arrays mean the union is not statically visible and yield undefined,
+     * so the caller degrades the field to `unknown` rather than guessing.
+     */
+    private literalTypesOfArray;
+    /**
+     * Emit-type for `typeof name` when `name` is a tracked const array: the
+     * union of its element literal types (`'active' | 'closed'`). Every
+     * other typeof source — non-array consts, functions, classes, names not
+     * tracked at all — yields undefined, so the caller degrades the field
+     * to `unknown`: a bare `typeof name` emitted into types.ts has no
+     * import to resolve against downstream.
+     */
+    private typeOfConstArrayUnion;
+    /**
      * Record the importing file's named/namespace/default import bindings so
      * referenced-type names resolve through the file's own import statements
      * (F10) rather than a program-wide name map.
@@ -162,8 +197,28 @@ export declare class MnemonicaAnalyzer {
     /**
      * Properties of a referenced class/interface/alias-of-literal declaration,
      * shared by `this:`-parameter expansion and inline type emission.
+     * Inherited members are included: the extends chain is walked
+     * (depth-capped, cycle-guarded) and parent fields merge first, the
+     * declaration's own fields overriding on name clash.
      */
     private referencedDeclarationProperties;
+    private referencedDeclarationPropertiesInner;
+    /**
+     * Property signatures of interface/alias type-literal members, into
+     * the given map.
+     */
+    private collectTypeElementProperties;
+    /**
+     * Resolve the heritage clause of a class (`extends Base`) or interface
+     * (`extends A, B`) to referenced-type declarations through the SAME
+     * import-aware machinery as plain references (the declaring file's own
+     * imports first, then its locals, then the unique program-wide
+     * declaration). Unresolvable or external bases yield nothing — their
+     * inherited fields simply stay absent, same as before this walk
+     * existed. Mixin calls (`extends mixin(X)`) and namespace access are
+     * not followed.
+     */
+    private resolveHeritageDeclarations;
     /**
      * Expand a referenced-type declaration to a self-contained type string
      * for emission into generated files: type aliases through inferType,

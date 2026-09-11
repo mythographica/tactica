@@ -2,8 +2,11 @@
 
 import { expect } from 'chai';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
+import * as ts from 'typescript';
 import { MnemonicaAnalyzer } from '../src/analyzer';
+import { run } from '../src/cli';
 import { TypesGenerator } from '../src/generator';
 import { GeneratedTypes } from '../src/types';
 import { TypesWriter } from '../src/writer';
@@ -253,6 +256,135 @@ export const Merged = define('Merged', function (this: Merged, record: SharedSha
 			const content = generateTypesContent(analyzer);
 			expect(content).to.include('gadget: { power: number }');
 			expect(content).to.not.include('Deep.Gadget');
+		});
+	});
+});
+/**
+ * F13: import-anchored referenced-type expansion fidelity.
+ * A — inherited members: class/interface extends chains are walked
+ * (depth-capped, cycle-guarded) and parent fields merge into the
+ * expansion, the declaration's own fields overriding on name clash.
+ * B — `typeof` over a module-level non-exported const: a visible
+ * array literal expands to its element literal union; anything else
+ * degrades the field to `unknown`. A bare `typeof name` is never
+ * emitted into generated types.ts (the file carries no imports).
+ */
+describe('Referenced type expansion fidelity (F13)', () => {
+	const fixtureRoot = path.join(__dirname, 'fixtures', 'referenced-expansion');
+	const modelsFile = path.join(fixtureRoot, 'src', 'models.ts');
+	const consumerFile = path.join(fixtureRoot, 'src', 'consumer.ts');
+
+	const analyzeFixture = (): MnemonicaAnalyzer => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(fs.readFileSync(modelsFile, 'utf8'), modelsFile);
+		analyzer.analyzeSource(fs.readFileSync(consumerFile, 'utf8'), consumerFile);
+		return analyzer;
+	};
+
+	const generateContent = (analyzer: MnemonicaAnalyzer): string => {
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const generated = generator.generateTypesFile();
+		return generated.content;
+	};
+
+	it('expands inherited class members: parent fields merge, child shadow wins', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		// both the base's and the derived declaration's own fields
+		expect(content).to.include('payload: { baseField: string; ownField: number }');
+		// name clash: the derived declaration's field type wins
+		expect(content).to.include('payload: { tag: number }');
+		expect(content).to.not.include('tag: string');
+	});
+
+	it('expands interface extends chains the same way', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('payload: { baseProp: string; ownProp: number }');
+	});
+
+	it('expands typeof over a non-exported const array to the literal union', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('status?: \'active\' | \'closed\'');
+		// the bare query must not leak anywhere in the generated file
+		expect(content).to.not.include('typeof statusList');
+		expect(content).to.not.include('statusList');
+	});
+
+	it('degrades non-literal and non-array typeof sources to unknown, never a bare query', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('state?: unknown');
+		expect(content).to.include('settings?: unknown');
+		expect(content).to.not.include('typeof dynamicList');
+		expect(content).to.not.include('typeof configObject');
+		expect(content).to.not.include('dynamicList');
+		expect(content).to.not.include('configObject');
+	});
+
+	describe('CLI end-to-end (tsc-clean generated output is the bar)', () => {
+		const runCapturingErrors = (options: Parameters<typeof run>[0]): { code: number; errors: string } => {
+			const originalError = console.error;
+			let captured = '';
+			console.error = (...args: unknown[]): void => {
+				captured += `${args.map(String).join(' ')  }\n`;
+			};
+			let code = 0;
+			try {
+				code = run(options);
+			} finally {
+				console.error = originalError;
+			}
+			const result = { code, errors : captured };
+			return result;
+		};
+
+		it('runs the fixture, exits 0, and the generated types.ts compiles clean', () => {
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-referenced-expansion-'));
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureRoot, 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const typesPath = path.join(outputDir, 'types.ts');
+				const content = fs.readFileSync(typesPath, 'utf8');
+				expect(content).to.include('payload: { baseField: string; ownField: number }');
+				expect(content).to.include('status?: \'active\' | \'closed\'');
+				expect(content).to.not.include('typeof');
+				expect(content).to.not.include('statusList');
+				expect(content).to.not.include('dynamicList');
+				expect(content).to.not.include('configObject');
+
+				// compile the generated file for real — the field report was
+				// downstream TS errors from the bare typeof leak
+				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
+				const program = ts.createProgram([ typesPath ], {
+					strict           : true,
+					noEmit           : true,
+					target           : ts.ScriptTarget.ES2020,
+					module           : ts.ModuleKind.ES2020,
+					moduleResolution : ts.ModuleResolutionKind.Bundler,
+					baseUrl          : outputDir,
+					paths            : { mnemonica : [ mnemonicaTypes ] },
+				});
+				const diagnostics = ts.getPreEmitDiagnostics(program);
+				const compileErrors = diagnostics
+					.filter(d => d.category === ts.DiagnosticCategory.Error)
+					.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+
+				expect(compileErrors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
 		});
 	});
 });
