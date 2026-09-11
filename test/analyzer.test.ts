@@ -1,5 +1,6 @@
 import { expect } from 'chai';
 import { MnemonicaAnalyzer } from '../src/analyzer';
+import { TypesGenerator } from '../src/generator';
 
 describe('MnemonicaAnalyzer', () => {
 	let analyzer: MnemonicaAnalyzer;
@@ -923,6 +924,44 @@ describe('MnemonicaAnalyzer', () => {
 			expect(result.types).to.have.length(1);
 			const [ type ] = result.types;
 			expect(type.properties.get('key')?.type).to.equal('string');
+		});
+
+		it('should record `await new` as an instantiation usage (await is transparent)', () => {
+			const source = `
+					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+						this.value = data.value;
+					});
+
+					async function main () {
+						const instance = await new AsyncType({ value: 1 });
+						return instance;
+					}
+				`;
+
+			analyzer.analyzeSource(source);
+			const usages = analyzer.getUsages().get('AsyncType');
+			expect(usages).to.exist;
+			const instantiation = usages!.find(u => u.kind === 'instantiation');
+			expect(instantiation).to.exist;
+			expect(instantiation!.code).to.include('new AsyncType({ value: 1 })');
+			expect(instantiation!.constructorText).to.equal('AsyncType');
+		});
+
+		it('should emit a plain constructor signature for async types — no Promise modeling', () => {
+			const source = `
+					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+						this.value = data.value;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const registry = generator.generateTypeRegistry().content;
+
+			// `await new` typechecks via await-identity on the plain instance
+			// type — the emitted ctor is the same shape as for sync types
+			expect(registry).to.include('\'AsyncType\': new (data: { value: number }) => AsyncType;');
+			expect(registry).to.not.include('Promise');
 		});
 	});
 	

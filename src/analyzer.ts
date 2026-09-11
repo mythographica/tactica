@@ -139,6 +139,11 @@ export class MnemonicaAnalyzer {
 	private variableToTypeMap = new Map<string, string>();
 	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
 	private moduleObjectVariables = new Set<string>();
+	// file -> (local name -> imported name) for named imports from
+	// 'mnemonica' — import-awareness for the construction-function
+	// recognition (call/apply/bind) and the utils forms (merge/fork):
+	// userland functions with those names must never match
+	private mnemonicaNamedImports = new Map<string, Map<string, string>>();
 	// Track imported aliases of createTypesCollection (e.g., import { createTypesCollection as ctc })
 	private createTypesCollectionVariables = new Set<string>();
 	// Track custom collection variables: variableName -> collectionId
@@ -546,6 +551,12 @@ export class MnemonicaAnalyzer {
 				if (importedName === 'createTypesCollection') {
 					this.createTypesCollectionVariables.add(localName);
 				}
+				let fileImports = this.mnemonicaNamedImports.get(this.currentReferencedTypeFile);
+				if (!fileImports) {
+					fileImports = new Map<string, string>();
+					this.mnemonicaNamedImports.set(this.currentReferencedTypeFile, fileImports);
+				}
+				fileImports.set(localName, importedName);
 			}
 		}
 
@@ -638,7 +649,13 @@ export class MnemonicaAnalyzer {
 		}
 		const { initializer: rawInitializer } = node;
 		let initializer: ts.Expression = rawInitializer;
-		while (ts.isAsExpression(initializer) || ts.isSatisfiesExpression(initializer)) {
+		while (
+			ts.isAsExpression(initializer) ||
+			ts.isSatisfiesExpression(initializer) ||
+			// the angle-bracket assertion spelling (`<const>[…]`) is the
+			// same const-array marker as the `as const` form (F17)
+			ts.isTypeAssertionExpression(initializer)
+		) {
 			initializer = initializer.expression;
 		}
 		if (!ts.isArrayLiteralExpression(initializer)) {
@@ -684,10 +701,11 @@ export class MnemonicaAnalyzer {
 
 	/**
 	 * Element literal types of a tracked const array: every element must be
-	 * a plain literal (optionally wrapped in `as const` / `satisfies`) —
-	 * string, numeric, boolean, or null. Spreads, identifiers, and nested
-	 * arrays mean the union is not statically visible and yield undefined,
-	 * so the caller degrades the field to `unknown` rather than guessing.
+	 * a plain literal (optionally wrapped in `as const` / `satisfies` /
+	 * `<const>` assertions) — string, numeric (unary `-`/`+` preserved),
+	 * boolean, or null. Spreads, identifiers, and nested arrays mean the
+	 * union is not statically visible and yield undefined, so the caller
+	 * degrades the field to `unknown` rather than guessing.
 	 */
 	private literalTypesOfArray (arrayLiteral: ts.ArrayLiteralExpression): string[] | undefined {
 		const literals: string[] = [];
@@ -696,11 +714,26 @@ export class MnemonicaAnalyzer {
 				return undefined;
 			}
 			let expr: ts.Expression = element;
-			while (ts.isAsExpression(expr) || ts.isSatisfiesExpression(expr)) {
+			while (
+				ts.isAsExpression(expr) ||
+				ts.isSatisfiesExpression(expr) ||
+				ts.isTypeAssertionExpression(expr)
+			) {
 				expr = expr.expression;
 			}
 			if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
 				literals.push(`'${expr.text}'`);
+			} else if (ts.isPrefixUnaryExpression(expr) && ts.isNumericLiteral(expr.operand)) {
+				// signed numeric literals (`-1 | 1`): unary minus is part
+				// of the literal type; unary plus is the bare literal in
+				// type space (`+1` is written `1`)
+				if (expr.operator === ts.SyntaxKind.MinusToken) {
+					literals.push(`-${expr.operand.text}`);
+				} else if (expr.operator === ts.SyntaxKind.PlusToken) {
+					literals.push(expr.operand.text);
+				} else {
+					return undefined;
+				}
 			} else if (ts.isNumericLiteral(expr)) {
 				literals.push(expr.text);
 			} else if (expr.kind === ts.SyntaxKind.TrueKeyword) {
@@ -2139,7 +2172,8 @@ export class MnemonicaAnalyzer {
 		this.edsScopeByNode.set(call, node.fullPath);
 
 		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
-		// For chained calls like const X = define('A').define('B'), we want to map X -> A (the root)
+		// A multi-hop initializer binds the LAST hop: define() returns the
+		// defined type's constructor (F18)
 		this.trackVariableAssignment(call, parentNode, node.fullPath);
 	}
 
@@ -2549,8 +2583,17 @@ export class MnemonicaAnalyzer {
 				// Found: const X = define(...)
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
-					// If this is a chained call (has parent), don't overwrite existing mapping
-					// The first define in the chain sets the mapping to the root type
+					// F18: define() returns the DEFINED type's constructor,
+					// so a const holding a multi-hop initializer
+					// (`const X = A.define('B').define('C')`) binds the LAST
+					// hop — a deeper hop must not bind, and the outermost
+					// hop binds unconditionally (visit-order independent)
+					if (this.isDeeperDefineHop(call)) {
+						return;
+					}
+					// For chained lazy calls like const X = define('A').lazy('B'),
+					// the first call in the chain sets the mapping (lazy hop
+					// keeps it — pinned behavior)
 					if (parentNode && this.variableToTypeMap.has(varName)) {
 						return;
 					}
@@ -2561,6 +2604,22 @@ export class MnemonicaAnalyzer {
 			}
 			current = current.parent;
 		}
+	}
+
+	/**
+	 * A `.define(...)` hop wrapped by another `.define(...)` call is not
+	 * the value its const ends up holding — the OUTERMOST hop of the
+	 * initializer chain is (define() returns the defined type's
+	 * constructor). Only the outermost hop may bind the variable.
+	 */
+	private isDeeperDefineHop (call: ts.CallExpression): boolean {
+		const { parent } = call;
+		const deeper = !!parent &&
+			ts.isPropertyAccessExpression(parent) &&
+			parent.name.text === 'define' &&
+			ts.isCallExpression(parent.parent) &&
+			parent.parent.expression === parent;
+		return deeper;
 	}
 
 	/**
@@ -2583,11 +2642,46 @@ export class MnemonicaAnalyzer {
 		* e.g., const SentienceConstructor = lookup('Sentience') maps "SentienceConstructor" -> "Sentience"
 		*/
 	private trackLookupAssignment (call: ts.CallExpression, typePath: string): void {
-		// Walk up the tree to find VariableDeclaration
-		let current: ts.Node | undefined = call.parent;
+		this.bindResultVariable(call, typePath);
+	}
+
+	/**
+		* Track variable assignments from new Type() calls
+		* e.g., const user = new UserType() maps "user" -> "UserType"
+		*/
+	private trackNewAssignment (newExpr: ts.NewExpression, typePath: string): void {
+		let effectivePath = typePath;
+		let current: ts.Node | undefined = newExpr.parent;
+		// Chain-form construction: new R().A().B() — the result variable
+		// holds the OUTERMOST tip's instance (await-transparent), not the
+		// inner new's type. Walk the chain, keeping the last resolvable tip.
+		while (current) {
+			if (ts.isPropertyAccessExpression(current) &&
+				ts.isCallExpression(current.parent) &&
+				current.parent.expression === current) {
+				const tip = this.resolveChainTipTypePath(current.parent);
+				if (tip) {
+					effectivePath = tip;
+				}
+				current = current.parent.parent;
+				continue;
+			}
+			break;
+		}
+		this.bindResultVariable(newExpr, effectivePath);
+	}
+
+	/**
+	 * Bind the nearest enclosing `const/let/var X = …` to a mnemonica
+	 * fullPath — the shared result-variable walker behind new/lookup/
+	 * chain/fork/merge/call tracking (value scope: downstream references
+	 * and `this.x = x` assignments resolve through the same binding).
+	 */
+	private bindResultVariable (from: ts.Node, typePath: string): void {
+		let current: ts.Node | undefined = from.parent;
 		while (current) {
 			if (ts.isVariableDeclaration(current)) {
-				// Found: const X = lookup(...)
+				// Found: const X = <construction>
 				if (ts.isIdentifier(current.name)) {
 					const varName = current.name.text;
 					this.variableToTypeMap.set(varName, typePath);
@@ -2600,25 +2694,188 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-		* Track variable assignments from new Type() calls
-		* e.g., const user = new UserType() maps "user" -> "UserType"
-		*/
-	private trackNewAssignment (newExpr: ts.NewExpression, typePath: string): void {
-		// Walk up the tree to find VariableDeclaration
-		let current: ts.Node | undefined = newExpr.parent;
-		while (current) {
-			if (ts.isVariableDeclaration(current)) {
-				// Found: const X = new Type(...)
-				if (ts.isIdentifier(current.name)) {
-					const varName = current.name.text;
-					this.variableToTypeMap.set(varName, typePath);
-					this.trackFileGraphBinding(varName, typePath);
-				}
-				return;
-			}
-			current = current.parent;
-		}
+	 * Record an `instantiation` usage for a construction-shape call
+	 * (chain tip / call / apply / fork / clone / merge —
+	 * byte-indistinguishable from `new` until the deferred
+	 * mechanism-kind revision). `constructorText` defaults to the callee
+	 * expression text so the site stays readable without new fields;
+	 * call/apply override it with the Ctor argument text.
+	 */
+	private recordConstructionUsage (
+		call: ts.CallExpression,
+		typePath: string,
+		sourceFile: ts.SourceFile,
+		constructorText?: string
+	): void {
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			call.getStart(sourceFile)
+		);
+		const ctorText = constructorText ?? call.expression.getText(sourceFile);
+		this.addUsage(typePath, {
+			location        : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind            : 'instantiation',
+			code            : call.getText(sourceFile).slice(0, 100),
+			constructorText : ctorText.slice(0, 100),
+		});
 	}
+
+	/**
+	 * Resolve the type a construction-chain tip call constructs:
+	 * `new R(...).A(...)` constructs R.A; `await new R(...).A(...).B(...)`
+	 * constructs R.A.B. The receiver is the nested chain (NewExpression
+	 * base, then tip calls); exact fullPath first, and only when the root
+	 * itself is unknown does the prop-name fallback law apply (so plain
+	 * method calls on fresh instances never record a construction).
+	 */
+	private resolveChainTipTypePath (call: ts.CallExpression): string | undefined {
+		if (!ts.isPropertyAccessExpression(call.expression)) {
+			return undefined;
+		}
+		const receiver = call.expression;
+		let rootPath: string | undefined;
+		if (ts.isNewExpression(receiver.expression)) {
+			const inner = receiver.expression;
+			rootPath = ts.isPropertyAccessExpression(inner.expression)
+				? this.resolveTypePath(inner.expression)
+				: this.getTypeNameFromExpression(inner.expression);
+		} else if (ts.isCallExpression(receiver.expression)) {
+			rootPath = this.resolveChainTipTypePath(receiver.expression);
+		} else {
+			return undefined;
+		}
+		if (!rootPath) {
+			return undefined;
+		}
+		const candidate = `${rootPath}.${receiver.name.text}`;
+		if (this.definitions.has(candidate)) {
+			return candidate;
+		}
+		if (!this.definitions.has(rootPath)) {
+			return this.resolveTypePath(receiver);
+		}
+		return undefined;
+	}
+
+	/**
+	 * True when `expr` denotes a construction function imported from
+	 * 'mnemonica' — the named-import form (`import { call } from
+	 * 'mnemonica'`, aliases included) or a member of a tracked
+	 * module-object alias (`mnemonica.call`). Userland call/apply/bind
+	 * functions never match.
+	 */
+	private isMnemonicaConstructionFn (expr: ts.Expression, fn: 'call' | 'apply' | 'bind'): boolean {
+		if (ts.isIdentifier(expr)) {
+			const imported = this.mnemonicaNamedImports.get(this.currentReferencedTypeFile)?.get(expr.text);
+			const matched = imported === fn;
+			return matched;
+		}
+		if (ts.isPropertyAccessExpression(expr) && expr.name.text === fn) {
+			const matched = ts.isIdentifier(expr.expression) &&
+				this.moduleObjectVariables.has(expr.expression.text);
+			return matched;
+		}
+		return false;
+	}
+
+	/**
+	 * mnemonica call/apply(entity, Ctor, ...) / bind(entity, Ctor):
+	 * resolve the Ctor argument (arg 1) to a graph fullPath through the
+	 * same tiers as the `new` branch (value scope for identifiers,
+	 * chain resolution for property accesses).
+	 */
+	private resolveConstructionFnTypePath (call: ts.CallExpression): string | undefined {
+		const callee = call.expression;
+		const isCallOrApply = this.isMnemonicaConstructionFn(callee, 'call') ||
+			this.isMnemonicaConstructionFn(callee, 'apply');
+		const isBind = this.isMnemonicaConstructionFn(callee, 'bind');
+		if (!isCallOrApply && !isBind) {
+			return undefined;
+		}
+		if (call.arguments.length < 2) {
+			return undefined;
+		}
+		const [ , ctorArg ] = call.arguments;
+		let resolved: string | undefined;
+		if (ts.isPropertyAccessExpression(ctorArg)) {
+			resolved = this.resolveTypePath(ctorArg);
+		} else if (ts.isIdentifier(ctorArg)) {
+			const bound = this.variableToTypeMap.get(ctorArg.text);
+			if (bound) {
+				resolved = bound;
+			} else {
+				const graphResult = this.resolveGraphTypeName(ctorArg.text);
+				if (graphResult.status === 'unique') {
+					resolved = graphResult.node.fullPath;
+				}
+			}
+		}
+		const known = resolved && this.definitions.has(resolved) ? resolved : undefined;
+		return known;
+	}
+
+	/**
+	 * instance.fork(...) / instance.clone(...) on a tracked variable —
+	 * runtime returns `this`, so the result carries the source type.
+	 */
+	private resolveForkLikeTypePath (call: ts.CallExpression): string | undefined {
+		if (!ts.isPropertyAccessExpression(call.expression)) {
+			return undefined;
+		}
+		const method = call.expression.name.text;
+		if (method !== 'fork' && method !== 'clone') {
+			return undefined;
+		}
+		const receiver = call.expression.expression;
+		if (!ts.isIdentifier(receiver)) {
+			return undefined;
+		}
+		const result = this.variableToTypeMap.get(receiver.text);
+		return result;
+	}
+
+	/**
+	 * Free utils forms: utils.merge(a, b, ...) (also the direct named
+	 * import `merge(a, b)`) and the curried utils.fork(instance)(...).
+	 * The result binds to arg 0's type — runtime returns a's lineage over
+	 * b's context; a's fullPath is the honest approximation within the
+	 * output contract (documented in README).
+	 */
+	private resolveUtilsFnTypePath (call: ts.CallExpression): string | undefined {
+		const callee = call.expression;
+		const isUtilsOwner = (owner: ts.Expression): boolean => {
+			if (ts.isIdentifier(owner)) {
+				const imported = this.mnemonicaNamedImports.get(this.currentReferencedTypeFile)?.get(owner.text);
+				return imported === 'utils';
+			}
+			const matched = ts.isPropertyAccessExpression(owner) && owner.name.text === 'utils' &&
+				ts.isIdentifier(owner.expression) && this.moduleObjectVariables.has(owner.expression.text);
+			return matched;
+		};
+		let subjectArg: ts.Expression | undefined;
+		if (ts.isPropertyAccessExpression(callee) && isUtilsOwner(callee.expression) &&
+			(callee.name.text === 'merge' || callee.name.text === 'fork')) {
+			const [ firstArg ] = call.arguments;
+			subjectArg = firstArg;
+		} else if (ts.isIdentifier(callee)) {
+			const imported = this.mnemonicaNamedImports.get(this.currentReferencedTypeFile)?.get(callee.text);
+			if (imported === 'merge' || imported === 'fork') {
+				const [ firstArg ] = call.arguments;
+				subjectArg = firstArg;
+			}
+		} else if (ts.isCallExpression(callee) && ts.isPropertyAccessExpression(callee.expression) &&
+			callee.expression.name.text === 'fork' && isUtilsOwner(callee.expression.expression)) {
+			// utils.fork(instance)(...args) — the curried form
+			const [ firstArg ] = callee.arguments;
+			subjectArg = firstArg;
+		}
+		if (!subjectArg || !ts.isIdentifier(subjectArg)) {
+			return undefined;
+		}
+		const result = this.variableToTypeMap.get(subjectArg.text);
+		return result;
+	}
+
 
 	/**
 		* Process a @decorate() decorator
@@ -3421,6 +3678,15 @@ export class MnemonicaAnalyzer {
 						if (!type && ts.isIdentifier(expr.right)) {
 							type = dataTypeMap.get(expr.right.text);
 						}
+						// a bound construction result (new/lookup/chain/fork/
+						// merge/call): the value scope binding supplies the
+						// graph type — emitted by its instance-type name
+						if (!type && ts.isIdentifier(expr.right)) {
+							const bound = this.variableToTypeMap.get(expr.right.text);
+							if (bound) {
+								type = bound.replace(/\./g, '_');
+							}
+						}
 						if (!type) {
 							type = this.inferTypeFromInitializer(expr.right, dataTypeMap);
 						}
@@ -3470,6 +3736,27 @@ export class MnemonicaAnalyzer {
 									optional : false,
 								});
 							}
+						}
+					} else if (ts.isIdentifier(propsArg)) {
+						// Object.assign(this, data) — the identifier form: every
+						// per-property entry the data parameter contributed to
+						// the type map becomes an own property. This is what
+						// carries the fields for the self-referencing
+						// intersection-alias root pattern (F21): the this-alias
+						// is ergonomic-only and its intersection members are
+						// never expanded, so the assign is where the root's
+						// fields must come from
+						const paramName = propsArg.text;
+						for (const [ key, type ] of dataTypeMap) {
+							if (!key.startsWith(`${paramName}.`)) {
+								continue;
+							}
+							const name = key.slice(paramName.length + 1);
+							properties.set(name, {
+								name,
+								type,
+								optional : false,
+							});
 						}
 					}
 				}
@@ -3813,6 +4100,16 @@ export class MnemonicaAnalyzer {
 					}
 				}
 			}
+			// Invariant: an index suffix must NEVER be glued onto an
+			// unresolved/fallback target — `unknown[number]` / `object[K]`
+			// are invalid TypeScript in the generated file (hard compile
+			// break, F17). When either side did not resolve, the WHOLE
+			// indexed access degrades to `unknown`.
+			const targetUnresolved = objectType === 'unknown' || objectType === 'object';
+			const indexUnresolved = indexType === 'unknown';
+			if (targetUnresolved || indexUnresolved) {
+				return 'unknown';
+			}
 			return `${objectType}[${indexType}]`;
 		}
 		case ts.SyntaxKind.TypeOperator: {
@@ -4123,6 +4420,31 @@ export class MnemonicaAnalyzer {
 		// Check for property access on instances (user.AdminType)
 		if (ts.isPropertyAccessExpression(node)) {
 			const propName = node.name.text;
+			// instance.clone — the PROPERTY form (core types it
+			// `readonly clone: this`): the result variable binds to the
+			// source instance's type, same as the fork()/clone() call
+			// forms (await-transparent). The call form's recording happens
+			// in the CallExpression branch; the property branch skips it
+			// to avoid a duplicate entry at the same site
+			if (propName === 'clone' && ts.isIdentifier(node.expression)) {
+				const clonedPath = this.variableToTypeMap.get(node.expression.text);
+				const isCallForm = ts.isCallExpression(node.parent) && node.parent.expression === node;
+				if (clonedPath) {
+					if (!isCallForm) {
+						const { line, character } = ts.getLineAndCharacterOfPosition(
+							sourceFile,
+							node.getStart(sourceFile)
+						);
+						this.addUsage(clonedPath, {
+							location        : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+							kind            : 'instantiation',
+							code            : node.getText(sourceFile).slice(0, 100),
+							constructorText : node.getText(sourceFile).slice(0, 100),
+						});
+					}
+					this.bindResultVariable(node, clonedPath);
+				}
+			}
 			// Check if this looks like a type access pattern
 			if (propName && this.isLikelyTypeName(propName)) {
 				const { line, character } = ts.getLineAndCharacterOfPosition(
@@ -4163,6 +4485,77 @@ export class MnemonicaAnalyzer {
 					// the path (unknown paths are exactly the failure class)
 					this.lookupReferences.push({ path : typePath, location });
 				}
+			}
+
+			// Chain-form construction: `new R(...).A(...)` / the awaited
+			// single-chain `await new R(...).A(...).B(...)` — the call on
+			// the fresh instance constructs the chain TIP (await is
+			// transparent; the NewExpression branch already recorded the
+			// inner root). The result variable binds to the tip, not the
+			// root (trackNewAssignment resolves the same tip)
+			const chainTip = this.resolveChainTipTypePath(node);
+			if (chainTip) {
+				this.recordConstructionUsage(node, chainTip, sourceFile);
+				const { line, character } = ts.getLineAndCharacterOfPosition(
+					sourceFile,
+					node.getStart(sourceFile)
+				);
+				this.addFlow(chainTip, {
+					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind     : 'instantiation',
+					code     : node.getText(sourceFile).slice(0, 100),
+					context  : 'chained construction',
+				});
+			}
+
+			// mnemonica call/apply(entity, Ctor, ...) / bind(entity, Ctor) —
+			// typed construction without `new`: the Ctor argument (arg 1) is
+			// the constructed type. Import-aware: only identifiers actually
+			// imported from 'mnemonica' (or members of a tracked
+			// module-object alias) match — userland call/apply/bind never
+			// do. call/apply record the construction; bind() constructs
+			// nothing — it only binds the result variable to the Ctor's
+			// type (runtime InstanceResult<Merge<E,T>> approximated by T
+			// within the output contract)
+			const constructionPath = this.resolveConstructionFnTypePath(node);
+			if (constructionPath) {
+				const isBindForm = this.isMnemonicaConstructionFn(node.expression, 'bind');
+				if (!isBindForm) {
+					const ctorArgText = node.arguments[ 1 ]?.getText(sourceFile);
+					this.recordConstructionUsage(node, constructionPath, sourceFile, ctorArgText);
+					const { line, character } = ts.getLineAndCharacterOfPosition(
+						sourceFile,
+						node.getStart(sourceFile)
+					);
+					this.addFlow(constructionPath, {
+						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+						kind     : 'instantiation',
+						code     : node.getText(sourceFile).slice(0, 100),
+						context  : 'call/apply construction',
+					});
+				}
+				this.bindResultVariable(node, constructionPath);
+			}
+
+			// instance.fork()/clone() — runtime re-runs construction (hooks
+			// fire, a distinct instance on a distinct line), so an
+			// `instantiation` usage records the site IN ADDITION to the
+			// result-var binding and the generic methodCall flow (the entry
+			// is byte-indistinguishable from `new` until the deferred
+			// mechanism-kind revision — the owner's explicit call). Free
+			// utils.merge(a, b, ...) / utils.fork(instance)(...) are
+			// construction of a's type too (merge = fork(a) over b's
+			// context); the result binding keeps the documented arg-0
+			// approximation
+			const forkLikePath = this.resolveForkLikeTypePath(node);
+			if (forkLikePath) {
+				this.recordConstructionUsage(node, forkLikePath, sourceFile);
+				this.bindResultVariable(node, forkLikePath);
+			}
+			const utilsPath = this.resolveUtilsFnTypePath(node);
+			if (utilsPath) {
+				this.recordConstructionUsage(node, utilsPath, sourceFile);
+				this.bindResultVariable(node, utilsPath);
 			}
 		}
 	}
@@ -4415,7 +4808,12 @@ export class MnemonicaAnalyzer {
 			if (mapped) {
 				return mapped;
 			}
-			const annotationType = this.resolveParameterAnnotationTypePath(name, from);
+			const annotationType = this.resolveParameterAnnotationTypePath(name, from) ??
+				// F20 cheap tier: the identifier is bound to a let/var/const
+				// with an EXPLICIT type annotation — resolve the annotation
+				// through the graph law. No flow-sensitive assignment
+				// tracking: an UNANNOTATED let still buckets unknown
+				this.resolveVariableAnnotationTypePath(name, from);
 			return annotationType;
 		};
 
@@ -4460,6 +4858,68 @@ export class MnemonicaAnalyzer {
 				return undefined;
 			}
 			current = current.parent;
+		}
+		return undefined;
+	}
+
+	/**
+	 * F20 cheap tier: the wrap argument is an identifier declared with an
+	 * EXPLICIT type annotation (`let updateCommitted: LedgerUpdate;`
+	 * assigned later in a flow the analyzer does not track). The
+	 * annotation resolves through the same graph tiers as parameter
+	 * annotations. Deliberately NOT flow-sensitive: an UNANNOTATED
+	 * let/var still buckets unknown, and a const with an analyzable
+	 * initializer stays the recommended discipline. The lookup walks the
+	 * enclosing statement containers innermost-out, so a shadowing inner
+	 * declaration wins.
+	 */
+	private resolveVariableAnnotationTypePath (name: string, from: ts.Node): string | undefined {
+		let current: ts.Node | undefined = from;
+		while (current) {
+			const statements: ts.NodeArray<ts.Statement> | undefined =
+				ts.isBlock(current) || ts.isModuleBlock(current) || ts.isSourceFile(current)
+					? current.statements
+					: ts.isCaseClause(current) || ts.isDefaultClause(current)
+						? current.statements
+						: undefined;
+			if (statements) {
+				const resolved = this.findAnnotatedVariableTypePath(statements, name);
+				if (resolved) {
+					return resolved;
+				}
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	/**
+	 * First variable declaration carrying an explicit bare-identifier type
+	 * annotation for `name` in the given statement list, resolved through
+	 * the graph law.
+	 */
+	private findAnnotatedVariableTypePath (
+		statements: readonly ts.Statement[],
+		name: string
+	): string | undefined {
+		for (const statement of statements) {
+			if (!ts.isVariableStatement(statement)) {
+				continue;
+			}
+			for (const declaration of statement.declarationList.declarations) {
+				if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name ||
+					!declaration.type ||
+					!ts.isTypeReferenceNode(declaration.type) ||
+					!ts.isIdentifier(declaration.type.typeName) ||
+					(declaration.type.typeArguments?.length ?? 0) > 0) {
+					continue;
+				}
+				const graphResult = this.resolveGraphTypeName(declaration.type.typeName.text);
+				if (graphResult.status === 'unique') {
+					const result = graphResult.node.fullPath;
+					return result;
+				}
+			}
 		}
 		return undefined;
 	}

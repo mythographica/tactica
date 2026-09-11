@@ -611,6 +611,69 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(wrapEntry!.instanceArg).to.equal('holder');
 		});
 
+		it('should attribute a wrap() through a let with an explicit type annotation (F20 cheap tier)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const LedgerUpdate = define('LedgerUpdate', function (this: LedgerUpdate) {
+					this.kind = 'ledger';
+				});
+
+				export function processUpdate (committed: { id: string }) {
+					let updateCommitted: LedgerUpdate;
+					try {
+						updateCommitted = Object.assign(new LedgerUpdate(), committed);
+						return wrap(function () { return committed.id; }, updateCommitted);
+					} catch (error) {
+						return undefined;
+					}
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('LedgerUpdate');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('LedgerUpdate');
+			expect(wrapEntry!.instanceArg).to.equal('updateCommitted');
+		});
+
+		it('should keep the unknown bucket for an UNANNOTATED let (documented F20 boundary)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const LedgerUpdate = define('LedgerUpdate', function (this: LedgerUpdate) {
+					this.kind = 'ledger';
+				});
+
+				export function processUpdate (makeIt: () => LedgerUpdate) {
+					let updateCommitted;
+					try {
+						updateCommitted = makeIt();
+						return wrap(function () { return 1; }, updateCommitted);
+					} catch (error) {
+						return undefined;
+					}
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			expect(eds.get('LedgerUpdate')?.filter(e => e.kind === 'wrap')).to.be.undefined;
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+			const wrapEntry = unscoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.be.undefined;
+			expect(wrapEntry!.instanceArg).to.equal('updateCommitted');
+		});
+
 		it('should keep the unknown key when neither a handler nor the instance arg attributes the site', () => {
 			const source = `
 				import { wrap } from '@mnemonica/dive';

@@ -22,6 +22,7 @@ export declare class MnemonicaAnalyzer {
     private wrapEntryByNode;
     private variableToTypeMap;
     private moduleObjectVariables;
+    private mnemonicaNamedImports;
     private createTypesCollectionVariables;
     private collectionVariables;
     private collectionInfo;
@@ -137,10 +138,11 @@ export declare class MnemonicaAnalyzer {
     private findReferencedConstArray;
     /**
      * Element literal types of a tracked const array: every element must be
-     * a plain literal (optionally wrapped in `as const` / `satisfies`) —
-     * string, numeric, boolean, or null. Spreads, identifiers, and nested
-     * arrays mean the union is not statically visible and yield undefined,
-     * so the caller degrades the field to `unknown` rather than guessing.
+     * a plain literal (optionally wrapped in `as const` / `satisfies` /
+     * `<const>` assertions) — string, numeric (unary `-`/`+` preserved),
+     * boolean, or null. Spreads, identifiers, and nested arrays mean the
+     * union is not statically visible and yield undefined, so the caller
+     * degrades the field to `unknown` rather than guessing.
      */
     private literalTypesOfArray;
     /**
@@ -468,6 +470,13 @@ export declare class MnemonicaAnalyzer {
         */
     private trackVariableAssignment;
     /**
+     * A `.define(...)` hop wrapped by another `.define(...)` call is not
+     * the value its const ends up holding — the OUTERMOST hop of the
+     * initializer chain is (define() returns the defined type's
+     * constructor). Only the outermost hop may bind the variable.
+     */
+    private isDeeperDefineHop;
+    /**
      * Mirror a variable -> mnemonica fullPath binding into the per-file
      * value-scope map (graph identity law: `typeof X` and bare references
      * resolve through the file's own bindings first).
@@ -483,6 +492,59 @@ export declare class MnemonicaAnalyzer {
         * e.g., const user = new UserType() maps "user" -> "UserType"
         */
     private trackNewAssignment;
+    /**
+     * Bind the nearest enclosing `const/let/var X = …` to a mnemonica
+     * fullPath — the shared result-variable walker behind new/lookup/
+     * chain/fork/merge/call tracking (value scope: downstream references
+     * and `this.x = x` assignments resolve through the same binding).
+     */
+    private bindResultVariable;
+    /**
+     * Record an `instantiation` usage for a construction-shape call
+     * (chain tip / call / apply / fork / clone / merge —
+     * byte-indistinguishable from `new` until the deferred
+     * mechanism-kind revision). `constructorText` defaults to the callee
+     * expression text so the site stays readable without new fields;
+     * call/apply override it with the Ctor argument text.
+     */
+    private recordConstructionUsage;
+    /**
+     * Resolve the type a construction-chain tip call constructs:
+     * `new R(...).A(...)` constructs R.A; `await new R(...).A(...).B(...)`
+     * constructs R.A.B. The receiver is the nested chain (NewExpression
+     * base, then tip calls); exact fullPath first, and only when the root
+     * itself is unknown does the prop-name fallback law apply (so plain
+     * method calls on fresh instances never record a construction).
+     */
+    private resolveChainTipTypePath;
+    /**
+     * True when `expr` denotes a construction function imported from
+     * 'mnemonica' — the named-import form (`import { call } from
+     * 'mnemonica'`, aliases included) or a member of a tracked
+     * module-object alias (`mnemonica.call`). Userland call/apply/bind
+     * functions never match.
+     */
+    private isMnemonicaConstructionFn;
+    /**
+     * mnemonica call/apply(entity, Ctor, ...) / bind(entity, Ctor):
+     * resolve the Ctor argument (arg 1) to a graph fullPath through the
+     * same tiers as the `new` branch (value scope for identifiers,
+     * chain resolution for property accesses).
+     */
+    private resolveConstructionFnTypePath;
+    /**
+     * instance.fork(...) / instance.clone(...) on a tracked variable —
+     * runtime returns `this`, so the result carries the source type.
+     */
+    private resolveForkLikeTypePath;
+    /**
+     * Free utils forms: utils.merge(a, b, ...) (also the direct named
+     * import `merge(a, b)`) and the curried utils.fork(instance)(...).
+     * The result binds to arg 0's type — runtime returns a's lineage over
+     * b's context; a's fullPath is the honest approximation within the
+     * output contract (documented in README).
+     */
+    private resolveUtilsFnTypePath;
     /**
         * Process a @decorate() decorator
      */
@@ -666,6 +728,24 @@ export declare class MnemonicaAnalyzer {
      * undefined.
      */
     private resolveParameterAnnotationTypePath;
+    /**
+     * F20 cheap tier: the wrap argument is an identifier declared with an
+     * EXPLICIT type annotation (`let updateCommitted: LedgerUpdate;`
+     * assigned later in a flow the analyzer does not track). The
+     * annotation resolves through the same graph tiers as parameter
+     * annotations. Deliberately NOT flow-sensitive: an UNANNOTATED
+     * let/var still buckets unknown, and a const with an analyzable
+     * initializer stays the recommended discipline. The lookup walks the
+     * enclosing statement containers innermost-out, so a shadowing inner
+     * declaration wins.
+     */
+    private resolveVariableAnnotationTypePath;
+    /**
+     * First variable declaration carrying an explicit bare-identifier type
+     * annotation for `name` in the given statement list, resolved through
+     * the graph law.
+     */
+    private findAnnotatedVariableTypePath;
     /**
      * Resolve a wrap() argument to its function node without the type
      * checker: direct function expressions/arrows, or same-file bindings

@@ -169,6 +169,8 @@ declare module 'mnemonica' {
 
 **Recommended for new projects.** Explicit imports, better tree-shaking, no global namespace pollution.
 
+**Instance-type inheritance.** Nested instance types flatten the WHOLE ancestor chain: each nested type is `ProtoFlat<ParentInstance, Self>` (mnemonica's `ProtoFlat` keeps every parent key except the ones `Self` overrides), and the parent instance type is itself a `ProtoFlat` over its own parent — so the ROOT's own constructor-arg fields (`uuid` in `PaymentRoot`) are directly present on every descendant instance type, at any depth, alongside intermediate ancestors' fields. If a root field appears missing on a nested type, the usual cause is a stale `.tactica` — regenerate; the composition itself is transitive by construction.
+
 ### Legacy global-augmentation mode (`--module-augmentation`)
 
 Emits one `.tactica/index.d.ts` whose contents live inside `declare global { … }`. Reference it from your code with:
@@ -222,7 +224,9 @@ const AdminType = UserType.define('AdminType', function (this: { role: string })
 });
 ```
 
-Chained calls (`define('A').define('B')`) and nested calls via variable references (`const A = define('A', …); A.define('B', …)`) are both supported.
+Chained calls (`define('A').define('B')`) and nested calls via variable references (`const A = define('A', …); A.define('B', …)`) are both supported. A const holding a multi-hop initializer binds the LAST hop — `define()` returns the defined type's constructor, so `const Branch = Root.define('A', …).define('B', …)` makes `Branch` denote `Root.A.B` and `Branch.define('C', …)` nests C under B, exactly as the runtime does.
+
+**Call-site ergonomics (recommended pattern):** annotate the root constructor's `this` with the generated instance type alias — `define('Widget', function (this: TWidgetInstance, data: …) {…})`, with `TWidgetInstance` imported from the generated types file. The common form is an intersection — `type TWidgetInstance = TWidgetArgs & TGeneratedRootInstance`. Tactica tolerates the self-reference: the annotation is never emitted into the generated type (so no circularity can form), and it is **ergonomic-only** — its members are never expanded, so the root's fields must be carried by the constructor body: `Object.assign(this, args)` (the identifier form extracts every field from the named args type) or explicit `this.x = …` assignments. Property extraction falls back to the body / data parameter whenever the alias is not analyzable (it lives in the excluded `.tactica/`). With the generated `types.ts`/`registry.ts` in place, `new (lookup('Widget'))(args)` — and `new Widget(args)` where the const merges with the generated type — is directly assignable to the instance type at call sites, zero casts. Regenerate `.tactica` after adding the annotation.
 
 ### `lazy()` definitions
 
@@ -236,6 +240,18 @@ const AdminType = UserType.lazy(() => class AdminType {
 ```
 
 All forms are recognized: free `lazy('Name', getter)`, method `Type.lazy(...)`, and chained `define('A').lazy('B', getter)`. The getter is followed, and the returned constructor is analyzed like a direct `define()` handler — properties and constructor parameters are extracted and emitted in `types.ts` / `registry.ts` like any other type.
+
+### Construction shapes beyond plain `new`
+
+These usage shapes are recognized and attributed within the existing output contract (the `instantiation` usage kind and value-scope bindings — no new output fields):
+
+- **Chain construction** — `new Root(...).Child(...)` and the single-await form `await new Root(...).A(...).B(...)`: the chain-tip call records an `instantiation` of the tip type (`Root.A.B`), supplying the creation-graph anchor, and the result variable binds to the TIP's type, not the root's. `await` is transparent everywhere on this page — `await call(...)`, `await apply(...)`, `await entry.fork(...)`, and async `bind` recognition all work identically.
+- **`instance.fork(...)` / `instance.clone()`** (call forms) and **`instance.clone`** (the property form — core types it `readonly clone: this`) — runtime returns `this`, so the result variable binds to the source instance's type. Fork re-runs construction (hooks fire, a distinct instance on a distinct line), so these record an **`instantiation` usage** at the site — byte-indistinguishable from `new` until the deferred mechanism-kind revision; the result binding and the generic `methodCall`/`propertyRead` flow entries stay.
+- **`utils.merge(a, b, ...)`** (also the direct named import, and the curried `utils.fork(instance)(...)`) — the result binds to **arg 0's type**: the runtime answer is a's lineage over b's context, and a's fullPath is the honest approximation within the contract. Merge is `fork(a)` over b's context, so it records an `instantiation` for a's type too; the curried `utils.fork` records at the invocation site, and the inner `utils.fork(instance)` binding line records its own entry — one per distinct source line.
+- **`call(entity, Ctor, ...)` / `apply(entity, Ctor, args)`** — the mnemonica construction exports (import-aware: only actual `'mnemonica'` imports or members of a tracked module-object alias match; userland `call`/`apply` never do). The Ctor argument (arg 1) records an `instantiation`, and the result variable binds to the Ctor's type (runtime `InstanceResult<Merge<E, T>>` approximated by T). **Decorated classes resolve as the Ctor** through the same graph tiers — `@decorate() class C` is a known type, so `call(parent, C)` records and binds; an undecorated plain class has no graph entry, so the call binds nothing and records no usage (never a bare name). The free-call `decorate(Class)` form is not tracked (tactica recognizes the `@decorate` decorator syntax only).
+- **`bind(entity, Ctor)`** — records no usage (it constructs nothing); the bound variable binds to the Ctor's type. Invoking the bound function later (`f(...)`, including `await f(...)`) is not followed.
+
+Two boundaries stay deliberate: bindings surface only for references lexically AFTER the binding statement (a binding made inside a constructor body is not yet visible to that same handler's property extraction), and the mechanism distinction (`new` vs fork vs call) is not carried in the outputs — fork/clone/merge record as plain `instantiation` entries, byte-indistinguishable from `new`, until the deferred mechanism-kind contract revision lands. Consumers counting constructions should expect fork sites among them.
 
 ### Builder pattern on the imported module object
 
@@ -467,7 +483,8 @@ The analyzer infers property types from constructor bodies and class members. Su
 | `this.x = data.field` where `data: SomeNamedType` (alias/interface/class) | type of the field from the resolved declaration — import-aware, inherited members included; a bare `this.x = data` keeps the full expanded shape |
 | `this.x = data.field \|\| []` | type of the fallback expression |
 | `this.x = data.field ? a : b` | type of the truthy branch |
-| `Object.assign(this, data)` | all fields of `data`'s type annotation |
+| `Object.assign(this, data)` | all fields of `data`'s type annotation — inline literal or named alias/interface/class, resolved import-aware (F14 machinery) |
+| `this.x = boundVar` where `boundVar` holds a construction result (`new`/`lookup()`/chain/fork/merge/call) | the bound type's instance type (value-scope binding) — bindings surface lexically AFTER the binding statement; within the same constructor body a fresh binding is not yet visible to the handler's own extraction |
 | async / sync constructor functions | same rules |
 
 An existing annotation always beats a weaker inference: `unknown` (and `unknown`-bearing guesses like `Array<unknown>`) never overwrites a known type — `Record<string, unknown>` IS a known type — and an overwrite never drops an optionality modifier.
@@ -787,7 +804,7 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
 - `scopeId` — the scopeId of the scope holding the wrap call site (fallback join).
 - `wrapsTypePath` — the mnemonica fullPath of the instance argument, resolved through the scope-variable chain (innermost binding wins; an untyped local shadows a typed outer one rather than being guessed).
 - `via` — the location of the enclosing wrap site when the call is nested inside another wrapped body (or returns a function): the wrappers-graph generation chain is built from it.
-- `scope` — the enclosing mnemonica type path. Lexical scoping (the owning `define()`/`lazy()` handler or `@decorate()`-ed class) wins; a wrap site outside any handler — the fire-and-forget-wrapper shape — is attributed through its instance/context argument (a tracked assignment like `const holder = new Holder(…)`, or the enclosing function's parameter annotation resolved through the graph law), and nested sites (function-valued returns, lexically nested wraps) inherit the causing wrap site's scope down the `via` chain. Sites attributable to nothing stay under the `unknown` key with `scope` absent.
+- `scope` — the enclosing mnemonica type path. Lexical scoping (the owning `define()`/`lazy()` handler or `@decorate()`-ed class) wins; a wrap site outside any handler — the fire-and-forget-wrapper shape — is attributed through its instance/context argument (a tracked assignment like `const holder = new Holder(…)`, the enclosing function's parameter annotation resolved through the graph law, or a `let`/`var`/`const` declaration with an EXPLICIT type annotation like `let updateCommitted: LedgerUpdate;` — declaration-site typing only, no flow analysis), and nested sites (function-valued returns, lexically nested wraps) inherit the causing wrap site's scope down the `via` chain. An UNANNOTATED `let`/`var` still buckets under `unknown` (the analyzer does not track assignments flow-sensitively) — a `const` with an analyzable initializer stays the recommended discipline. Sites attributable to nothing stay under the `unknown` key with `scope` absent.
 
 ## Instrumentation Points
 
@@ -942,7 +959,7 @@ Mnemonica accepts the `exposeInstanceMethods` option at runtime, but tactica's `
 
 The analyzer does not use `ts.Program.getTypeChecker()` for resolution. Plain TypeScript references in constructor signatures resolve through the importing file's import statements first, then its local declarations, and only then a unique same-named declaration across the scanned files — so a reference whose name is genuinely absent (or lives behind unresolvable specifiers) resolves to `unknown`, while a name several of your own files declare with no import to disambiguate fails hard (see above). References to mnemonica graph types follow the path-aware lookup law described above and fail hard instead of degrading to `unknown`.
 
-Two expansion boundaries stay name-based and deliberate: **heritage** — `extends` chains are walked through the same import-aware machinery (depth-capped, cycle-guarded), but bases that resolve to an external/node_modules declaration or to a non-identifier expression (mixin calls like `extends mixin(X)`) are not followed — their inherited fields simply stay absent, same as before the walk existed. And **`typeof` fields** — only module-level const arrays with statically visible literal elements expand to the literal union (cross-file only when the const is imported by the declaring file); every other `typeof` source degrades the field to `unknown`.
+Two expansion boundaries stay name-based and deliberate: **heritage** — `extends` chains are walked through the same import-aware machinery (depth-capped, cycle-guarded), but bases that resolve to an external/node_modules declaration or to a non-identifier expression (mixin calls like `extends mixin(X)`) are not followed — their inherited fields simply stay absent, same as before the walk existed. And **`typeof` fields** — only module-level const arrays with statically visible literal elements expand to the literal union, with the index suffix consumed entirely (`typeof statusList[number]` emits exactly `'active' | 'not_active' | 'hold'`, never `'hold'[number]`). Any assertion spelling is tracked (`[…] as const`, `satisfies`, `<const>[…]`), and signed numeric literals keep their sign (`-1 | 1`). Cross-file only when the const is imported by the declaring file. Every other `typeof` source — and any indexed-access target that fails to resolve — degrades the whole expression to `unknown`: an index suffix glued onto a fallback type (`unknown[number]`) is invalid TypeScript and is never emitted.
 
 ### Same-file interface merging is last-wins
 

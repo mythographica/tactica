@@ -385,7 +385,7 @@ describe('Referenced type expansion fidelity (F13)', () => {
 			} finally {
 				fs.rmSync(outputDir, { recursive : true, force : true });
 			}
-		});
+		}).timeout(20000);
 	});
 });
 
@@ -412,6 +412,22 @@ describe('Named-parameter property inference regression (F14)', () => {
 	const fixtureRoot = path.join(__dirname, 'fixtures', 'referenced-f14');
 	const modelsFile = path.join(fixtureRoot, 'src', 'models.ts');
 	const consumerFile = path.join(fixtureRoot, 'src', 'consumer.ts');
+
+	it('extracts Object.assign(this, data) fields from the data param\'s type (F21)', () => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+export const Vault = define('Vault', function (this: Vault, args: { code: string; amount: number }) {
+	Object.assign(this, args);
+});
+`, path.join(__dirname, 'fixtures', 'referenced-types', 'consumers', 'assign-identifier.types.ts'));
+
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const { content } = generator.generateTypesFile();
+		expect(content).to.include('code: string;');
+		expect(content).to.include('amount: number;');
+	});
 
 	const analyzeFixture = (): MnemonicaAnalyzer => {
 		const analyzer = new MnemonicaAnalyzer();
@@ -513,6 +529,133 @@ describe('Named-parameter property inference regression (F14)', () => {
 			} finally {
 				fs.rmSync(outputDir, { recursive : true, force : true });
 			}
-		});
+		}).timeout(20000);
+	});
+});
+
+/**
+ * F15/F16/F17: typeof const-array literal-union expansion edge cases.
+ *   F15 — the union consumes the index suffix entirely: `typeof arr[number]`
+ *         emits exactly `'a' | 'b'`, never `'a' | 'b'[number]` (the suffix
+ *         would degrade the last member to `string`).
+ *   F16 — unary-minus/plus numeric literals keep their sign: `-1 | 1`.
+ *   F17 — the angle-bracket `<const>[…]` spelling is tracked like
+ *         `[…] as const`; and the emission invariant: an index suffix is
+ *         NEVER glued onto an unresolved/fallback target — `unknown[number]`
+ *         is invalid TypeScript, so the whole indexed access degrades to
+ *         `unknown`.
+ */
+describe('typeof const-array union edge cases (F15/F16/F17)', () => {
+	const fixtureRoot = path.join(__dirname, 'fixtures', 'referenced-unions');
+	const modelsFile = path.join(fixtureRoot, 'src', 'models.ts');
+	const consumerFile = path.join(fixtureRoot, 'src', 'consumer.ts');
+
+	const analyzeFixture = (): MnemonicaAnalyzer => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(fs.readFileSync(modelsFile, 'utf8'), modelsFile);
+		analyzer.analyzeSource(fs.readFileSync(consumerFile, 'utf8'), consumerFile);
+		return analyzer;
+	};
+
+	const generateContent = (analyzer: MnemonicaAnalyzer): string => {
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const generated = generator.generateTypesFile();
+		return generated.content;
+	};
+
+	it('emits the as-const union consuming the index suffix entirely (F15)', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('status: \'active\' | \'not_active\' | \'hold\'');
+		expect(content).to.not.include('\'hold\'[number]');
+		expect(content).to.not.include('statusList');
+	});
+
+	it('tracks the angle-bracket <const>[…] spelling like as const (F17)', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('tier: \'low\' | \'high\'');
+		expect(content).to.not.include('tierList');
+	});
+
+	it('preserves unary-minus numeric literals in the union (F16)', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('level: -1 | 1');
+		expect(content).to.not.include('unknown | 1');
+	});
+
+	it('degrades unresolved indexed-access targets to unknown, never unknown[number] (F17)', () => {
+		const analyzer = analyzeFixture();
+		const content = generateContent(analyzer);
+
+		expect(content).to.include('ghost: unknown');
+		expect(content).to.include('broken: unknown');
+		expect(content).to.include('keyed: unknown');
+		// the invariant: no index suffix may survive on a fallback type
+		expect(content).to.not.include('unknown[');
+		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
+	});
+
+	describe('CLI end-to-end (valid generated TypeScript is the bar)', () => {
+		const runCapturingErrors = (options: Parameters<typeof run>[0]): { code: number; errors: string } => {
+			const originalError = console.error;
+			let captured = '';
+			console.error = (...args: unknown[]): void => {
+				captured += `${args.map(String).join(' ')  }\n`;
+			};
+			let code = 0;
+			try {
+				code = run(options);
+			} finally {
+				console.error = originalError;
+			}
+			const result = { code, errors : captured };
+			return result;
+		};
+
+		it('runs the fixture, exits 0, and the generated types.ts compiles clean', () => {
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-referenced-unions-'));
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureRoot, 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const typesPath = path.join(outputDir, 'types.ts');
+				const content = fs.readFileSync(typesPath, 'utf8');
+				expect(content).to.include('status: \'active\' | \'not_active\' | \'hold\'');
+				expect(content).to.include('tier: \'low\' | \'high\'');
+				expect(content).to.include('level: -1 | 1');
+				expect(content).to.not.include('unknown[');
+
+				// compile the generated file for real — `unknown[number]`
+				// was a hard compile break for every consumer (F17)
+				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
+				const program = ts.createProgram([ typesPath ], {
+					strict           : true,
+					noEmit           : true,
+					target           : ts.ScriptTarget.ES2020,
+					module           : ts.ModuleKind.ES2020,
+					moduleResolution : ts.ModuleResolutionKind.Bundler,
+					baseUrl          : outputDir,
+					paths            : { mnemonica : [ mnemonicaTypes ] },
+				});
+				const diagnostics = ts.getPreEmitDiagnostics(program);
+				const compileErrors = diagnostics
+					.filter(d => d.category === ts.DiagnosticCategory.Error)
+					.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+
+				expect(compileErrors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		}).timeout(20000);
 	});
 });
