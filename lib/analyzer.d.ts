@@ -146,6 +146,28 @@ export declare class MnemonicaAnalyzer {
      */
     private literalTypesOfArray;
     /**
+     * The literal type of one array element: a plain literal (optionally
+     * wrapped in `as const` / `satisfies` / assertion expressions) —
+     * string, numeric (unary `-`/`+` preserved), boolean, or null.
+     * Anything else yields undefined.
+     */
+    private literalTypeOfExpression;
+    /**
+     * F22: the const-assertion check shared by the value-level and
+     * declaration-level paths — `expr as const` and `<const>expr` parse
+     * identically (a TypeReferenceNode named 'const'). General `<T>expr`
+     * assertions never match.
+     */
+    private isConstAssertionType;
+    /**
+     * The array literal behind a value-level element access: inline
+     * (`(<const>[…])[0]`, `([…] as const)[1]`), parenthesized, or a
+     * tracked module const array (`const x = <const>[…]` / `x[0]`, F17
+     * tracking). Only const assertions are unwrapped — general
+     * assertions stay unknown (F22 scope boundary).
+     */
+    private constArrayLiteralOf;
+    /**
      * Emit-type for `typeof name` when `name` is a tracked const array: the
      * union of its element literal types (`'active' | 'closed'`). Every
      * other typeof source — non-array consts, functions, classes, names not

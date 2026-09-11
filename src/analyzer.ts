@@ -713,44 +713,98 @@ export class MnemonicaAnalyzer {
 			if (ts.isSpreadElement(element)) {
 				return undefined;
 			}
-			let expr: ts.Expression = element;
-			while (
-				ts.isAsExpression(expr) ||
-				ts.isSatisfiesExpression(expr) ||
-				ts.isTypeAssertionExpression(expr)
-			) {
-				expr = expr.expression;
-			}
-			if (ts.isStringLiteral(expr) || ts.isNoSubstitutionTemplateLiteral(expr)) {
-				literals.push(`'${expr.text}'`);
-			} else if (ts.isPrefixUnaryExpression(expr) && ts.isNumericLiteral(expr.operand)) {
-				// signed numeric literals (`-1 | 1`): unary minus is part
-				// of the literal type; unary plus is the bare literal in
-				// type space (`+1` is written `1`)
-				if (expr.operator === ts.SyntaxKind.MinusToken) {
-					literals.push(`-${expr.operand.text}`);
-				} else if (expr.operator === ts.SyntaxKind.PlusToken) {
-					literals.push(expr.operand.text);
-				} else {
-					return undefined;
-				}
-			} else if (ts.isNumericLiteral(expr)) {
-				literals.push(expr.text);
-			} else if (expr.kind === ts.SyntaxKind.TrueKeyword) {
-				literals.push('true');
-			} else if (expr.kind === ts.SyntaxKind.FalseKeyword) {
-				literals.push('false');
-			} else if (expr.kind === ts.SyntaxKind.NullKeyword) {
-				literals.push('null');
-			} else {
+			const literal = this.literalTypeOfExpression(element);
+			if (literal === undefined) {
 				return undefined;
 			}
+			literals.push(literal);
 		}
 		if (literals.length === 0) {
 			return undefined;
 		}
 		const result = literals;
 		return result;
+	}
+
+	/**
+	 * The literal type of one array element: a plain literal (optionally
+	 * wrapped in `as const` / `satisfies` / assertion expressions) —
+	 * string, numeric (unary `-`/`+` preserved), boolean, or null.
+	 * Anything else yields undefined.
+	 */
+	private literalTypeOfExpression (expr: ts.Expression): string | undefined {
+		let inner: ts.Expression = expr;
+		while (ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner) || ts.isTypeAssertionExpression(inner)) {
+			inner = inner.expression;
+		}
+		if (ts.isStringLiteral(inner) || ts.isNoSubstitutionTemplateLiteral(inner)) {
+			const literal = `'${inner.text}'`;
+			return literal;
+		}
+		if (ts.isPrefixUnaryExpression(inner) && ts.isNumericLiteral(inner.operand)) {
+			if (inner.operator === ts.SyntaxKind.MinusToken) {
+				const negative = `-${inner.operand.text}`;
+				return negative;
+			}
+			if (inner.operator === ts.SyntaxKind.PlusToken) {
+				return inner.operand.text;
+			}
+			return undefined;
+		}
+		if (ts.isNumericLiteral(inner)) {
+			return inner.text;
+		}
+		if (inner.kind === ts.SyntaxKind.TrueKeyword) {
+			return 'true';
+		}
+		if (inner.kind === ts.SyntaxKind.FalseKeyword) {
+			return 'false';
+		}
+		if (inner.kind === ts.SyntaxKind.NullKeyword) {
+			return 'null';
+		}
+		return undefined;
+	}
+
+	/**
+	 * F22: the const-assertion check shared by the value-level and
+	 * declaration-level paths — `expr as const` and `<const>expr` parse
+	 * identically (a TypeReferenceNode named 'const'). General `<T>expr`
+	 * assertions never match.
+	 */
+	private isConstAssertionType (type: ts.TypeNode): boolean {
+		const constAssertion = ts.isTypeReferenceNode(type) &&
+			ts.isIdentifier(type.typeName) &&
+			type.typeName.text === 'const';
+		return constAssertion;
+	}
+
+	/**
+	 * The array literal behind a value-level element access: inline
+	 * (`(<const>[…])[0]`, `([…] as const)[1]`), parenthesized, or a
+	 * tracked module const array (`const x = <const>[…]` / `x[0]`, F17
+	 * tracking). Only const assertions are unwrapped — general
+	 * assertions stay unknown (F22 scope boundary).
+	 */
+	private constArrayLiteralOf (expr: ts.Expression): ts.ArrayLiteralExpression | undefined {
+		let current: ts.Expression = expr;
+		while (ts.isParenthesizedExpression(current)) {
+			current = current.expression;
+		}
+		if (ts.isArrayLiteralExpression(current)) {
+			return current;
+		}
+		if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) &&
+			this.isConstAssertionType(current.type)) {
+			const inner = current.expression;
+			const literal = ts.isArrayLiteralExpression(inner) ? inner : undefined;
+			return literal;
+		}
+		if (ts.isIdentifier(current)) {
+			const tracked = this.referencedTypeConstArrays.get(this.currentReferencedTypeFile)?.get(current.text);
+			return tracked;
+		}
+		return undefined;
 	}
 
 	/**
@@ -4287,6 +4341,30 @@ export class MnemonicaAnalyzer {
 				}
 			}
 			return 'unknown';
+		}
+		case ts.SyntaxKind.ElementAccessExpression: {
+			// F22: value-level element access over a const-asserted
+			// literal array — `(<const>[…])[0]`, `([…] as const)[1]`, or
+			// a tracked module const (`const x = <const>[…]`; `x[0]`) —
+			// infers the element's literal type, the value-level twin of
+			// the typeof-path union. Non-numeric indexes, non-literal
+			// elements, and general assertions stay `unknown`.
+			const elementAccess = initializer as ts.ElementAccessExpression;
+			const argument = elementAccess.argumentExpression;
+			if (!argument || !ts.isNumericLiteral(argument)) {
+				return 'unknown';
+			}
+			const arrayLiteral = this.constArrayLiteralOf(elementAccess.expression);
+			if (!arrayLiteral) {
+				return 'unknown';
+			}
+			const element = arrayLiteral.elements[ parseInt(argument.text, 10) ];
+			if (!element || ts.isSpreadElement(element)) {
+				return 'unknown';
+			}
+			const literal = this.literalTypeOfExpression(element);
+			const elementResult = literal ?? 'unknown';
+			return elementResult;
 		}
 		case ts.SyntaxKind.CallExpression: {
 			// Handle function calls like Date.now(), parseInt(), etc.

@@ -600,6 +600,35 @@ describe('typeof const-array union edge cases (F15/F16/F17)', () => {
 		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
 	});
 
+	it('infers value-level element access over const-asserted arrays — <const> identical to as const (F22)', () => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const legacyList = <const>[ 'active', 'not_active', 'hold' ];
+const modernList = [ 'low', 'high' ] as const;
+
+export const Gauge = define('Gauge', function (this: Gauge, data: { note: string }) {
+	this.note = data.note;
+	this.status = (<const>[ 'active', 'not_active', 'hold' ])[0];
+	this.asConstTwin = ([ 'active', 'not_active', 'hold' ] as const)[1];
+	this.legacyFirst = legacyList[0];
+	this.modernSecond = modernList[1];
+	// general assertions are NOT const assertions — stay unknown (scope boundary)
+	this.generalAssertion = (<string>[ 'x' ])[0];
+});
+`, path.join(fixtureRoot, 'src', 'gauge-inline.ts'));
+
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const { content } = generator.generateTypesFile();
+		expect(content).to.include('status: \'active\'');
+		expect(content).to.include('asConstTwin: \'not_active\'');
+		expect(content).to.include('legacyFirst: \'active\'');
+		expect(content).to.include('modernSecond: \'high\'');
+		expect(content).to.include('generalAssertion: unknown');
+		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
+	});
+
 	describe('CLI end-to-end (valid generated TypeScript is the bar)', () => {
 		const runCapturingErrors = (options: Parameters<typeof run>[0]): { code: number; errors: string } => {
 			const originalError = console.error;
