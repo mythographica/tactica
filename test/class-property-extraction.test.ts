@@ -157,6 +157,152 @@ describe('Class Property Extraction', () => {
 		});
 	});
 
+	describe('method return annotations with non-graph outer generics (0.2.0 emission restoration)', () => {
+		const generateContent = (): string => {
+			const { TypesGenerator } = require('../src/generator') as typeof import('../src/generator');
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const { content } = generator.generateTypesFile();
+			return content;
+		};
+
+		it('keeps ambient outer generics verbatim with inner graph aliases resolved', () => {
+			analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const EDSRoot = define('EDSRoot', function (this: EDSRoot) {
+	this.kind = 'root';
+});
+EDSRoot.define('SomeEntry', function (this: SomeEntry, data: { tag: string }) {
+	this.tag = data.tag;
+});
+
+@decorate(EDSRoot)
+class LogIndex {
+	entries (): MapIterator<[string, SomeEntry[]]> {
+		return undefined;
+	}
+}
+`, 'log-index.ts');
+
+			const content = generateContent();
+			expect(content).to.include('entries: () => MapIterator<[string, Array<EDSRoot_SomeEntry>]>');
+		});
+
+		it('resolves a bare graph-type return to the generated alias', () => {
+			analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const EDSRoot = define('EDSRoot', function (this: EDSRoot) {
+	this.kind = 'root';
+});
+EDSRoot.define('SomeEntry', function (this: SomeEntry, data: { tag: string }) {
+	this.tag = data.tag;
+});
+
+@decorate(EDSRoot)
+class LogIndex {
+	first (): SomeEntry {
+		return undefined;
+	}
+}
+`, 'log-index.ts');
+
+			const content = generateContent();
+			expect(content).to.include('first: () => EDSRoot_SomeEntry');
+		});
+
+		it('drops the InstanceType wrapper through local aliases — InstanceType<typeof X> → generated alias (0.2.0 law)', () => {
+			analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const EntryRoot = define('EntryRoot', function (this: EntryRoot) {
+	this.kind = 'root';
+});
+EntryRoot.define('LogEntry', function (this: LogEntry, data: { tag: string }) {
+	this.tag = data.tag;
+});
+
+export type LogEntryInstance = InstanceType<typeof LogEntry>;
+
+@decorate(EntryRoot)
+class LogIndex {
+	get (name: string): LogEntryInstance | undefined {
+		return undefined;
+	}
+	all (): Array<LogEntryInstance> {
+		return undefined;
+	}
+}
+`, 'log-index.ts');
+
+			const content = generateContent();
+			// wrapper dropped — the generated alias already IS the instance type
+			expect(content).to.include('get: (name: string) => EntryRoot_LogEntry | undefined;');
+			expect(content).to.include('all: () => Array<EntryRoot_LogEntry>;');
+			expect(content).to.not.include('InstanceType');
+		});
+
+		it('degrades the WHOLE InstanceType expression when the query does not resolve — never emits InstanceType<unknown> (invalid TS)', () => {
+			analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const EntryRoot = define('EntryRoot', function (this: EntryRoot) {
+	this.kind = 'root';
+});
+
+export type GhostInstance = InstanceType<typeof NotAGraphType>;
+
+@decorate(EntryRoot)
+class LogIndex {
+	ghost (): GhostInstance {
+		return undefined;
+	}
+}
+`, 'log-index.ts');
+
+			const content = generateContent();
+			expect(content).to.include('ghost: () => unknown;');
+			expect(content).to.not.include('InstanceType<unknown>');
+			expect(content).to.not.include('InstanceType');
+		});
+
+		it('never emits a project-local non-graph name verbatim — ambiguous declarations degrade to unknown (fatal per the ambiguity law)', () => {
+			analyzer.analyzeSource(`
+export interface LocalBox<T> {
+	a: T;
+}
+`, 'box-a.ts');
+			analyzer.analyzeSource(`
+export interface LocalBox<T> {
+	b: T;
+}
+`, 'box-b.ts');
+			analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const EDSRoot = define('EDSRoot', function (this: EDSRoot) {
+	this.kind = 'root';
+});
+EDSRoot.define('SomeEntry', function (this: SomeEntry, data: { tag: string }) {
+	this.tag = data.tag;
+});
+
+@decorate(EDSRoot)
+class LogIndex {
+	boxed (): LocalBox<SomeEntry> {
+		return undefined;
+	}
+}
+`, 'log-index.ts');
+
+			const content = generateContent();
+			expect(content).to.include('boxed: () => unknown');
+			expect(content).to.not.include('LocalBox');
+			// the ambiguity itself is the hard-fail class — surfaced, not hidden
+			expect(analyzer.getResolutionErrors().length).to.be.greaterThan(0);
+		});
+	});
+
 	describe('UsageEntry pattern from Usages.ts', () => {
 		it('should extract properties from UsageEntry using Object.defineProperties pattern', () => {
 			const source = `

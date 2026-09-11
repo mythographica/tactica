@@ -777,6 +777,14 @@ export declare class MnemonicaAnalyzer {
      */
     private resolveWrapInstanceTypePath;
     /**
+     * Emission-law helper (0.2.0 restoration): is `name` declared in any
+     * ANALYZED PROJECT file? External/ambient files (.d.ts, node_modules)
+     * do not count. A name with no project declaration is an ambient/lib
+     * construct — safe to emit verbatim into the self-contained types.ts;
+     * a project-local name is not (no imports in the generated file).
+     */
+    private isProjectDeclaredTypeName;
+    /**
      * F24: resolve a bare-identifier annotation to a graph fullPath. The
      * annotation may name the type directly (`LedgerUpdate`) or carry
      * the GENERATED instance alias of a nested type

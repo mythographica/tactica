@@ -1297,6 +1297,39 @@ export class MnemonicaAnalyzer {
 			return unknownResult;
 		}
 
+		// InstanceType<typeof X> law (0.2.0 behavior, restored): the
+		// generated alias already IS the instance type — resolve X through
+		// the graph tiers and drop the wrapper. Must run BEFORE the graph
+		// resolution: 'InstanceType' is an ambient global, never a graph
+		// type (the old special case below sat inside the graph-unique
+		// branch and was dead code). When X does not resolve, the WHOLE
+		// expression degrades to `unknown` — never emit
+		// `InstanceType<unknown>`: invalid TS (TS2344, 'unknown' does not
+		// satisfy the constructor constraint). Reached directly or through
+		// a local alias (`XInstance = InstanceType<typeof X>`).
+		if (typeName === 'InstanceType' && typeArgs && typeArgs.length === 1) {
+			const [ instanceArg ] = typeArgs;
+			if (instanceArg && ts.isTypeQueryNode(instanceArg) && ts.isIdentifier(instanceArg.exprName)) {
+				const queryResult = this.resolveGraphTypeName(instanceArg.exprName.text);
+				if (queryResult.status === 'unique') {
+					const aliasResult = queryResult.node.fullPath.replace(/\./g, '_');
+					return aliasResult;
+				}
+				if (queryResult.status === 'ambiguous') {
+					this.recordGraphReferenceError(instanceArg.exprName.text, instanceArg, queryResult);
+				}
+				const degradedResult = 'unknown';
+				return degradedResult;
+			}
+			const inferredArg = this.inferType(instanceArg);
+			if (inferredArg === 'unknown') {
+				const degradedWrapper = 'unknown';
+				return degradedWrapper;
+			}
+			const wrappedResult = `InstanceType<${inferredArg}>`;
+			return wrappedResult;
+		}
+
 		// Mnemonica-graph identity law: path-aware resolution (value scope,
 		// imports, nearest-chain, root, program-wide). Ambiguity between
 		// real graph types is a hard failure; a name no graph type carries
@@ -1339,8 +1372,19 @@ export class MnemonicaAnalyzer {
 				const genericResult = `${typeName}<${typeArgs.map(a => this.inferType(a)).join(', ')}>`;
 				return genericResult;
 			}
-			// Generic reference to a non-global, non-graph type cannot be
-			// emitted bare into the generated file
+			// Emission restoration (0.2.0 behavior): a non-graph outer
+			// generic that is NOT declared in any analyzed project file is
+			// an ambient/lib construct (MapIterator, lib helpers) — it
+			// resolves in every consumer compilation without an import, so
+			// emit it VERBATIM with inner graph aliases resolved. A name
+			// declared in project files stays unknown: the self-contained
+			// types.ts can carry neither the bare name nor an import.
+			if (!this.isProjectDeclaredTypeName(typeName)) {
+				const verbatimResult = `${typeName}<${typeArgs.map(a => this.inferType(a)).join(', ')}>`;
+				return verbatimResult;
+			}
+			// Generic reference to a non-global, non-graph PROJECT-LOCAL
+			// type cannot be emitted bare into the generated file
 			if (refNode) {
 				this.recordPlainTypeReferenceSite(typeName, refNode);
 			}
@@ -5082,6 +5126,26 @@ export class MnemonicaAnalyzer {
 			}
 		}
 		return undefined;
+	}
+
+	/**
+	 * Emission-law helper (0.2.0 restoration): is `name` declared in any
+	 * ANALYZED PROJECT file? External/ambient files (.d.ts, node_modules)
+	 * do not count. A name with no project declaration is an ambient/lib
+	 * construct — safe to emit verbatim into the self-contained types.ts;
+	 * a project-local name is not (no imports in the generated file).
+	 */
+	private isProjectDeclaredTypeName (name: string): boolean {
+		for (const [ file, decls ] of this.referencedTypeDecls) {
+			if (this.isExternalDeclFile(file)) {
+				continue;
+			}
+			if (decls.has(name)) {
+				return true;
+			}
+		}
+		const result = false;
+		return result;
 	}
 
 	/**
