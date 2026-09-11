@@ -629,6 +629,36 @@ export const Gauge = define('Gauge', function (this: Gauge, data: { note: string
 		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
 	});
 
+	it('consumes the index suffix on parenthesized typeof objects — (typeof list)[number] (F23)', () => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+
+const statusList = <const>[ 'active', 'not_active', 'hold' ];
+const phaseList = [ 'alpha', 'beta' ] as const;
+
+interface GaugeShape {
+	note: string;
+	status: (typeof statusList)[number];
+	phase: (typeof phaseList)[number];
+}
+
+export const GaugeParens = define('GaugeParens', function (this: GaugeParens, data: GaugeShape) {
+	this.note = data.note;
+	this.status = data.status;
+	this.phase = data.phase;
+});
+`, path.join(fixtureRoot, 'src', 'gauge-parens-inline.ts'));
+
+		const generator = new TypesGenerator(analyzer.getGraph());
+		const { content } = generator.generateTypesFile();
+		expect(content).to.include('status: \'active\' | \'not_active\' | \'hold\'');
+		expect(content).to.include('phase: \'alpha\' | \'beta\'');
+		expect(content).to.not.include('\'hold\'[number]');
+		expect(content).to.not.include('\'beta\'[number]');
+		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
+	});
+
 	describe('CLI end-to-end (valid generated TypeScript is the bar)', () => {
 		const runCapturingErrors = (options: Parameters<typeof run>[0]): { code: number; errors: string } => {
 			const originalError = console.error;

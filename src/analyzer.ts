@@ -4118,13 +4118,22 @@ export class MnemonicaAnalyzer {
 		case ts.SyntaxKind.IndexedAccessType: {
 			// Handle indexed access: T[K]
 			const indexed = typeNode as ts.IndexedAccessTypeNode;
+			// F23: unwrap parentheses around the object — `(typeof
+			// list)[number]` must take the typeof branch like the bare
+			// spelling; otherwise the general path infers the union and
+			// glues the suffix onto the LAST member
+			// (`'a' | 'b'[number]`)
+			let objectNode: ts.TypeNode = indexed.objectType;
+			while (ts.isParenthesizedTypeNode(objectNode)) {
+				objectNode = objectNode.type;
+			}
 			// `typeof constArray[K]` — element type of a tracked const array:
 			// emit the element literal union directly (assembling
 			// `union[K]` text would misread precedence, and when the const
 			// is not statically visible the honest answer is `unknown`,
 			// never a bare `typeof name` query)
-			if (ts.isTypeQueryNode(indexed.objectType) && ts.isIdentifier(indexed.objectType.exprName)) {
-				const queryName = indexed.objectType.exprName.text;
+			if (ts.isTypeQueryNode(objectNode) && ts.isIdentifier(objectNode.exprName)) {
+				const queryName = objectNode.exprName.text;
 				const arrayLiteral = this.findReferencedConstArray(queryName, this.currentReferencedTypeFile);
 				const literals = arrayLiteral ? this.literalTypesOfArray(arrayLiteral) : undefined;
 				if (!literals) {
@@ -4139,11 +4148,11 @@ export class MnemonicaAnalyzer {
 				const unionResult = literals.join(' | ');
 				return unionResult;
 			}
-			let objectType = this.inferType(indexed.objectType);
+			let objectType = this.inferType(objectNode);
 			const indexType = this.inferType(indexed.indexType);
 			// If objectType is 'object', try to resolve the underlying referenced type
-			if (objectType === 'object' && ts.isTypeReferenceNode(indexed.objectType)) {
-				const refName = ts.isIdentifier(indexed.objectType.typeName) ? indexed.objectType.typeName.text : '';
+			if (objectType === 'object' && ts.isTypeReferenceNode(objectNode)) {
+				const refName = ts.isIdentifier(objectNode.typeName) ? objectNode.typeName.text : '';
 				if (refName) {
 					const decl = this.resolveReferencedTypeDeclaration(refName, this.currentReferencedTypeFile);
 					if (decl) {
@@ -4837,7 +4846,42 @@ export class MnemonicaAnalyzer {
 			if (this.definitions.has(arg.text)) {
 				return arg.text;
 			}
-			return undefined;
+			// let-in-try: a let/var binding declared without a tracked
+			// initializer and assigned later in the SAME scope (the
+			// fire-and-forget catch-guard pattern: `let fn; try { fn =
+			// … } catch { return } wrap(fn, …)`) — follow the first
+			// statically-visible in-scope assignment. No flow analysis:
+			// function/class boundaries are not crossed, a
+			// never-assigned binding stays unknown (F20 discipline).
+			// When the assignment resolves, its evidence WINS over any
+			// declaration annotation (the constructed subtype is the more
+			// specific truth); an unresolvable RHS (a userland call, say)
+			// falls through to the annotation claim below.
+			const assigned = this.followScopeAssignment(arg.text, arg);
+			if (assigned) {
+				const resolved = this.resolveEDSArgumentType(assigned);
+				if (resolved) {
+					return resolved;
+				}
+			}
+			// Annotation fallback — the F20 discipline one argument over:
+			// an explicit declaration or parameter annotation is a user
+			// claim written in the AST, not flow analysis. Parameter
+			// first: it shadows an outer let, same as the context-arg path.
+			const annotated = this.resolveParameterAnnotationTypePath(arg.text, arg) ??
+				this.resolveVariableAnnotationTypePath(arg.text, arg);
+			return annotated;
+		}
+
+		// NewExpression: the constructed type — reachable directly
+		// (wrap(new T(), …)) or through a followed assignment
+		if (ts.isNewExpression(arg)) {
+			const ctorExpr = arg.expression;
+			const name = ts.isPropertyAccessExpression(ctorExpr)
+				? this.resolveTypePath(ctorExpr)
+				: this.getTypeNameFromExpression(ctorExpr);
+			const known = name && this.definitions.has(name) ? name : undefined;
+			return known;
 		}
 
 		// Property access: obj.prop
@@ -4851,6 +4895,137 @@ export class MnemonicaAnalyzer {
 		}
 
 		return undefined;
+	}
+
+	/**
+	 * let-in-try: find the RIGHT-HAND SIDE of the first statically-visible
+	 * assignment to `name` in the scope that declares it. The declaring
+	 * container is found innermost-out (blocks, case clauses, the source
+	 * file — the F20 walk); the scan recurses into nested blocks (try/
+	 * catch/finally, if/else, loops, switch cases) but NEVER crosses
+	 * function or class boundaries — an assignment inside a closure does
+	 * not attribute. Returns undefined when the binding is declared but
+	 * never assigned in scope (and stops there: an inner declaration
+	 * shadows any outer binding).
+	 */
+	private followScopeAssignment (name: string, from: ts.Node): ts.Expression | undefined {
+		let current: ts.Node | undefined = from;
+		while (current) {
+			const statements: ts.NodeArray<ts.Statement> | undefined =
+				ts.isBlock(current) || ts.isModuleBlock(current) || ts.isSourceFile(current)
+					? current.statements
+					: ts.isCaseClause(current) || ts.isDefaultClause(current)
+						? current.statements
+						: undefined;
+			if (statements && this.statementsDeclareVariable(statements, name)) {
+				const rhs = this.findAssignmentRhsInStatements(statements, name);
+				return rhs;
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	/**
+	 * True when the statement list contains a `let`/`var`/`const`
+	 * declaration for `name` (any initializer form).
+	 */
+	private statementsDeclareVariable (statements: readonly ts.Statement[], name: string): boolean {
+		for (const statement of statements) {
+			if (!ts.isVariableStatement(statement)) {
+				continue;
+			}
+			for (const declaration of statement.declarationList.declarations) {
+				if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * First `name = rhs` assignment in the statement list, recursing
+	 * into nested in-scope blocks. Function and class bodies are
+	 * boundaries and are not entered.
+	 */
+	private findAssignmentRhsInStatements (
+		statements: readonly ts.Statement[],
+		name: string
+	): ts.Expression | undefined {
+		for (const statement of statements) {
+			const direct = this.directAssignmentRhs(statement, name);
+			if (direct) {
+				return direct;
+			}
+			for (const nested of this.nestedScopeBlocks(statement)) {
+				const found = this.findAssignmentRhsInStatements(nested, name);
+				if (found) {
+					return found;
+				}
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * `name = rhs` as a direct expression statement.
+	 */
+	private directAssignmentRhs (statement: ts.Statement, name: string): ts.Expression | undefined {
+		if (!ts.isExpressionStatement(statement)) {
+			return undefined;
+		}
+		const expr = statement.expression;
+		if (!ts.isBinaryExpression(expr) || expr.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+			return undefined;
+		}
+		if (!ts.isIdentifier(expr.left) || expr.left.text !== name) {
+			return undefined;
+		}
+		const rhs = expr.right;
+		return rhs;
+	}
+
+	/**
+	 * Statement lists of the nested blocks that stay INSIDE the current
+	 * scope — try/catch/finally, if/else, loops, switch cases, nested
+	 * blocks, labeled statements. Function-like and class bodies are
+	 * scope boundaries and yield nothing.
+	 */
+	private nestedScopeBlocks (statement: ts.Statement): readonly (readonly ts.Statement[])[] {
+		const blocks: ts.Statement[][] = [];
+		const push = (node: ts.Statement | undefined): void => {
+			if (node && ts.isBlock(node)) {
+				blocks.push([ ...node.statements ]);
+			}
+		};
+		if (ts.isBlock(statement)) {
+			blocks.push([ ...statement.statements ]);
+		} else if (ts.isTryStatement(statement)) {
+			push(statement.tryBlock);
+			if (statement.catchClause) {
+				push(statement.catchClause.block);
+			}
+			push(statement.finallyBlock);
+		} else if (ts.isIfStatement(statement)) {
+			push(statement.thenStatement);
+			push(statement.elseStatement);
+		} else if (ts.isForStatement(statement) || ts.isForInStatement(statement) ||
+			ts.isForOfStatement(statement) || ts.isWhileStatement(statement) ||
+			ts.isDoStatement(statement) || ts.isWithStatement(statement)) {
+			push(statement.statement);
+		} else if (ts.isSwitchStatement(statement)) {
+			for (const clause of statement.caseBlock.clauses) {
+				blocks.push([ ...clause.statements ]);
+			}
+		} else if (ts.isLabeledStatement(statement)) {
+			const nested = this.nestedScopeBlocks(statement.statement);
+			for (const block of nested) {
+				blocks.push([ ...block ]);
+			}
+		}
+		const result = blocks;
+		return result;
 	}
 
 	/**
@@ -4910,6 +5085,33 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * F24: resolve a bare-identifier annotation to a graph fullPath. The
+	 * annotation may name the type directly (`LedgerUpdate`) or carry
+	 * the GENERATED instance alias of a nested type
+	 * (`UpdatePay_SomeTerminal`, imported from the generated types file
+	 * via tsconfig paths) — not a graph node NAME. The name is tried
+	 * as-is first, then its underscore→dotted form (the generated alias
+	 * naming law; the same mapping scopes.json uses for annotations).
+	 * Ambiguity and absence yield undefined.
+	 */
+	private resolveAnnotationTypePath (name: string): string | undefined {
+		const direct = this.resolveGraphTypeName(name);
+		if (direct.status === 'unique') {
+			const result = direct.node.fullPath;
+			return result;
+		}
+		if (!name.includes('_')) {
+			return undefined;
+		}
+		const aliased = this.resolveGraphTypeName(name.replace(/_/g, '.'));
+		if (aliased.status === 'unique') {
+			const result = aliased.node.fullPath;
+			return result;
+		}
+		return undefined;
+	}
+
+	/**
 	 * Resolve a bare-identifier type annotation of the nearest enclosing
 	 * function's parameter through the mnemonica-graph tiers (value scope,
 	 * imports, roots, program-wide-unique). Non-identifier and generic
@@ -4927,10 +5129,9 @@ export class MnemonicaAnalyzer {
 						(param.type.typeArguments?.length ?? 0) > 0) {
 						continue;
 					}
-					const graphResult = this.resolveGraphTypeName(param.type.typeName.text);
-					if (graphResult.status === 'unique') {
-						const result = graphResult.node.fullPath;
-						return result;
+					const resolved = this.resolveAnnotationTypePath(param.type.typeName.text);
+					if (resolved) {
+						return resolved;
 					}
 				}
 				return undefined;
@@ -4992,10 +5193,9 @@ export class MnemonicaAnalyzer {
 					(declaration.type.typeArguments?.length ?? 0) > 0) {
 					continue;
 				}
-				const graphResult = this.resolveGraphTypeName(declaration.type.typeName.text);
-				if (graphResult.status === 'unique') {
-					const result = graphResult.node.fullPath;
-					return result;
+				const resolved = this.resolveAnnotationTypePath(declaration.type.typeName.text);
+				if (resolved) {
+					return resolved;
 				}
 			}
 		}

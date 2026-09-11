@@ -1,6 +1,6 @@
 {
 	"name": "@mnemonica/tactica",
-	"version": "0.3.10",
+	"version": "0.3.11",
 	"description": "Type definition generator for Mnemonica — statically analyzes define() calls and emits .tactica/ types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
@@ -9,6 +9,7 @@
 	},
 	"files": [
 		"lib/",
+		"docs/",
 		"README.md",
 		"LICENSE"
 	],

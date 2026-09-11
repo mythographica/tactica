@@ -726,6 +726,40 @@ export declare class MnemonicaAnalyzer {
      */
     private resolveEDSArgumentType;
     /**
+     * let-in-try: find the RIGHT-HAND SIDE of the first statically-visible
+     * assignment to `name` in the scope that declares it. The declaring
+     * container is found innermost-out (blocks, case clauses, the source
+     * file — the F20 walk); the scan recurses into nested blocks (try/
+     * catch/finally, if/else, loops, switch cases) but NEVER crosses
+     * function or class boundaries — an assignment inside a closure does
+     * not attribute. Returns undefined when the binding is declared but
+     * never assigned in scope (and stops there: an inner declaration
+     * shadows any outer binding).
+     */
+    private followScopeAssignment;
+    /**
+     * True when the statement list contains a `let`/`var`/`const`
+     * declaration for `name` (any initializer form).
+     */
+    private statementsDeclareVariable;
+    /**
+     * First `name = rhs` assignment in the statement list, recursing
+     * into nested in-scope blocks. Function and class bodies are
+     * boundaries and are not entered.
+     */
+    private findAssignmentRhsInStatements;
+    /**
+     * `name = rhs` as a direct expression statement.
+     */
+    private directAssignmentRhs;
+    /**
+     * Statement lists of the nested blocks that stay INSIDE the current
+     * scope — try/catch/finally, if/else, loops, switch cases, nested
+     * blocks, labeled statements. Function-like and class bodies are
+     * scope boundaries and yield nothing.
+     */
+    private nestedScopeBlocks;
+    /**
      * Resolve the enclosing mnemonica scope of an EDS call site by walking
      * up the parent chain: nearest define()/lazy() call whose handler holds
      * the node, or nearest @decorate()-ed class declaration. Best effort —
@@ -742,6 +776,17 @@ export declare class MnemonicaAnalyzer {
      * metadata heuristic, not the identity-law surface.
      */
     private resolveWrapInstanceTypePath;
+    /**
+     * F24: resolve a bare-identifier annotation to a graph fullPath. The
+     * annotation may name the type directly (`LedgerUpdate`) or carry
+     * the GENERATED instance alias of a nested type
+     * (`UpdatePay_SomeTerminal`, imported from the generated types file
+     * via tsconfig paths) — not a graph node NAME. The name is tried
+     * as-is first, then its underscore→dotted form (the generated alias
+     * naming law; the same mapping scopes.json uses for annotations).
+     * Ambiguity and absence yield undefined.
+     */
+    private resolveAnnotationTypePath;
     /**
      * Resolve a bare-identifier type annotation of the nearest enclosing
      * function's parameter through the mnemonica-graph tiers (value scope,

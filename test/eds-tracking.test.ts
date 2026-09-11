@@ -642,6 +642,265 @@ describe('MnemonicaAnalyzer - EDS Tracking', () => {
 			expect(wrapEntry!.instanceArg).to.equal('updateCommitted');
 		});
 
+		it('should attribute a wrap() through a let annotated with a GENERATED nested-type alias (F24)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const UpdatePay = define('UpdatePay', function (this: UpdatePay) {
+					this.kind = 'pay';
+				});
+				UpdatePay.define('SomeTerminal', function (this: SomeTerminal, data: { code: string }) {
+					this.code = data.code;
+				});
+
+				export async function updateSomething (updatePay: UpdatePay, payload: { code: string }) {
+					let updateCommitted: UpdatePay_SomeTerminal;
+					try {
+						updateCommitted = new updatePay.SomeTerminal({ code: payload.code });
+					} catch (error) {
+						throw error;
+					}
+					return wrap(function () { return payload.code; }, updateCommitted);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('UpdatePay.SomeTerminal');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.scope).to.equal('UpdatePay.SomeTerminal');
+			expect(wrapEntry!.instanceArg).to.equal('updateCommitted');
+		});
+
+		it('should attribute a wrap() through a let assigned inside a try (catch-guard pattern, let-in-try)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export async function wireReport (context: { raw: string }) {
+					let sendReport;
+					try {
+						sendReport = new ReportTerminal({ channel: 'main' });
+					} catch (error) {
+						return;
+					}
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('ReportTerminal');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.targetType).to.equal('ReportTerminal');
+		});
+
+		it('should attribute the const-at-declaration control the same way (the field workaround)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export function wireConst (context: { raw: string }) {
+					const sendReport = new ReportTerminal({ channel: 'alt' });
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('ReportTerminal');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.targetType).to.equal('ReportTerminal');
+		});
+
+		it('should NOT attribute a let assigned only inside a nested closure (scope boundary)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export function wireClosure (context: { raw: string }, defer: (fn: () => void) => void) {
+					let sendReport;
+					defer(() => {
+						sendReport = new ReportTerminal({ channel: 'inner' });
+					});
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			expect(eds.get('ReportTerminal')?.filter(e => e.kind === 'wrap')).to.be.undefined;
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+			const wrapEntry = unscoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+		});
+
+		it('should NOT attribute a let that is never assigned in scope', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export function wireUnassigned (context: { raw: string }) {
+					let sendReport;
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			expect(eds.get('ReportTerminal')?.filter(e => e.kind === 'wrap')).to.be.undefined;
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+		});
+
+		it('should attribute a wrap() callee through its explicit annotation when the assignment is untrackable (annotation fallback)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export async function wireAnnotated (context: { raw: string }) {
+					let sendReport: ReportTerminal;
+					try {
+						sendReport = makeSender();
+					} catch (error) {
+						return;
+					}
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('ReportTerminal');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.targetType).to.equal('ReportTerminal');
+		});
+
+		it('should prefer a resolvable assignment over the annotation claim (constructed subtype is the more specific truth)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+				const LedgerRoot = define('LedgerRoot', function (this: LedgerRoot, data: { code: string }) {
+					this.code = data.code;
+				});
+
+				export function wirePrecedence (context: { raw: string }) {
+					let sendReport: ReportTerminal;
+					try {
+						sendReport = new LedgerRoot({ code: 'x' });
+					} catch (error) {
+						return;
+					}
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			// the assignment constructs a LedgerRoot — runtime truth beats
+			// the annotation claim even though the annotation named another type
+			const scoped = eds.get('LedgerRoot');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(eds.get('ReportTerminal')?.filter(e => e.kind === 'wrap')).to.be.undefined;
+		});
+
+		it('should attribute a wrap() callee arriving as an annotated function parameter', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export function wireParam (sendReport: ReportTerminal, context: { raw: string }) {
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			const scoped = eds.get('ReportTerminal');
+			expect(scoped).to.exist;
+			const wrapEntry = scoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+			expect(wrapEntry!.targetType).to.equal('ReportTerminal');
+		});
+
+		it('should keep an unannotated let with an untrackable assignment unknown (honest negative)', () => {
+			const source = `
+				import { wrap } from '@mnemonica/dive';
+				import { define } from 'mnemonica';
+
+				const ReportTerminal = define('ReportTerminal', function (this: ReportTerminal, data: { channel: string }) {
+					this.channel = data.channel;
+				});
+
+				export function wireUntrackable (context: { raw: string }) {
+					let sendReport;
+					try {
+						sendReport = makeSender();
+					} catch (error) {
+						return;
+					}
+					return wrap(sendReport, context);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const eds = analyzer.getEDSUsages();
+
+			expect(eds.get('ReportTerminal')?.filter(e => e.kind === 'wrap')).to.be.undefined;
+			const unscoped = eds.get('unknown');
+			expect(unscoped).to.exist;
+			const wrapEntry = unscoped!.find(e => e.kind === 'wrap');
+			expect(wrapEntry).to.exist;
+		});
+
 		it('should keep the unknown bucket for an UNANNOTATED let (documented F20 boundary)', () => {
 			const source = `
 				import { wrap } from '@mnemonica/dive';
