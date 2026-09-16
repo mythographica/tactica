@@ -88,6 +88,8 @@ Tactica core is **framework-blind**: it ships no instrumentation vocabulary of i
 
 Tactica writes to `--output` (default `.tactica/`). The contract below is what **mnemographica** and other consumers depend on. Do not break these field names or the file naming without coordinated changes in mnemographica.
 
+**Path form:** every file path in these JSON files — locations, scopeIds, filePaths, map keys, edge endpoints — is emitted **project-relative**, anchored at the tsconfig directory, so `.tactica` output is portable across machines and checkouts. Paths outside the project root stay absolute (they are genuinely machine-specific). Consumers resolve relative entries against the directory that holds `.tactica`; output from earlier tactica versions used absolute paths throughout, so consumers must accept both.
+
 ### `types.ts` (default mode)
 
 ```ts
@@ -168,12 +170,12 @@ children's constructor signatures, same as `types.ts`. Source:
         {
             "name": "UserType",
             "fullPath": "UserType",
-            "location": "/abs/path/src/users.ts:10:7",
+            "location": "src/users.ts:10:7",
             "children": [
                 {
                     "name": "AdminType",
                     "fullPath": "UserType.AdminType",
-                    "location": "/abs/path/src/users.ts:20:7",
+                    "location": "src/users.ts:20:7",
                     "children": []
                 }
             ]
@@ -199,7 +201,7 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
     "definitions": {
         "UserType": {
             "name": "UserType",
-            "location": "/abs/path/src/users.ts:10:7",
+            "location": "src/users.ts:10:7",
             "kind": "define",
             "parent": null,
             "strictChain": true,
@@ -223,8 +225,8 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
     "generatedAt": "2026-05-22T…",
     "usages": {
         "UserType": [
-            { "location": "/abs/path/src/main.ts:3:7", "kind": "instantiation", "code": "new UserType({…})" },
-            { "location": "/abs/path/src/main.ts:5:9", "kind": "propertyAccess", "code": "user.AdminType" }
+            { "location": "src/main.ts:3:7", "kind": "instantiation", "code": "new UserType({…})" },
+            { "location": "src/main.ts:5:9", "kind": "propertyAccess", "code": "user.AdminType" }
         ]
     }
 }
@@ -247,7 +249,7 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
     "generatedAt": "2026-05-22T…",
     "eds": {
         "UserEntity": [
-            { "location": "/abs/path/src/queue.ts:45:12", "kind": "wrap", "code": "wrap(process)", "targetType": "UserEntity" }
+            { "location": "src/queue.ts:45:12", "kind": "wrap", "code": "wrap(process)", "targetType": "UserEntity" }
         ]
     }
 }
@@ -267,7 +269,7 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
         {
             "kind": "pipe",
             "className": "ValidationPipe",
-            "location": "/abs/path/src/user.controller.ts:49:2",
+            "location": "src/user.controller.ts:49:2",
             "code": "@UsePipes(new ValidationPipe({ transform: true }))",
             "scope": "method:UserController.createUser",
             "targets": ["UserController"]
@@ -276,21 +278,21 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
     "creationGraph": {
         "nodes": [
             {
-                "scopeId": "/abs/path/src/main.ts",
-                "name": "/abs/path/src/main.ts",
+                "scopeId": "src/main.ts",
+                "name": "src/main.ts",
                 "kind": "module",
-                "filePath": "/abs/path/src/main.ts",
-                "location": "/abs/path/src/main.ts:1:1",
+                "filePath": "src/main.ts",
+                "location": "src/main.ts:1:1",
                 "starter": true
             }
         ],
         "edges": [
-            { "caller": "/abs/path/src/main.ts", "callee": "/abs/path/src/user.service.ts:26:2" }
+            { "caller": "src/main.ts", "callee": "src/user.service.ts:26:2" }
         ],
         "anchors": [
             {
-                "location": "/abs/path/src/user.service.ts:29:24",
-                "holderScopeId": "/abs/path/src/user.service.ts:26:2",
+                "location": "src/user.service.ts:29:24",
+                "holderScopeId": "src/user.service.ts:26:2",
                 "typePath": "UserEntity.UserResponse",
                 "constructorText": "user.UserResponse",
                 "variable": "userResponse"
@@ -314,23 +316,23 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
     "version": "1.0",
     "generatedAt": "2026-09-03T…",
     "modules": {
-        "/abs/path/src/fake-queue.ts": {
-            "filePath": "/abs/path/src/fake-queue.ts",
+        "src/fake-queue.ts": {
+            "filePath": "src/fake-queue.ts",
             "definedTypes": [],
             "exportedBindings": [
-                { "name": "consumeMessage", "kind": "function", "sourceModule": "/abs/path/src/fake-queue.ts", "isReExport": false }
+                { "name": "consumeMessage", "kind": "function", "sourceModule": "src/fake-queue.ts", "isReExport": false }
             ],
             "importedBindings": [
-                { "name": "Thing", "kind": "class", "sourceModule": "/abs/path/src/defs.ts", "importKind": "named", "isReExport": false }
+                { "name": "Thing", "kind": "class", "sourceModule": "src/defs.ts", "importKind": "named", "isReExport": false }
             ],
-            "dependencies": ["/abs/path/src/defs.ts"],
+            "dependencies": ["src/defs.ts"],
             "unresolvedSpecifiers": []
         }
     },
     "edges": [
-        { "typePath": "Thing", "definitionModule": "/abs/path/src/defs.ts", "usageModule": "/abs/path/src/consumer.ts", "usageLocation": "/abs/path/src/consumer.ts:1:10" }
+        { "typePath": "Thing", "definitionModule": "src/defs.ts", "usageModule": "src/consumer.ts", "usageLocation": "src/consumer.ts:1:10" }
     ],
-    "cycles": [["/abs/a.ts", "/abs/b.ts"]]
+    "cycles": [["src/a.ts", "src/b.ts"]]
 }
 ```
 
@@ -349,29 +351,29 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
     "version": "1.0",
     "generatedAt": "2026-09-03T…",
     "scopes": {
-        "/abs/path/src/fake-queue.ts": {
-            "scopeId": "/abs/path/src/fake-queue.ts",
-            "name": "/abs/path/src/fake-queue.ts",
+        "src/fake-queue.ts": {
+            "scopeId": "src/fake-queue.ts",
+            "name": "src/fake-queue.ts",
             "kind": "module",
-            "filePath": "/abs/path/src/fake-queue.ts",
-            "location": "/abs/path/src/fake-queue.ts:1:1"
+            "filePath": "src/fake-queue.ts",
+            "location": "src/fake-queue.ts:1:1"
         },
-        "/abs/path/src/fake-queue.ts:30:1": {
-            "scopeId": "/abs/path/src/fake-queue.ts:30:1",
+        "src/fake-queue.ts:30:1": {
+            "scopeId": "src/fake-queue.ts:30:1",
             "name": "consumeMessage",
             "kind": "function",
-            "parentScopeId": "/abs/path/src/fake-queue.ts",
-            "filePath": "/abs/path/src/fake-queue.ts",
-            "location": "/abs/path/src/fake-queue.ts:30:1"
+            "parentScopeId": "src/fake-queue.ts",
+            "filePath": "src/fake-queue.ts",
+            "location": "src/fake-queue.ts:30:1"
         }
     },
     "variables": [
         {
             "name": "early",
-            "scopeId": "/abs/path/src/fake-queue.ts:30:1",
+            "scopeId": "src/fake-queue.ts:30:1",
             "typePath": "UserEntity",
             "inferredType": "UserEntity",
-            "declaration": "/abs/path/src/fake-queue.ts:32:8",
+            "declaration": "src/fake-queue.ts:32:8",
             "isParameter": false,
             "isMutable": false,
             "reassignments": []

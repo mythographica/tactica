@@ -125,7 +125,7 @@ EDS tracking is **auto-enabled** when `@mnemonica/dive` is present in `package.j
 
 ## Generated Files
 
-Tactica writes everything under the `--output` directory (default `.tactica/`):
+Tactica writes everything under the `--output` directory (default `.tactica/`). All file paths inside the JSON files are emitted **project-relative** (anchored at the tsconfig directory) so the output is portable across machines; consumers resolve them against the directory holding `.tactica`. Earlier versions emitted absolute paths, so consumers should accept both.
 
 | File | When | Purpose |
 |---|---|---|
@@ -705,7 +705,7 @@ class ModuleGraphBuilder {
 
 `ModuleGraph` = `{ modules: Map<absPath, ModuleInfo>, edges: CrossModuleUsage[], cycles: string[][] }`.
 Each `ModuleBinding` carries `{ name, kind: 'function'|'class'|'const'|'type'|'unknown',
-sourceModule (resolved absolute path), importKind?, importAlias?, isReExport, external? }`.
+sourceModule (resolved project-relative path), importKind?, importAlias?, isReExport, external? }`.
 Node.js builtins (`'path'`, `'node:fs'`, …) are skipped entirely and recorded
 only in the module's `builtinSpecifiers`; bindings resolved into `node_modules`
 carry `external: true` and never enter `dependencies`. Re-export chains
@@ -789,7 +789,7 @@ When enabled, tactica detects execution-flow patterns alongside type definitions
     "eds": {
         "UserEntity": [
             {
-                "location": "/project/src/queue.ts:45:12",
+                "location": "src/queue.ts:45:12",
                 "kind": "wrap",
                 "code": "wrap(process)",
                 "targetType": "UserEntity"
@@ -859,7 +859,7 @@ When a referenced class is declared in the analyzed project, the point's `locati
         {
             "kind": "pipe",
             "className": "PayloadPipe",
-            "location": "/project/src/user.controller.ts:49:2",
+            "location": "src/user.controller.ts:49:2",
             "code": "@RegisterPipe(new PayloadPipe({ transform: true }))",
             "scope": "method:UserController.createUser",
             "targets": ["UserController"]
@@ -868,21 +868,21 @@ When a referenced class is declared in the analyzed project, the point's `locati
     "creationGraph": {
         "nodes": [
             {
-                "scopeId": "/project/src/main.ts",
-                "name": "/project/src/main.ts",
+                "scopeId": "src/main.ts",
+                "name": "src/main.ts",
                 "kind": "module",
-                "filePath": "/project/src/main.ts",
-                "location": "/project/src/main.ts:1:1",
+                "filePath": "src/main.ts",
+                "location": "src/main.ts:1:1",
                 "starter": true
             }
         ],
         "edges": [
-            { "caller": "/project/src/main.ts", "callee": "/project/src/user.service.ts:26:2" }
+            { "caller": "src/main.ts", "callee": "src/user.service.ts:26:2" }
         ],
         "anchors": [
             {
-                "location": "/project/src/user.service.ts:29:24",
-                "holderScopeId": "/project/src/user.service.ts:26:2",
+                "location": "src/user.service.ts:29:24",
+                "holderScopeId": "src/user.service.ts:26:2",
                 "typePath": "UserEntity.UserResponse",
                 "constructorText": "user.UserResponse",
                 "variable": "userResponse"

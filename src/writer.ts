@@ -12,9 +12,53 @@ import {
  */
 export class TypesWriter {
 	private outputDir: string;
+	private projectRoot?: string;
 
-	constructor (outputDir = '.tactica') {
+	constructor (outputDir = '.tactica', projectRoot?: string) {
 		this.outputDir = outputDir;
+		this.projectRoot = projectRoot === undefined
+			? undefined
+			: path.resolve(projectRoot);
+	}
+
+	/**
+	 * Rewrite every project-rooted absolute path in the payload to a
+	 * project-relative one (values AND object keys), so .tactica output
+	 * stays portable across machines and checkouts. Paths outside the
+	 * project root keep their absolute form — they genuinely are
+	 * machine-specific. Consumers resolve relative entries against the
+	 * directory that holds .tactica.
+	 */
+	private relativize<T> (payload: T): T {
+		if (this.projectRoot === undefined) {
+			return payload;
+		}
+		const prefix = this.projectRoot + path.sep;
+		const walk = (input: unknown): unknown => {
+			if (typeof input === 'string') {
+				if (!input.startsWith(prefix)) {
+					return input;
+				}
+				const relative = input.slice(prefix.length);
+				const walked = relative.split(path.sep).join('/');
+				return walked;
+			}
+			if (Array.isArray(input)) {
+				const walked = input.map(walk);
+				return walked;
+			}
+			if (input !== null && typeof input === 'object') {
+				const walked: Record<string, unknown> = {};
+				for (const [ key, value ] of Object.entries(input)) {
+					const walkedKey = walk(key) as string;
+					walked[ walkedKey ] = walk(value);
+				}
+				return walked;
+			}
+			return input;
+		};
+		const result = walk(payload);
+		return result as T;
 	}
 
 	/**
@@ -95,11 +139,11 @@ export class TypesWriter {
 			definitionsObj[ key ] = value;
 		}
 
-		const json = {
+		const json = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			definitions : definitionsObj,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -118,11 +162,11 @@ export class TypesWriter {
 			usagesObj[ key ] = value;
 		}
 
-		const json = {
+		const json = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			usages      : usagesObj,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -141,11 +185,11 @@ export class TypesWriter {
 			edsObj[ key ] = value;
 		}
 
-		const json = {
+		const json = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			eds         : edsObj,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -168,7 +212,8 @@ export class TypesWriter {
 			json.creationGraph = creationGraph;
 		}
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		const relativized = this.relativize(json);
+		fs.writeFileSync(filePath, JSON.stringify(relativized, null, 2), 'utf-8');
 		return filePath;
 	}
 
@@ -185,11 +230,11 @@ export class TypesWriter {
 			flowObj[ key ] = value;
 		}
 
-		const json: FlowJson = {
+		const json: FlowJson = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			flow        : flowObj,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -208,13 +253,13 @@ export class TypesWriter {
 			modulesObj[ key ] = value;
 		}
 
-		const json: ModulesJson = {
+		const json: ModulesJson = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			modules     : modulesObj,
 			edges       : graph.edges,
 			cycles      : graph.cycles,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -234,12 +279,12 @@ export class TypesWriter {
 		}
 		const variables = Array.from(analysis.variables.values());
 
-		const json: ScopesJson = {
+		const json: ScopesJson = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			scopes      : scopesObj,
 			variables,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;
@@ -252,11 +297,11 @@ export class TypesWriter {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'hierarchy.json');
 
-		const json: HierarchyJson = {
+		const json: HierarchyJson = this.relativize({
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			roots,
-		};
+		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
 		return filePath;

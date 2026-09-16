@@ -364,4 +364,151 @@ describe('TypesWriter', () => {
 			expect(json.roots).to.deep.equal([]);
 		});
 	});
+
+	describe('projectRoot relativization', () => {
+		const projectRoot = path.resolve('/project');
+		let rootingWriter: TypesWriter;
+
+		beforeEach(() => {
+			rootingWriter = new TypesWriter(testDir, projectRoot);
+		});
+
+		it('should relativize locations under the root and keep outside paths absolute', () => {
+			const definitions = new Map([
+				[ 'UserType', {
+					name        : 'UserType',
+					location    : '/project/src/users.ts:10:7',
+					kind        : 'define' as const,
+					parent      : null,
+					strictChain : true,
+					blockErrors : false,
+				} ],
+				[ 'ExternalType', {
+					name        : 'ExternalType',
+					location    : '/elsewhere/lib/external.ts:2:3',
+					kind        : 'define' as const,
+					parent      : null,
+					strictChain : true,
+					blockErrors : false,
+				} ],
+			]);
+
+			const outputPath = rootingWriter.writeDefinitionsFile(definitions);
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.definitions.UserType.location).to.equal('src/users.ts:10:7');
+			expect(json.definitions.ExternalType.location).to.equal('/elsewhere/lib/external.ts:2:3');
+		});
+
+		it('should relativize scopes keys, scope fields and variables', () => {
+			const outputPath = rootingWriter.writeScopesFile({
+				scopes : new Map([
+					[ '/project/src/main.ts', {
+						scopeId  : '/project/src/main.ts',
+						name     : '/project/src/main.ts',
+						kind     : 'module' as const,
+						filePath : '/project/src/main.ts',
+						location : '/project/src/main.ts:1:1',
+					} ],
+					[ '/project/src/main.ts:3:1', {
+						scopeId       : '/project/src/main.ts:3:1',
+						name          : 'bootstrap',
+						kind          : 'function' as const,
+						parentScopeId : '/project/src/main.ts',
+						filePath      : '/project/src/main.ts',
+						location      : '/project/src/main.ts:3:1',
+					} ],
+				]),
+				variables : new Map([
+					[ '/project/src/main.ts:3:1#app', {
+						name          : 'app',
+						scopeId       : '/project/src/main.ts:3:1',
+						typePath      : 'App',
+						declaration   : '/project/src/main.ts:4:8',
+						isParameter   : false,
+						isMutable     : false,
+						reassignments : [ '/project/src/main.ts:9:2' ],
+					} ],
+				]),
+			});
+
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.scopes[ 'src/main.ts' ].filePath).to.equal('src/main.ts');
+			expect(json.scopes[ 'src/main.ts:3:1' ].parentScopeId).to.equal('src/main.ts');
+			expect(json.variables[ 0 ].scopeId).to.equal('src/main.ts:3:1');
+			expect(json.variables[ 0 ].declaration).to.equal('src/main.ts:4:8');
+			expect(json.variables[ 0 ].reassignments).to.deep.equal([ 'src/main.ts:9:2' ]);
+		});
+
+		it('should relativize modules keys, bindings, edges and cycles', () => {
+			const graph: ModuleGraph = {
+				modules : new Map([
+					[ '/project/src/defs.ts', {
+						filePath         : '/project/src/defs.ts',
+						definedTypes     : [ 'Thing' ],
+						exportedBindings : [],
+						importedBindings : [
+							{
+								name         : 'Other',
+								kind         : 'class' as const,
+								sourceModule : '/project/src/other.ts',
+								importKind   : 'named' as const,
+								isReExport   : false,
+							},
+						],
+						dependencies         : [ '/project/src/other.ts' ],
+						unresolvedSpecifiers : [ 'missing-mod' ],
+						builtinSpecifiers    : [],
+					} ],
+				]),
+				edges : [
+					{
+						typePath         : 'Thing',
+						definitionModule : '/project/src/defs.ts',
+						usageModule      : '/project/src/main.ts',
+						usageLocation    : '/project/src/main.ts:1:1',
+					},
+				],
+				cycles : [ [ '/project/src/a.ts', '/project/src/b.ts' ] ],
+			};
+
+			const outputPath = rootingWriter.writeModulesFile(graph);
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.modules[ 'src/defs.ts' ].filePath).to.equal('src/defs.ts');
+			expect(json.modules[ 'src/defs.ts' ].importedBindings[ 0 ].sourceModule).to.equal('src/other.ts');
+			expect(json.modules[ 'src/defs.ts' ].dependencies).to.deep.equal([ 'src/other.ts' ]);
+			expect(json.modules[ 'src/defs.ts' ].unresolvedSpecifiers).to.deep.equal([ 'missing-mod' ]);
+			expect(json.edges[ 0 ].usageLocation).to.equal('src/main.ts:1:1');
+			expect(json.cycles).to.deep.equal([ [ 'src/a.ts', 'src/b.ts' ] ]);
+		});
+
+		it('should relativize the instrumentation creation graph', () => {
+			const outputPath = rootingWriter.writeInstrumentationFile([], {
+				nodes : [
+					{
+						scopeId  : '/project/src/main.ts',
+						name     : '/project/src/main.ts',
+						kind     : 'module' as const,
+						filePath : '/project/src/main.ts',
+						location : '/project/src/main.ts:1:1',
+						starter  : true,
+					},
+				],
+				edges   : [ { caller : '/project/src/main.ts', callee : '/project/src/svc.ts:2:2' } ],
+				anchors : [
+					{
+						location        : '/project/src/svc.ts:3:9',
+						holderScopeId   : '/project/src/svc.ts:2:2',
+						typePath        : 'Thing',
+						constructorText : 'Thing',
+					},
+				],
+			});
+
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.creationGraph.nodes[ 0 ].scopeId).to.equal('src/main.ts');
+			expect(json.creationGraph.edges[ 0 ].callee).to.equal('src/svc.ts:2:2');
+			expect(json.creationGraph.anchors[ 0 ].location).to.equal('src/svc.ts:3:9');
+			expect(json.creationGraph.anchors[ 0 ].holderScopeId).to.equal('src/svc.ts:2:2');
+		});
+	});
 });

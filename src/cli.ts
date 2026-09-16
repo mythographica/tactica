@@ -647,7 +647,11 @@ function run (options: CLIOptions): number {
 		return 1;
 	}
 
-	const writer = new TypesWriter(options.outputDir);
+	// Project root anchors the relative paths the writer emits: .tactica
+	// output must stay portable when the checkout moves between machines.
+	// resolve() both sides — tsconfigPath itself may be relative.
+	const projectRoot = path.resolve(process.cwd(), path.dirname(tsconfigPath));
+	const writer = new TypesWriter(options.outputDir, projectRoot);
 
 	if (useModuleAugmentation) {
 		// Legacy mode: write global augmentation file (index.d.ts)

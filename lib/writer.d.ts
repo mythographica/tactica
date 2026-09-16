@@ -4,7 +4,17 @@ import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, Hierarchy
  */
 export declare class TypesWriter {
     private outputDir;
-    constructor(outputDir?: string);
+    private projectRoot?;
+    constructor(outputDir?: string, projectRoot?: string);
+    /**
+     * Rewrite every project-rooted absolute path in the payload to a
+     * project-relative one (values AND object keys), so .tactica output
+     * stays portable across machines and checkouts. Paths outside the
+     * project root keep their absolute form — they genuinely are
+     * machine-specific. Consumers resolve relative entries against the
+     * directory that holds .tactica.
+     */
+    private relativize;
     /**
      * Legacy write method - delegates to writeTypesFile
      */
