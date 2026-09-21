@@ -41,6 +41,8 @@ npm install --save-dev @mnemonica/tactica
 
 `mnemonica` is a peer dependency (>= 1.0.1).
 
+Tactica bundles its own TypeScript compiler (6.x) as a regular dependency, so it installs and runs regardless of the TypeScript version your project uses — including TypeScript 7, whose npm package no longer exposes the classic compiler API. Your `tsconfig.json` is only ever *parsed* (never emitted), so TS5-era options like `baseUrl` keep working even though TS6 marks them deprecated.
+
 ## Usage
 
 ### CLI
@@ -359,7 +361,7 @@ Tactica then emits:
 - Prefixed instance types in `.tactica/types.ts`, e.g. `AppCollectionRegistry_UserType` and `AppCollectionRegistry_UserType_AdminType`.
 - A `declare module '<relative path to this file>'` block in `.tactica/registry.ts` that augments `AppCollectionRegistry` with `'UserType'` and `'UserType.AdminType'` entries.
 
-Once `.tactica/registry.ts` is part of your `tsc` compilation, `AppCollection.lookup('UserType')` and `AppCollection.lookup('UserType.AdminType')` are fully typed.
+Once `.tactica/registry.ts` is part of your `tsc` compilation, `AppCollection.lookup('UserType')` and `AppCollection.lookup('UserType.AdminType')` are fully typed. Constructor-relative lookups resolve too: a variable bound to `AppCollection.lookup('UserType')` resolves `.lookup('AdminType')` relative-first (the type's own subtypes, then the collection root) — the same law as for default-collection types.
 
 Custom collections also support `decorate()` for root types:
 
@@ -473,7 +475,7 @@ The analyzer infers property types from constructor bodies and class members. Su
 | `this.x = []` / `new Array()` | `Array<…>` |
 | `this.x = {}` | `object` |
 | `this.x = new Date()` | `Date` |
-| `this.x = new Map()` / `new Set()` | `Map<…>` / `Set<…>` |
+| `this.x = new Map()` / `new Set()` | `Map<unknown, unknown>` / `Set<unknown>` — a bare generic is never emitted (TS2314); explicit arguments survive: `new Map<string, number>()` → `Map<string, number>` |
 | `this.x = Date.now()` | `number` |
 | `this.x = parseInt(…)` / `parseFloat(…)` | `number` |
 | `this.x = String(…)` / `Number(…)` / `Boolean(…)` | `string` / `number` / `boolean` |

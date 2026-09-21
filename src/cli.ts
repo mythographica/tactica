@@ -185,8 +185,21 @@ function loadProgram (tsconfigPath: string): ts.Program {
 		throw new Error(`Error reading tsconfig: ${errorText}`);
 	}
 
+	// Tactica analyzes with its own bundled TypeScript, which may be newer
+	// than the compiler the user's tsconfig was written for (e.g. a TS5-era
+	// config carrying `baseUrl`, deprecated-errored by TS6's TS5101).
+	// Analysis never emits user code, so deprecation errors are about the
+	// user's build pipeline, not about analyzability — silence them for the
+	// analysis program. Unconditional: a user-pinned older value ('5.0')
+	// does not silence 6.0 deprecations and would still fatal below.
+	const rawConfig = configFile.config ?? {};
+	rawConfig.compilerOptions = {
+		...rawConfig.compilerOptions,
+		ignoreDeprecations : '6.0',
+	};
+
 	const parsedConfig = ts.parseJsonConfigFileContent(
-		configFile.config,
+		rawConfig,
 		ts.sys,
 		path.dirname(tsconfigPath)
 	);

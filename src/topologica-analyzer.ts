@@ -487,11 +487,9 @@ export class TopologicaAnalyzer {
 			}
 			return 'any';
 		}
-		case ts.SyntaxKind.PropertyAccessExpression: {
-			const propAccess = node as ts.PropertyAccessExpression;
-			// Handle data?.property patterns
-			return this.inferType(propAccess);
-		}
+		case ts.SyntaxKind.PropertyAccessExpression:
+			// obj.prop — unresolvable without the type checker (no-getTypeChecker precedent)
+			return 'any';
 		case ts.SyntaxKind.CallExpression: {
 			const callExpr = node as ts.CallExpression;
 			return this.inferCallExpressionType(callExpr);

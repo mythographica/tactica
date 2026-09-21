@@ -342,5 +342,12 @@ describe('TopologicaAnalyzer', () => {
 			const complex = result.types.get('Complex');
 			expect(complex?.properties.get('floorVal')?.type).to.equal('any');
 		});
+
+		it('should infer bare property access (this.x = obj.prop) as any without stack overflow', () => {
+			const result = analyzer.analyzeDirectory(fixturePath);
+			expect(result.errors).to.have.length(0);
+			const complex = result.types.get('Complex');
+			expect(complex?.properties.get('dataLabel')?.type).to.equal('any');
+		});
 	});
 });

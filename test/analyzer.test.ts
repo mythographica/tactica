@@ -840,8 +840,8 @@ describe('MnemonicaAnalyzer', () => {
 	
 				expect(result.types).to.have.length(1);
 				const [ type ] = result.types;
-				// Note: Returns 'Array' without type arguments - generics not parsed from AST
-				expect(type.properties.get('items')?.type).to.equal('Array');
+				// Explicit type arguments survive the emission
+				expect(type.properties.get('items')?.type).to.equal('Array<string>');
 			});
 	
 			it('should infer Map type from new Map()', () => {
@@ -855,8 +855,37 @@ describe('MnemonicaAnalyzer', () => {
 	
 				expect(result.types).to.have.length(1);
 				const [ type ] = result.types;
-				// Note: Returns 'Map' without type arguments - generics not parsed from AST
-				expect(type.properties.get('cache')?.type).to.equal('Map');
+				// Explicit type arguments survive the emission
+				expect(type.properties.get('cache')?.type).to.equal('Map<string, number>');
+			});
+
+			it('should default new Map() without type arguments to Map<unknown, unknown>', () => {
+				const source = `
+						const UserType = define('UserType', function (this: any) {
+							this.cache = new Map();
+						});
+					`;
+
+				const result = analyzer.analyzeSource(source);
+
+				expect(result.types).to.have.length(1);
+				const [ type ] = result.types;
+				// A bare Map would be invalid TS (TS2314) in the generated file
+				expect(type.properties.get('cache')?.type).to.equal('Map<unknown, unknown>');
+			});
+
+			it('should default new Set() without type arguments to Set<unknown>', () => {
+				const source = `
+						const UserType = define('UserType', function (this: any) {
+							this.seen = new Set();
+						});
+					`;
+
+				const result = analyzer.analyzeSource(source);
+
+				expect(result.types).to.have.length(1);
+				const [ type ] = result.types;
+				expect(type.properties.get('seen')?.type).to.equal('Set<unknown>');
 			});
 		});
 	});

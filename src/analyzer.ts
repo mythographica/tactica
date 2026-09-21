@@ -98,6 +98,21 @@ const KNOWN_GLOBAL_TYPES = new Set([
 	'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Intl'
 ]);
 
+// Generic globals whose bare emission would be invalid TS (TS2314):
+// `new Map()` carries no type arguments, so the field type fills them
+// with unknown. Keys must also be members of KNOWN_GLOBAL_TYPES.
+const GENERIC_GLOBAL_DEFAULT_ARGS = new Map<string, string>([
+	[ 'Map', 'Map<unknown, unknown>' ],
+	[ 'WeakMap', 'WeakMap<object, unknown>' ],
+	[ 'Set', 'Set<unknown>' ],
+	[ 'WeakSet', 'WeakSet<object>' ],
+	[ 'WeakRef', 'WeakRef<object>' ],
+	[ 'FinalizationRegistry', 'FinalizationRegistry<unknown>' ],
+	[ 'Promise', 'Promise<unknown>' ],
+	[ 'Array', 'Array<unknown>' ],
+	[ 'ReadonlyArray', 'ReadonlyArray<unknown>' ]
+]);
+
 // Bound for chasing re-export barrels (export { X } from '…', export * from '…')
 const MAX_REEXPORT_CHASE_DEPTH = 5;
 // Bound for walking class/interface extends chains during referenced-type
@@ -1929,7 +1944,10 @@ export class MnemonicaAnalyzer {
 
 		// Direct createTypesCollection() call
 		if (this.isCreateTypesCollectionCall(initializer)) {
-			const collectionId = this.nextCollectionId();
+			// The CLI re-analyzes every file on the usages pass (see resetUsages):
+			// minting a fresh id here would re-register the collection's types
+			// under a second `collectionId::` prefix and duplicate every emission.
+			const collectionId = this.collectionVariables.get(node.name.text) ?? this.nextCollectionId();
 			this.collectionVariables.set(node.name.text, collectionId);
 
 			const registryInterfaceName = this.extractRegistryInterfaceName(
@@ -3345,17 +3363,22 @@ export class MnemonicaAnalyzer {
 					if (ts.isIdentifier(sourceExpr)) {
 						const sourceName = sourceExpr.text;
 						const sourceContext = this.resolveDefineSource(sourceName);
-						if (sourceContext.collectionId) {
-							// Collection lookup: prefix path with the collection id
-							return this.prefixCollectionPath(path, sourceContext.collectionId);
-						}
 						if (sourceContext.parentType) {
-							// Type lookup: relative first, then root fallback
+							// Type lookup: relative first, then root fallback.
+							// For a type inside a custom collection the fallback root is
+							// the collection root, never the default collection.
 							const relativePath = `${sourceContext.parentType.fullPath}.${path}`;
 							if (this.graph.findType(relativePath)) {
 								return relativePath;
 							}
+							if (sourceContext.collectionId) {
+								return this.prefixCollectionPath(path, sourceContext.collectionId);
+							}
 							return path;
+						}
+						if (sourceContext.collectionId) {
+							// Collection lookup: prefix path with the collection id
+							return this.prefixCollectionPath(path, sourceContext.collectionId);
 						}
 					}
 				}
@@ -3373,15 +3396,20 @@ export class MnemonicaAnalyzer {
 			const sourceName = sourceArg.text;
 			const path = pathArg.text;
 			const sourceContext = this.resolveDefineSource(sourceName);
-			if (sourceContext.collectionId) {
-				return this.prefixCollectionPath(path, sourceContext.collectionId);
-			}
 			if (sourceContext.parentType) {
+				// Same relative-first law as the single-arg form; collection
+				// members fall back to their collection root, not the global one.
 				const relativePath = `${sourceContext.parentType.fullPath}.${path}`;
 				if (this.graph.findType(relativePath)) {
 					return relativePath;
 				}
+				if (sourceContext.collectionId) {
+					return this.prefixCollectionPath(path, sourceContext.collectionId);
+				}
 				return path;
+			}
+			if (sourceContext.collectionId) {
+				return this.prefixCollectionPath(path, sourceContext.collectionId);
 			}
 			return path;
 		}
@@ -4320,7 +4348,21 @@ export class MnemonicaAnalyzer {
 			// Handle new Date(), new Map(), etc.
 			const newExpr = initializer as ts.NewExpression;
 			if (ts.isIdentifier(newExpr.expression)) {
-				return newExpr.expression.text;
+				const constructedName = newExpr.expression.text;
+				// Explicit type arguments survive: new Map<string, object>()
+				// emits Map<string, object> — dropping them produced a bare
+				// generic, which is invalid TS in the generated file (TS2314)
+				if (newExpr.typeArguments && newExpr.typeArguments.length > 0) {
+					const argTypes = newExpr.typeArguments.map(arg => this.inferType(arg));
+					return `${constructedName}<${argTypes.join(', ')}>`;
+				}
+				// No type arguments: a known generic global still needs its
+				// parameter list — fill it with unknown (Map<unknown, unknown>)
+				const defaultedGeneric = GENERIC_GLOBAL_DEFAULT_ARGS.get(constructedName);
+				if (defaultedGeneric) {
+					return defaultedGeneric;
+				}
+				return constructedName;
 			}
 			return 'object';
 		}

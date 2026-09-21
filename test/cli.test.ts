@@ -4,6 +4,7 @@ import { expect } from 'chai';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import * as ts from 'typescript';
 import { parseArgs, run } from '../src/cli';
 
 describe('parseArgs()', () => {
@@ -132,6 +133,104 @@ describe('run() exclusion', () => {
 		} finally {
 			fs.rmSync(outputDir, { recursive : true, force : true });
 		}
+	});
+});
+
+describe('run() deprecated compiler options', () => {
+	// Tactica bundles its own TypeScript (6.x), newer than the compiler many
+	// user tsconfigs were written for. A TS5-era config carrying `baseUrl`
+	// is a deprecation ERROR under TS6 (TS5101); analysis never emits user
+	// code, so loadProgram silences deprecations instead of failing.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-baseurl');
+
+	it('should analyze a TS5-era tsconfig with baseUrl without failing', () => {
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-baseurl-'));
+		try {
+			run({
+				project : path.join(fixtureDir, 'tsconfig.json'),
+				outputDir,
+			});
+
+			const modulesJson = JSON.parse(
+				fs.readFileSync(path.join(outputDir, 'modules.json'), 'utf-8')
+			);
+			const keys = Object.keys(modulesJson.modules);
+			expect(keys.some(k => k.endsWith(path.join('src', 'main.ts')))).to.be.true;
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+	});
+});
+
+describe('run() custom collections (Option B)', () => {
+	// The CLI usages pass re-analyzes every file after resetUsages(); the
+	// collection id minted for a collection variable must stay stable across
+	// both passes. A re-minted id re-registers every collection type under a
+	// second `collectionId::` prefix and the generator then emits each entry
+	// twice — the generated types.ts/registry.ts fail with TS2300.
+	//
+	// The output goes to the fixture-local .tactica (the conventional project
+	// layout) so the generated files resolve 'mnemonica' by plain node_modules
+	// walk-up and `declare module '../src/models'` lands on the fixture source;
+	// afterEach removes it again.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-collections');
+	const outputDir = path.join(fixtureDir, '.tactica');
+
+	afterEach(() => {
+		fs.rmSync(outputDir, { recursive : true, force : true });
+	});
+
+	it('should emit each collection type exactly once', () => {
+		const exitCode = run({
+			project : path.join(fixtureDir, 'tsconfig.json'),
+			outputDir,
+		});
+		expect(exitCode).to.equal(0);
+
+		const typesTs = fs.readFileSync(path.join(outputDir, 'types.ts'), 'utf-8');
+		const registryTs = fs.readFileSync(path.join(outputDir, 'registry.ts'), 'utf-8');
+
+		expect(typesTs.split('export type ShopRegistry_Product =')).to.have.length(2);
+		expect(typesTs.split('export type ShopRegistry_Product_Category =')).to.have.length(2);
+		expect(registryTs.split('\'Product\':')).to.have.length(2);
+		expect(registryTs.split('\'Product.Category\':')).to.have.length(2);
+
+		const definitionsJson = JSON.parse(
+			fs.readFileSync(path.join(outputDir, 'definitions.json'), 'utf-8')
+		);
+		expect(Object.keys(definitionsJson.definitions)).to.have.length(2);
+	});
+
+	it('should resolve collection lookups and compile against the generated types', () => {
+		const exitCode = run({
+			project : path.join(fixtureDir, 'tsconfig.json'),
+			outputDir,
+		});
+		expect(exitCode).to.equal(0);
+
+		const usagesJson = JSON.parse(
+			fs.readFileSync(path.join(outputDir, 'usages.json'), 'utf-8')
+		);
+		const usageKeys = Object.keys(usagesJson.usages);
+		const categoryKey = usageKeys.find(k => k.endsWith('::Product.Category'));
+		expect(categoryKey).to.exist;
+		const relativeLookup = (usagesJson.usages[ categoryKey! ] as Array<{ code: string }>)
+			.find(u => u.code.includes('ProductCtor.lookup'));
+		expect(relativeLookup).to.exist;
+
+		// End-to-end acceptance: the generated types/registry, the fixture
+		// models, and the strict consumer (including its @ts-expect-error
+		// negatives) compile with zero diagnostics under tactica's bundled
+		// TypeScript.
+		const configPath = path.join(fixtureDir, 'tsconfig.json');
+		const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+		const parsed = ts.parseJsonConfigFileContent(configFile.config, ts.sys, fixtureDir);
+		const program = ts.createProgram(parsed.fileNames, parsed.options);
+		const diagnostics = ts.getPreEmitDiagnostics(program);
+		const messages = diagnostics.map(d =>
+			`${d.file ? `${d.file.fileName}:${d.start} — ` : ''}${ts.flattenDiagnosticMessageText(d.messageText, '\n')}`
+		);
+		expect(messages).to.deep.equal([]);
 	});
 });
 

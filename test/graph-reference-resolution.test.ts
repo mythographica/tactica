@@ -17,13 +17,14 @@ import { TypesGenerator } from '../src/generator';
 const compileGeneratedTypes = (files: string[], baseUrl: string): string[] => {
 	const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
 	const program = ts.createProgram(files, {
-		strict           : true,
-		noEmit           : true,
-		target           : ts.ScriptTarget.ES2020,
-		module           : ts.ModuleKind.ES2020,
-		moduleResolution : ts.ModuleResolutionKind.Bundler,
+		strict             : true,
+		noEmit             : true,
+		target             : ts.ScriptTarget.ES2020,
+		module             : ts.ModuleKind.ES2020,
+		moduleResolution   : ts.ModuleResolutionKind.Bundler,
 		baseUrl,
-		paths            : { mnemonica : [ mnemonicaTypes ] },
+		paths              : { mnemonica : [ mnemonicaTypes ] },
+		ignoreDeprecations : '6.0',
 	});
 	const errors = ts.getPreEmitDiagnostics(program)
 		.filter(d => d.category === ts.DiagnosticCategory.Error)

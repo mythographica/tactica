@@ -51,6 +51,10 @@ npm run use:local   # peer/dev/dep → file:../core, file:../typeomatica
 
 `use:public` is the right state for any release work. `use:local` is for ecosystem-wide development.
 
+## TypeScript dependency strategy
+
+Tactica pins `typescript` as a regular **dependency** (6.x — the last classic-API line), not a peer dependency. TypeScript 7's npm package exposes only `lib/version.cjs` at the root; the real API moved to `typescript/unstable/*` (snapshot/handle/client paradigms, no `resolveModuleName`), so the analyzer cannot run on a host-provided TS7. Bundling 6.x keeps tactica working in any host project (TS5, TS6, or TS7) because 6.x and 7 are the same language. Corollary: user tsconfigs may carry options the bundled compiler marks deprecated (e.g. `baseUrl` → TS5101 under TS6). `loadProgram` in `src/cli.ts` force-sets `ignoreDeprecations: '6.0'` on the parsed config — analysis never emits user code, so deprecation errors are about the user's build pipeline, not analyzability. Regression pinned by `test/fixtures/cli-baseurl/`.
+
 ## Source layout
 
 ```
@@ -83,6 +87,24 @@ Tactica core is **framework-blind**: it ships no instrumentation vocabulary of i
   const result = this.service.doSomething();
   return result;
   ```
+
+## The no-cast law
+
+Tactica exists to eliminate manual casts. In any project whose types come
+from `.tactica/`, **every `as` cast is a straightforward error** — the cast
+says the registry doesn't know something it should, so the fix is upstream:
+regenerate, correct the `define()` call, or extend the analyzer — never
+silence the compiler. An agent that meets a type error in tactica-typed
+code must FIRST refresh what tactica knows (regenerate, then re-read the
+generated types — they may already say the thing the cast was faking) and
+only then re-derive. A cast added to make an error go away is a bug planted.
+
+Two sanctioned exceptions, both one-spot and commented, at container
+boundaries: narrowing a deliberately-loose accessor return
+(`getNode(id): object | undefined` → the concrete subtype at the call
+site), and re-grounding `this` inside a model-definition class body that
+cannot see its runtime-installed subtype constructor. They are boundaries,
+not a pattern to imitate.
 
 ## Output contract (consumed by downstream tools)
 
@@ -484,14 +506,14 @@ After changing analyzer behavior:
 - `lazy('TypeName', getter)` — all forms: free `lazy(...)`, method `Type.lazy(...)`, and chained `define('A').lazy('B', getter)`. The getter is followed and the returned constructor is analyzed like a direct `define()` handler (properties and constructor parameters extracted).
 - Builder pattern on the imported `mnemonica` module object: `mnemonica.define('A').define('B')`, `const App = mnemonica; App.define('C')`, `App.lookup('A').define('D')`. Module object aliases from imports (`import { mnemonica as m }`, `import * as mnemonica`, default import) and variable aliases are tracked.
 - Explicit-source APIs: `define(source, 'TypeName', handler)` and `lookup(source, 'TypeName')`, where `source` is a module object, custom collection, or type variable.
-- Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection live in the graph under a `collectionId::`-prefixed full path; they are **not** emitted in `.tactica/types.ts` and **not** added to the global `TypeRegistry` augmentation unless the collection declares a registry interface (Option B, `createTypesCollection<Registry>()`) — then they emit prefixed with the interface name plus a per-collection augmentation. Subtypes inherit the collection from their parent.
+- Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection live in the graph under a `collectionId::`-prefixed full path; they are **not** emitted in `.tactica/types.ts` and **not** added to the global `TypeRegistry` augmentation unless the collection declares a registry interface (Option B, `createTypesCollection<Registry>()`) — then they emit prefixed with the interface name plus a per-collection augmentation. Subtypes inherit the collection from their parent. Constructor-relative lookups on variables bound to a collection type resolve relative-first within that collection (the type's own subtypes, then the collection root) — the runtime lookup law, same as for default-collection types.
 - `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
   - `Parent` is resolved through the variable map, so aliases work: `const User = define('UserEntity', …); @decorate(User)` produces `UserEntity.<ClassName>`.
   - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
   - Constructor parameters are extracted from decorated classes and emitted in `registry.ts` / `types.ts` signatures.
 - `Object.assign(this, data)` (extracts from `data`'s type annotation — inline literal or named alias/interface/class).
 - Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`), where the data parameter may be an inline literal or a NAMED alias/interface/class — named params decompose through the same import-aware referenced-type machinery as constructor signatures (inherited members included), and a bare `this.x = data` keeps the full expanded shape. Inference never overwrites a known annotation with `unknown` (`Record<string, unknown>` counts as known — exact whole-type match, not a substring) and never drops an optionality modifier.
-- Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback.
+- Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback. Generic built-ins keep their explicit type arguments (`new Map<string, number>()` → `Map<string, number>`); without arguments a known generic global emits unknown-filled parameters (`Map<unknown, unknown>`, `Set<unknown>`) — a bare generic name is never emitted (TS2314).
 - Construction shapes beyond plain `new` (recognized within the existing output contract — `instantiation` kind + value-scope bindings, no new fields; `await` is transparent throughout): chain construction (`new R().A()`, `await new R().A().B()` — the tip call records the `instantiation` and the result var binds to the TIP type); `instance.fork()`/`instance.clone()` in BOTH call and property forms (`entry.clone`, core: `readonly clone: this`) — result var binds to the source type AND records an `instantiation` at the site (fork re-runs construction: hooks fire, a distinct instance on a distinct line — owner's decision; byte-indistinguishable from `new` until the deferred mechanism-kind revision); `utils.merge(a, b)` / curried `utils.fork(instance)(...)` — result binds to arg 0's type (documented approximation: a's lineage over b's context) and records an `instantiation` for a's type (curried: at the invocation site, plus the inner binding line); mnemonica `call`/`apply(entity, Ctor, …)` — import-aware (actual `'mnemonica'` imports or module-object members only), the Ctor arg records the `instantiation` and the result var binds to the Ctor type; `@decorate()`-ed classes resolve as the Ctor through the graph tiers, undecorated plain classes bind nothing (no graph entry — never a bare name), free-call `decorate(Class)` is not tracked (decorator syntax only); `bind(entity, Ctor)` — no usage, the bound var binds to the Ctor type (invoking the bound fn, incl. `await f(...)`, is not followed). Bindings surface lexically after the binding statement; consumers counting constructions should expect fork/merge sites among the `instantiation` entries — the mechanism distinction (new vs fork vs call) is NOT in the outputs until the deferred contract revision.
 - Async constructor functions.
 - `as TypeConstructor<{…}>` casting (and `as ConstructorFunction<{…}>` legacy alias) for plain function constructors.

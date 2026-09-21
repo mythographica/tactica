@@ -543,4 +543,102 @@ describe('Builder pattern and custom collections', () => {
 			expect(usages.has('User')).to.be.true;
 		});
 	});
+
+	describe('collection two-pass stability and relative lookup', () => {
+		const collectionSource = `
+			import { createTypesCollection } from 'mnemonica';
+
+			export interface ShopRegistry {}
+
+			const Shop = createTypesCollection<ShopRegistry>();
+			const Product = Shop.define('Product', function (this: any, data: { productId: string }) {
+				this.productId = data.productId;
+			});
+			Product.define('Category', function (this: any, data: { categoryId: string }) {
+				this.categoryId = data.categoryId;
+			});
+		`;
+
+		it('should not duplicate collection types when the file is analyzed twice', () => {
+			// The CLI runs a definitions pass, then resetUsages(), then a usages
+			// pass re-analyzing every file. The collection id minted for a
+			// variable must survive the second pass — a fresh one re-registers
+			// every type under a new `collectionId::` prefix and the generator
+			// emits each of them twice (TS2300 in the generated files).
+			analyzer.analyzeSource(collectionSource, 'src/models.ts');
+			analyzer.resetUsages();
+			analyzer.analyzeSource(collectionSource, 'src/models.ts');
+
+			expect(analyzer.getGraph().getAllTypes()).to.have.length(2);
+
+			const generator = new TypesGenerator(analyzer.getGraph(), false, '.tactica');
+			const types = generator.generateTypesFile().content;
+			const registry = generator.generateTypeRegistry().content;
+
+			expect(types.split('export type ShopRegistry_Product =')).to.have.length(2);
+			expect(types.split('export type ShopRegistry_Product_Category =')).to.have.length(2);
+			expect(registry.split('\'Product\':')).to.have.length(2);
+			expect(registry.split('\'Product.Category\':')).to.have.length(2);
+		});
+
+		it('should resolve a constructor-relative lookup() inside a collection', () => {
+			// ProductCtor is bound to a TYPE inside the collection, not to the
+			// collection itself: lookup must go relative-first from that type,
+			// not collapse to `<collectionId>::Category` (runtime semantics:
+			// the type's own subtypes first, then the collection root).
+			const source = `${collectionSource}
+				const ProductCtor = Shop.lookup('Product');
+				const CategoryCtor = ProductCtor.lookup('Category');
+			`;
+
+			analyzer.analyzeSource(source, 'src/models.ts');
+
+			expect(analyzer.getResolutionErrors()).to.have.length(0);
+
+			const product = analyzer.getGraph().getAllTypes()
+				.find(t => t.name === 'Product');
+			expect(product).to.exist;
+			const collectionId = product!.collectionId!;
+
+			const usages = analyzer.getUsages();
+			expect(usages.has(`${collectionId}::Product`)).to.be.true;
+			const categoryUsages = usages.get(`${collectionId}::Product.Category`);
+			expect(categoryUsages).to.exist;
+			expect(categoryUsages!.some(u => u.kind === 'lookup' && u.code.includes('ProductCtor.lookup'))).to.be.true;
+		});
+
+		it('should fall back to the collection root from a type-bound receiver', () => {
+			const source = `${collectionSource}
+				Shop.define('Util', function (this: any, data: { u: string }) {
+					this.u = data.u;
+				});
+				const ProductCtor = Shop.lookup('Product');
+				const UtilCtor = ProductCtor.lookup('Util');
+			`;
+
+			analyzer.analyzeSource(source, 'src/models.ts');
+
+			expect(analyzer.getResolutionErrors()).to.have.length(0);
+
+			const product = analyzer.getGraph().getAllTypes()
+				.find(t => t.name === 'Product');
+			const usages = analyzer.getUsages();
+			const utilUsages = usages.get(`${product!.collectionId}::Util`);
+			expect(utilUsages).to.exist;
+			expect(utilUsages!.some(u => u.kind === 'lookup' && u.code.includes('ProductCtor.lookup'))).to.be.true;
+		});
+
+		it('should fail a constructor-relative lookup that resolves nowhere', () => {
+			const source = `${collectionSource}
+				const ProductCtor = Shop.lookup('Product');
+				ProductCtor.lookup('Nope');
+			`;
+
+			analyzer.analyzeSource(source, 'src/models.ts');
+
+			const errors = analyzer.getResolutionErrors();
+			expect(errors).to.have.length(1);
+			expect(errors[ 0 ].message).to.include('Nope');
+		});
+	});
 });

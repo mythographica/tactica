@@ -368,13 +368,14 @@ describe('Referenced type expansion fidelity (F13)', () => {
 				// downstream TS errors from the bare typeof leak
 				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
 				const program = ts.createProgram([ typesPath ], {
-					strict           : true,
-					noEmit           : true,
-					target           : ts.ScriptTarget.ES2020,
-					module           : ts.ModuleKind.ES2020,
-					moduleResolution : ts.ModuleResolutionKind.Bundler,
-					baseUrl          : outputDir,
-					paths            : { mnemonica : [ mnemonicaTypes ] },
+					strict             : true,
+					noEmit             : true,
+					target             : ts.ScriptTarget.ES2020,
+					module             : ts.ModuleKind.ES2020,
+					moduleResolution   : ts.ModuleResolutionKind.Bundler,
+					baseUrl            : outputDir,
+					paths              : { mnemonica : [ mnemonicaTypes ] },
+					ignoreDeprecations : '6.0',
 				});
 				const diagnostics = ts.getPreEmitDiagnostics(program);
 				const compileErrors = diagnostics
@@ -512,13 +513,14 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 				// was downstream consumer TS errors
 				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
 				const program = ts.createProgram([ typesPath ], {
-					strict           : true,
-					noEmit           : true,
-					target           : ts.ScriptTarget.ES2020,
-					module           : ts.ModuleKind.ES2020,
-					moduleResolution : ts.ModuleResolutionKind.Bundler,
-					baseUrl          : outputDir,
-					paths            : { mnemonica : [ mnemonicaTypes ] },
+					strict             : true,
+					noEmit             : true,
+					target             : ts.ScriptTarget.ES2020,
+					module             : ts.ModuleKind.ES2020,
+					moduleResolution   : ts.ModuleResolutionKind.Bundler,
+					baseUrl            : outputDir,
+					paths              : { mnemonica : [ mnemonicaTypes ] },
+					ignoreDeprecations : '6.0',
 				});
 				const diagnostics = ts.getPreEmitDiagnostics(program);
 				const compileErrors = diagnostics
@@ -698,13 +700,14 @@ export const GaugeParens = define('GaugeParens', function (this: GaugeParens, da
 				// was a hard compile break for every consumer (F17)
 				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
 				const program = ts.createProgram([ typesPath ], {
-					strict           : true,
-					noEmit           : true,
-					target           : ts.ScriptTarget.ES2020,
-					module           : ts.ModuleKind.ES2020,
-					moduleResolution : ts.ModuleResolutionKind.Bundler,
-					baseUrl          : outputDir,
-					paths            : { mnemonica : [ mnemonicaTypes ] },
+					strict             : true,
+					noEmit             : true,
+					target             : ts.ScriptTarget.ES2020,
+					module             : ts.ModuleKind.ES2020,
+					moduleResolution   : ts.ModuleResolutionKind.Bundler,
+					baseUrl            : outputDir,
+					paths              : { mnemonica : [ mnemonicaTypes ] },
+					ignoreDeprecations : '6.0',
 				});
 				const diagnostics = ts.getPreEmitDiagnostics(program);
 				const compileErrors = diagnostics

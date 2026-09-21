@@ -40,6 +40,7 @@ export function ComplexHandler (
 	this.instance = new LocalClass();
 	this.callResult = customFunc(score);
 	this.floorVal = Math.floor(score);
+	this.dataLabel = data.label;
 }
 
 class LocalClass {}

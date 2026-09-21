@@ -112,13 +112,14 @@ describe('TypesGenerator', () => {
 
 			const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
 			const program = ts.createProgram([ filePath ], {
-				strict           : true,
-				noEmit           : true,
-				target           : ts.ScriptTarget.ES2020,
-				module           : ts.ModuleKind.ES2020,
-				moduleResolution : ts.ModuleResolutionKind.Bundler,
-				baseUrl          : tmpDir,
-				paths            : { mnemonica : [ mnemonicaTypes ] },
+				strict             : true,
+				noEmit             : true,
+				target             : ts.ScriptTarget.ES2020,
+				module             : ts.ModuleKind.ES2020,
+				moduleResolution   : ts.ModuleResolutionKind.Bundler,
+				baseUrl            : tmpDir,
+				paths              : { mnemonica : [ mnemonicaTypes ] },
+				ignoreDeprecations : '6.0',
 			});
 			const diagnostics = ts.getPreEmitDiagnostics(program);
 			const errors = diagnostics
