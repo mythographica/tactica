@@ -6,7 +6,7 @@ import {
 	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
 	DefinitionInfo, UsageInfo, ConstructorParamInfo,
 	EDSInfo, FlowInfo, InstrumentationKind, InstrumentationPoint,
-	InstrumentationScope, ResolutionError
+	InstrumentationScope, ResolutionError, CollectionManifestEntry
 } from './types';
 import {
 	TypeGraphImpl, resolveGraphTypeReference, GraphTypeReferenceResult 
@@ -19,6 +19,9 @@ interface CollectionInfo {
 	variableName: string;
 	sourceFile: string;
 	registryInterfaceName?: string;
+	/** 1-based position of the createTypesCollection() variable declaration */
+	line: number;
+	column: number;
 }
 
 /**
@@ -337,6 +340,39 @@ export class MnemonicaAnalyzer {
 	 */
 	getDefinitions (): Map<string, DefinitionInfo> {
 		return this.definitions;
+	}
+
+	/**
+	 * The collections.json manifest: one entry per minted collection, in
+	 * minting order, preceded by the default-collection entry whenever
+	 * default-collection types exist. The default entry has no id/location
+	 * (there is no call site — unprefixed fullPaths are its identity) and
+	 * its registry interface is the global TypeRegistry.
+	 */
+	getCollectionsManifest (): CollectionManifestEntry[] {
+		const entries: CollectionManifestEntry[] = [];
+		const hasDefaultTypes = this.graph.getAllTypes().some(t => t.collectionId === undefined);
+		if (hasDefaultTypes) {
+			entries.push({
+				id                : null,
+				name              : 'defaultTypes',
+				registryInterface : 'TypeRegistry',
+				location          : null
+			});
+		}
+		for (const [ id, info ] of this.collectionInfo) {
+			const entry: CollectionManifestEntry = {
+				id,
+				name     : info.variableName,
+				location : `${info.sourceFile}:${info.line}:${info.column}`
+			};
+			// absent when the collection declares none — not null, not undefined
+			if (info.registryInterfaceName) {
+				entry.registryInterface = info.registryInterfaceName;
+			}
+			entries.push(entry);
+		}
+		return entries;
 	}
 
 	/**
@@ -1289,6 +1325,25 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Emitted instance-type alias for a graph node — the name types.ts /
+	 * registry.ts actually declare. Option B collection types carry their
+	 * registry interface prefix; collection types WITHOUT a registry
+	 * interface are never emitted, so no valid alias exists for them
+	 * (undefined — callers degrade to `unknown`, never a bare name).
+	 */
+	private getEmittedInstanceTypeName (node: TypeNode): string | undefined {
+		if (node.collectionId && !node.registryInterfaceName) {
+			return undefined;
+		}
+		const dotted = node.collectionId
+			? node.fullPath.slice(node.collectionId.length + 2)
+			: node.fullPath;
+		const prefix = node.registryInterfaceName ? `${node.registryInterfaceName}_` : '';
+		const result = `${prefix}${dotted.replace(/\./g, '_')}`;
+		return result;
+	}
+
+	/**
 	 * Resolve a simple (non-qualified) type reference: import-aware
 	 * declaration expansion first, then the InstanceType<typeof X> pattern,
 	 * then mnemonica graph types; known globals keep their bare name and
@@ -1327,7 +1382,9 @@ export class MnemonicaAnalyzer {
 			if (instanceArg && ts.isTypeQueryNode(instanceArg) && ts.isIdentifier(instanceArg.exprName)) {
 				const queryResult = this.resolveGraphTypeName(instanceArg.exprName.text);
 				if (queryResult.status === 'unique') {
-					const aliasResult = queryResult.node.fullPath.replace(/\./g, '_');
+					// undefined when the type is never emitted (collection
+					// without a registry interface) — degrade, never bare
+					const aliasResult = this.getEmittedInstanceTypeName(queryResult.node) ?? 'unknown';
 					return aliasResult;
 				}
 				if (queryResult.status === 'ambiguous') {
@@ -1359,8 +1416,11 @@ export class MnemonicaAnalyzer {
 					if (ts.isIdentifier(typeQuery.exprName)) {
 						const queryResult = this.resolveGraphTypeName(typeQuery.exprName.text);
 						if (queryResult.status === 'unique') {
-							// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-							return queryResult.node.fullPath.replace(/\./g, '_');
+							// Emitted alias: Usages.UsageEntry -> Usages_UsageEntry
+							// (Option B collections carry the registry prefix;
+							// undefined when never emitted — degrade)
+							const queryAlias = this.getEmittedInstanceTypeName(queryResult.node) ?? 'unknown';
+							return queryAlias;
 						}
 						if (queryResult.status === 'ambiguous') {
 							this.recordGraphReferenceError(typeQuery.exprName.text, typeQuery, queryResult);
@@ -1371,8 +1431,11 @@ export class MnemonicaAnalyzer {
 				}
 			}
 			if (!typeArgs || typeArgs.length === 0) {
-				// Convert full path with dots to underscores: Usages.UsageEntry -> Usages_UsageEntry
-				return graphResult.node.fullPath.replace(/\./g, '_');
+				// Emitted alias: Usages.UsageEntry -> Usages_UsageEntry
+				// (Option B collections carry the registry prefix;
+				// undefined when never emitted — degrade)
+				const graphAlias = this.getEmittedInstanceTypeName(graphResult.node) ?? 'unknown';
+				return graphAlias;
 			}
 			// Generic use of a graph type keeps its simple name; the
 			// generator upgrades it to the full-path instance type name
@@ -1954,10 +2017,13 @@ export class MnemonicaAnalyzer {
 				initializer as ts.CallExpression,
 				sourceFile
 			);
+			const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart());
 			this.collectionInfo.set(collectionId, {
 				variableName          : node.name.text,
 				sourceFile            : sourceFile.fileName,
-				registryInterfaceName : registryInterfaceName
+				registryInterfaceName : registryInterfaceName,
+				line                  : line + 1,
+				column                : character + 1
 			});
 			return;
 		}
@@ -2005,13 +2071,23 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
-	 * Get the registry interface name for a collection id.
+	 * Stamp a node with its collection's emission info: the Option B registry
+	 * interface name and the collection's home file — the module the generated
+	 * augmentation must target (the interface is confirmed declared there).
+	 * A type's own sourceFile is NOT the target: multi-file collections define
+	 * types across many modules while the interface lives at the
+	 * createTypesCollection() call site.
 	 */
-	private getRegistryInterfaceName (collectionId?: string): string | undefined {
+	private applyCollectionEmissionInfo (node: TypeNode, collectionId?: string): void {
 		if (!collectionId) {
-			return undefined;
+			return;
 		}
-		return this.collectionInfo.get(collectionId)?.registryInterfaceName;
+		const info = this.collectionInfo.get(collectionId);
+		if (!info) {
+			return;
+		}
+		node.registryInterfaceName = info.registryInterfaceName;
+		node.collectionSourceFile = info.sourceFile;
 	}
 
 	/**
@@ -2244,7 +2320,7 @@ export class MnemonicaAnalyzer {
 			character + 1,
 			collectionId
 		);
-		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
+		this.applyCollectionEmissionInfo(node, collectionId);
 
 		// Same-namespace duplicate detection (hard-fail law): key by the
 		// runtime namespace — collection roots `<collection>::<name>`, or
@@ -2349,7 +2425,7 @@ export class MnemonicaAnalyzer {
 			character + 1,
 			collectionId
 		);
-		node.registryInterfaceName = this.getRegistryInterfaceName(collectionId);
+		this.applyCollectionEmissionInfo(node, collectionId);
 
 		// Same-namespace duplicate detection (hard-fail law)
 		this.recordDefineSite(
@@ -2805,6 +2881,17 @@ export class MnemonicaAnalyzer {
 				}
 				return;
 			}
+			// Scope boundary: a construction inside a nested class/function
+			// body does not bind the outer variable —
+			// `const X = define('X', class { m = new Map() })` holds the
+			// defined constructor, not a Map. Without this stop the class-body
+			// instantiation clobbers X's binding and a later X.define('Child')
+			// loses its parent (the child lands as a bare default-collection
+			// root — fatal for custom collections, whose fullPaths the
+			// name-only fallback cannot see).
+			if (ts.isClassLike(current) || ts.isFunctionLike(current)) {
+				return;
+			}
 			current = current.parent;
 		}
 	}
@@ -3121,7 +3208,7 @@ export class MnemonicaAnalyzer {
 			character + 1,
 			collectionId
 		);
-		node.registryInterfaceName = this.getRegistryInterfaceName(node.collectionId);
+		this.applyCollectionEmissionInfo(node, node.collectionId);
 
 		// Same-namespace duplicate detection (hard-fail law)
 		this.recordDefineSite(
@@ -3810,7 +3897,17 @@ export class MnemonicaAnalyzer {
 						if (!type && ts.isIdentifier(expr.right)) {
 							const bound = this.variableToTypeMap.get(expr.right.text);
 							if (bound) {
-								type = bound.replace(/\./g, '_');
+								// Emit the alias types.ts declares (Option B
+								// registry prefix), not the raw collectionId::
+								// fullPath; never-emitted types fall through
+								// to initializer inference
+								const boundNode = this.graph.findType(bound);
+								const boundAlias = boundNode
+									? this.getEmittedInstanceTypeName(boundNode)
+									: undefined;
+								if (boundAlias) {
+									type = boundAlias;
+								}
 							}
 						}
 						if (!type) {

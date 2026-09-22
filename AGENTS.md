@@ -207,12 +207,28 @@ children's constructor signatures, same as `types.ts`. Source:
 ```
 
 - Structured Trie representation of the type graph. Each node carries the same `name`, `fullPath`, and `location` data as `definitions.json`, but organized as parent/children.
+- Custom-collection roots carry the `collectionId::` prefix on `fullPath` (`collection_1::Product`); nested fullPaths inherit it from the parent (`collection_1::Product.Category`). The `name` field always stays unprefixed.
 - **Consumed by:** downstream graph visualizations and by agents that need to understand the mnemonica hierarchy without parsing ASCII art.
 - Source: `TypeGraphImpl.toHierarchy()` → `TypesWriter.writeHierarchyFile()`.
 
 ### `hierarchy.txt` (always)
 
-ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Saved to disk so it can be read, diffed, or committed independently of terminal output.
+ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Saved to disk so it can be read, diffed, or committed independently of terminal output. Display-only: siblings are sorted by fullPath at render time (code-unit order — default-collection roots land before `collection_N::`-prefixed ones); the graph and `hierarchy.json` keep discovery order.
+
+### `collections.json` (always)
+
+```json
+{
+    "version": "1.0",
+    "generatedAt": "2026-09-22T…",
+    "collections": [
+        { "id": null, "name": "defaultTypes", "registryInterface": "TypeRegistry", "location": null },
+        { "id": "collection_1", "name": "Shop", "registryInterface": "ShopRegistry", "location": "src/collections.ts:5:7" }
+    ]
+}
+```
+
+The collection manifest: one entry per minted collection, in minting order. `name` is the variable holding the `createTypesCollection()` result; `location` its call site; `registryInterface` is absent (not null) when the collection declares no Option-B interface. The **default-collection entry comes first whenever default-collection types exist** — it has no call site, so `id`/`location` stay `null` (unprefixed fullPaths are its identity) and its registry interface is the global `TypeRegistry`. The `id` ↔ `registryInterface` pair is the join key between the `collectionId::`-prefixed graph outputs (hierarchy/definitions/usages/flow/eds) and the registry-prefixed aliases in `types.ts` / `registry.ts`. Source: `MnemonicaAnalyzer.getCollectionsManifest()` → `TypesWriter.writeCollectionsFile()`.
 
 ### `definitions.json` (always)
 
@@ -237,6 +253,7 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
 - `kind` is `"define" | "decorate"`.
 - `location` is `<file>:<1-based-line>:<1-based-column>`.
 - `parent` is the parent's full path or `null` for root types.
+- Custom-collection types key the map with the `collectionId::` prefix (`collection_1::Product.Category`), and `parent` carries the prefixed path.
 - **Consumed by:** `mnemographica/src/providers/definitionProvider.ts` (Go to Definition), `mnemographica/src/models/Registry.ts` (registry view).
 
 ### `usages.json` (always)
@@ -255,6 +272,7 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
 ```
 
 - `kind` is one of `'instantiation' | 'typeAnnotation' | 'propertyAccess' | 'lookup' | 'reference'`. `instantiation` includes construction-shape calls beyond `new` — chain tips (`new R().A()`), mnemonica `call`/`apply(entity, Ctor, …)`, and `fork`/`clone`/`merge` sites (owner decision 2026-09: fork re-runs construction) — all byte-indistinguishable from `new` until the deferred mechanism-kind revision; `constructorText` carries the callee/Ctor expression text to keep sites readable.
+- Keys are fullPaths — custom-collection types keep their `collectionId::` prefix here, and in `flow.json` and `eds.json` as well.
 - `holderScopeId` (optional, additive) is the innermost local scope holding the usage — the scopeId from `scopes.json` (module scope = file path; function scopes = file:line:col). Present for every usage inside a tracked file.
 - `constructorText` (optional, additive; instantiations only) is the constructor expression text actually used (`'Thing'`, `'user.AdminEntity'`, a lookup alias name) — feeds the creation graph's anchors.
 - **Consumed by:** `mnemographica/src/providers/referenceProvider.ts` (Find All References).
@@ -480,7 +498,7 @@ Inside-out creation walker (instrumentation walker plan, Phase 3).
 
 **Mode behavior:**
 
-- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`; optional `eds.json`).
+- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`, `collections.json`; optional `eds.json`).
 - With `--module-augmentation`: writes `index.d.ts` (+ same JSONs). Default mode is the recommended path.
 
 **Exclusion behavior:** the project-conventional `.tactica/` directory (next to the tsconfig) is ALWAYS excluded from analysis, even when `--output` points elsewhere — generated files are never project source. When `--output` is used, that output directory is excluded too. No env variable; the flag is enough.
@@ -506,7 +524,7 @@ After changing analyzer behavior:
 - `lazy('TypeName', getter)` — all forms: free `lazy(...)`, method `Type.lazy(...)`, and chained `define('A').lazy('B', getter)`. The getter is followed and the returned constructor is analyzed like a direct `define()` handler (properties and constructor parameters extracted).
 - Builder pattern on the imported `mnemonica` module object: `mnemonica.define('A').define('B')`, `const App = mnemonica; App.define('C')`, `App.lookup('A').define('D')`. Module object aliases from imports (`import { mnemonica as m }`, `import * as mnemonica`, default import) and variable aliases are tracked.
 - Explicit-source APIs: `define(source, 'TypeName', handler)` and `lookup(source, 'TypeName')`, where `source` is a module object, custom collection, or type variable.
-- Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection live in the graph under a `collectionId::`-prefixed full path; they are **not** emitted in `.tactica/types.ts` and **not** added to the global `TypeRegistry` augmentation unless the collection declares a registry interface (Option B, `createTypesCollection<Registry>()`) — then they emit prefixed with the interface name plus a per-collection augmentation. Subtypes inherit the collection from their parent. Constructor-relative lookups on variables bound to a collection type resolve relative-first within that collection (the type's own subtypes, then the collection root) — the runtime lookup law, same as for default-collection types.
+- Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection live in the graph under a `collectionId::`-prefixed full path; they are **not** emitted in `.tactica/types.ts` and **not** added to the global `TypeRegistry` augmentation unless the collection declares a registry interface (Option B, `createTypesCollection<Registry>()`) — then they emit prefixed with the interface name plus a per-collection augmentation. The augmentation targets the module holding the `createTypesCollection<Registry>()` call (the interface is confirmed declared there), so multi-file collections share one augmented interface no matter how many modules define types. Subtypes inherit the collection from their parent. Constructor-relative lookups on variables bound to a collection type resolve relative-first within that collection (the type's own subtypes, then the collection root) — the runtime lookup law, same as for default-collection types.
 - `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
   - `Parent` is resolved through the variable map, so aliases work: `const User = define('UserEntity', …); @decorate(User)` produces `UserEntity.<ClassName>`.
   - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
@@ -514,7 +532,7 @@ After changing analyzer behavior:
 - `Object.assign(this, data)` (extracts from `data`'s type annotation — inline literal or named alias/interface/class).
 - Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`), where the data parameter may be an inline literal or a NAMED alias/interface/class — named params decompose through the same import-aware referenced-type machinery as constructor signatures (inherited members included), and a bare `this.x = data` keeps the full expanded shape. Inference never overwrites a known annotation with `unknown` (`Record<string, unknown>` counts as known — exact whole-type match, not a substring) and never drops an optionality modifier.
 - Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback. Generic built-ins keep their explicit type arguments (`new Map<string, number>()` → `Map<string, number>`); without arguments a known generic global emits unknown-filled parameters (`Map<unknown, unknown>`, `Set<unknown>`) — a bare generic name is never emitted (TS2314).
-- Construction shapes beyond plain `new` (recognized within the existing output contract — `instantiation` kind + value-scope bindings, no new fields; `await` is transparent throughout): chain construction (`new R().A()`, `await new R().A().B()` — the tip call records the `instantiation` and the result var binds to the TIP type); `instance.fork()`/`instance.clone()` in BOTH call and property forms (`entry.clone`, core: `readonly clone: this`) — result var binds to the source type AND records an `instantiation` at the site (fork re-runs construction: hooks fire, a distinct instance on a distinct line — owner's decision; byte-indistinguishable from `new` until the deferred mechanism-kind revision); `utils.merge(a, b)` / curried `utils.fork(instance)(...)` — result binds to arg 0's type (documented approximation: a's lineage over b's context) and records an `instantiation` for a's type (curried: at the invocation site, plus the inner binding line); mnemonica `call`/`apply(entity, Ctor, …)` — import-aware (actual `'mnemonica'` imports or module-object members only), the Ctor arg records the `instantiation` and the result var binds to the Ctor type; `@decorate()`-ed classes resolve as the Ctor through the graph tiers, undecorated plain classes bind nothing (no graph entry — never a bare name), free-call `decorate(Class)` is not tracked (decorator syntax only); `bind(entity, Ctor)` — no usage, the bound var binds to the Ctor type (invoking the bound fn, incl. `await f(...)`, is not followed). Bindings surface lexically after the binding statement; consumers counting constructions should expect fork/merge sites among the `instantiation` entries — the mechanism distinction (new vs fork vs call) is NOT in the outputs until the deferred contract revision.
+- Construction shapes beyond plain `new` (recognized within the existing output contract — `instantiation` kind + value-scope bindings, no new fields; `await` is transparent throughout): chain construction (`new R().A()`, `await new R().A().B()` — the tip call records the `instantiation` and the result var binds to the TIP type); `instance.fork()`/`instance.clone()` in BOTH call and property forms (`entry.clone`, core: `readonly clone: this`) — result var binds to the source type AND records an `instantiation` at the site (fork re-runs construction: hooks fire, a distinct instance on a distinct line — owner's decision; byte-indistinguishable from `new` until the deferred mechanism-kind revision); `utils.merge(a, b)` / curried `utils.fork(instance)(...)` — result binds to arg 0's type (documented approximation: a's lineage over b's context) and records an `instantiation` for a's type (curried: at the invocation site, plus the inner binding line); mnemonica `call`/`apply(entity, Ctor, …)` — import-aware (actual `'mnemonica'` imports or module-object members only), the Ctor arg records the `instantiation` and the result var binds to the Ctor type; `@decorate()`-ed classes resolve as the Ctor through the graph tiers, undecorated plain classes bind nothing (no graph entry — never a bare name), free-call `decorate(Class)` is not tracked (decorator syntax only); `bind(entity, Ctor)` — no usage, the bound var binds to the Ctor type (invoking the bound fn, incl. `await f(...)`, is not followed). Bindings surface lexically after the binding statement, and a construction nested inside a class/function body of the initializer binds nothing — scope boundaries are not crossed (`define('X', class { m = new Map() })` keeps X bound to X, never to `Map`); consumers counting constructions should expect fork/merge sites among the `instantiation` entries — the mechanism distinction (new vs fork vs call) is NOT in the outputs until the deferred contract revision.
 - Async constructor functions.
 - `as TypeConstructor<{…}>` casting (and `as ConstructorFunction<{…}>` legacy alias) for plain function constructors.
 - Typeomatica `@Strict` decorator alongside `@decorate`; `Object.setPrototypeOf(MyType.prototype, new BaseClass(…))`.

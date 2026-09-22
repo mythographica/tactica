@@ -4,7 +4,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {
 	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson,
-	InstrumentationPoint, InstrumentationJson, ModuleGraph, ModulesJson, ScopeAnalysis, ScopesJson, CreationGraph
+	InstrumentationPoint, InstrumentationJson, ModuleGraph, ModulesJson, ScopeAnalysis, ScopesJson, CreationGraph,
+	CollectionManifestEntry, CollectionsJson
 } from './types';
 
 /**
@@ -301,6 +302,27 @@ export class TypesWriter {
 			version     : '1.0',
 			generatedAt : new Date().toISOString(),
 			roots,
+		});
+
+		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write the collection manifest: one entry per collection (default
+	 * first when default-collection types exist), ids + display names +
+	 * Option-B registry interfaces + call sites. The id↔interface mapping
+	 * is the join key between the `collectionId::`-prefixed graph outputs
+	 * and the registry-prefixed aliases in types.ts / registry.ts.
+	 */
+	writeCollectionsFile (collections: CollectionManifestEntry[]): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'collections.json');
+
+		const json: CollectionsJson = this.relativize({
+			version     : '1.0',
+			generatedAt : new Date().toISOString(),
+			collections,
 		});
 
 		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');

@@ -277,9 +277,23 @@ function attachWrapJoinData (
 
 /**
  * Render type hierarchy as an ASCII tree string.
+ * Display-only: siblings are sorted by fullPath at render time (code-unit
+ * order — default-collection PascalCase roots land before the
+ * `collection_N::`-prefixed ones). The graph itself keeps discovery order;
+ * hierarchy.json is unaffected.
  */
 function renderTypeHierarchy (graph: TypeGraphImpl): string {
 	const lines: string[] = [ 'Type Hierarchy (Trie):' ];
+
+	function sortedByFullPath (nodes: TypeNode[]): TypeNode[] {
+		const sorted = Array.from(nodes);
+		sorted.sort((a, b) => {
+			if (a.fullPath < b.fullPath) { return -1; }
+			if (a.fullPath > b.fullPath) { return 1; }
+			return 0;
+		});
+		return sorted;
+	}
 
 	function renderNode (node: TypeNode, prefix = '', isLast = true): void {
 		const connector = isLast ? '└── ' : '├── ';
@@ -287,7 +301,7 @@ function renderTypeHierarchy (graph: TypeGraphImpl): string {
 		const instanceName = node.fullPath.replace(/\./g, '_');
 		lines.push(`${prefix}${connector}${instanceName}`);
 
-		const children = Array.from(node.children.values());
+		const children = sortedByFullPath(Array.from(node.children.values()));
 		const newPrefix = prefix + (isLast ? '    ' : '│   ');
 
 		for (let i = 0; i < children.length; i++) {
@@ -295,7 +309,7 @@ function renderTypeHierarchy (graph: TypeGraphImpl): string {
 		}
 	}
 
-	const roots = Array.from(graph.roots.values());
+	const roots = sortedByFullPath(Array.from(graph.roots.values()));
 	for (let i = 0; i < roots.length; i++) {
 		renderNode(roots[ i ], '', i === roots.length - 1);
 	}
@@ -849,6 +863,14 @@ export * from './registry${options.esm ? '.js' : ''}';
 	if (options.verbose) {
 		console.log(`Generated hierarchy.json at: ${hierarchyJsonPath}`);
 		console.log(`Generated hierarchy.txt at: ${hierarchyTxtPath}`);
+	}
+
+	// Always generate collections.json (the collection manifest: ids, display
+	// names, Option-B registry interfaces, call sites — the id↔interface join
+	// key between the prefixed graph outputs and the types.ts aliases)
+	const collectionsPath = writer.writeCollectionsFile(analyzer.getCollectionsManifest());
+	if (options.verbose) {
+		console.log(`Generated collections.json at: ${collectionsPath}`);
 	}
 
 	if (options.verbose) {

@@ -53,6 +53,12 @@ export interface TypeNode {
     collectionId?: string;
     /** Registry interface name for custom collections using Option B (user-provided registry interface) */
     registryInterfaceName?: string;
+    /**
+     * Source file of the createTypesCollection() call — the module the
+     * Option B registry augmentation must target (the interface is
+     * confirmed declared there)
+     */
+    collectionSourceFile?: string;
 }
 export interface TypeGraph {
     /** Root types, keyed by full path (custom-collection roots carry the `collectionId::` prefix) */
@@ -522,6 +528,30 @@ export interface HierarchyJson {
     version: string;
     generatedAt: string;
     roots: HierarchyNode[];
+}
+/**
+ * One entry of the collections.json manifest. The default collection is
+ * emitted first whenever default-collection types exist: it has no call
+ * site, so `id` and `location` stay null (unprefixed fullPaths ARE its
+ * identity) and its registry interface is the global `TypeRegistry`.
+ */
+export interface CollectionManifestEntry {
+    /** Minted id used in `collectionId::` fullPath prefixes; null for the default collection */
+    id: string | null;
+    /** Variable holding the createTypesCollection() result ('defaultTypes' for the default collection) */
+    name: string;
+    /** Option-B registry interface name; absent when the collection declares none */
+    registryInterface?: string;
+    /** createTypesCollection() call site (file:line:col); null for the default collection */
+    location: string | null;
+}
+/**
+ * JSON output for collections.json
+ */
+export interface CollectionsJson {
+    version: string;
+    generatedAt: string;
+    collections: CollectionManifestEntry[];
 }
 /**
  * Structured hierarchy node for machine consumption.

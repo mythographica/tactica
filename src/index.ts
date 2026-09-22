@@ -57,6 +57,8 @@ export type {
 	CreationGraphEdge,
 	CreationAnchor,
 	CreationGraph,
+	CollectionManifestEntry,
+	CollectionsJson,
 } from './types';
 
 // CLI entry point

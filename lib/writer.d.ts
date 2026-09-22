@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode, InstrumentationPoint, ModuleGraph, ScopeAnalysis, CreationGraph } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode, InstrumentationPoint, ModuleGraph, ScopeAnalysis, CreationGraph, CollectionManifestEntry } from './types';
 /**
  * Writes generated types to file system
  */
@@ -76,4 +76,12 @@ export declare class TypesWriter {
      * Write hierarchy.json file
      */
     writeHierarchyFile(roots: HierarchyNode[]): string;
+    /**
+     * Write the collection manifest: one entry per collection (default
+     * first when default-collection types exist), ids + display names +
+     * Option-B registry interfaces + call sites. The id↔interface mapping
+     * is the join key between the `collectionId::`-prefixed graph outputs
+     * and the registry-prefixed aliases in types.ts / registry.ts.
+     */
+    writeCollectionsFile(collections: CollectionManifestEntry[]): string;
 }

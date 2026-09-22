@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint, ResolutionError } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint, ResolutionError, CollectionManifestEntry } from './types';
 import { TypeGraphImpl } from './graph';
 import { TacticaPlugin } from './plugins';
 /**
@@ -73,6 +73,14 @@ export declare class MnemonicaAnalyzer {
      * Get collected definitions
      */
     getDefinitions(): Map<string, DefinitionInfo>;
+    /**
+     * The collections.json manifest: one entry per minted collection, in
+     * minting order, preceded by the default-collection entry whenever
+     * default-collection types exist. The default entry has no id/location
+     * (there is no call site — unprefixed fullPaths are its identity) and
+     * its registry interface is the global TypeRegistry.
+     */
+    getCollectionsManifest(): CollectionManifestEntry[];
     /**
      * Get collected usages
      */
@@ -252,6 +260,14 @@ export declare class MnemonicaAnalyzer {
     private expandReferencedTypeDeclaration;
     private expandReferencedTypeDeclarationInner;
     /**
+     * Emitted instance-type alias for a graph node — the name types.ts /
+     * registry.ts actually declare. Option B collection types carry their
+     * registry interface prefix; collection types WITHOUT a registry
+     * interface are never emitted, so no valid alias exists for them
+     * (undefined — callers degrade to `unknown`, never a bare name).
+     */
+    private getEmittedInstanceTypeName;
+    /**
      * Resolve a simple (non-qualified) type reference: import-aware
      * declaration expansion first, then the InstanceType<typeof X> pattern,
      * then mnemonica graph types; known globals keep their bare name and
@@ -403,9 +419,14 @@ export declare class MnemonicaAnalyzer {
      */
     private extractRegistryInterfaceName;
     /**
-     * Get the registry interface name for a collection id.
+     * Stamp a node with its collection's emission info: the Option B registry
+     * interface name and the collection's home file — the module the generated
+     * augmentation must target (the interface is confirmed declared there).
+     * A type's own sourceFile is NOT the target: multi-file collections define
+     * types across many modules while the interface lives at the
+     * createTypesCollection() call site.
      */
-    private getRegistryInterfaceName;
+    private applyCollectionEmissionInfo;
     /**
      * Check if an expression is a createTypesCollection() call.
      * Handles:

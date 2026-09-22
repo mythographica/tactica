@@ -253,7 +253,7 @@ These usage shapes are recognized and attributed within the existing output cont
 - **`call(entity, Ctor, ...)` / `apply(entity, Ctor, args)`** — the mnemonica construction exports (import-aware: only actual `'mnemonica'` imports or members of a tracked module-object alias match; userland `call`/`apply` never do). The Ctor argument (arg 1) records an `instantiation`, and the result variable binds to the Ctor's type (runtime `InstanceResult<Merge<E, T>>` approximated by T). **Decorated classes resolve as the Ctor** through the same graph tiers — `@decorate() class C` is a known type, so `call(parent, C)` records and binds; an undecorated plain class has no graph entry, so the call binds nothing and records no usage (never a bare name). The free-call `decorate(Class)` form is not tracked (tactica recognizes the `@decorate` decorator syntax only).
 - **`bind(entity, Ctor)`** — records no usage (it constructs nothing); the bound variable binds to the Ctor's type. Invoking the bound function later (`f(...)`, including `await f(...)`) is not followed.
 
-Two boundaries stay deliberate: bindings surface only for references lexically AFTER the binding statement (a binding made inside a constructor body is not yet visible to that same handler's property extraction), and the mechanism distinction (`new` vs fork vs call) is not carried in the outputs — fork/clone/merge record as plain `instantiation` entries, byte-indistinguishable from `new`, until the deferred mechanism-kind contract revision lands. Consumers counting constructions should expect fork sites among them.
+Three boundaries stay deliberate: bindings surface only for references lexically AFTER the binding statement (a binding made inside a constructor body is not yet visible to that same handler's property extraction); a construction nested inside a class or function body of the initializer does not bind the outer variable (`const X = define('X', class { m = new Map() })` binds X to the defined type, never to `Map` — scope boundaries are not crossed); and the mechanism distinction (`new` vs fork vs call) is not carried in the outputs — fork/clone/merge record as plain `instantiation` entries, byte-indistinguishable from `new`, until the deferred mechanism-kind contract revision lands. Consumers counting constructions should expect fork sites among them.
 
 ### Builder pattern on the imported module object
 
@@ -909,7 +909,7 @@ Deliberate approximations (name-based, no type checker): namespace imports count
 1. **Parse** — load `tsconfig.json`, build a `ts.Program`, walk each source file's AST.
 2. **Detect** — find `define()` and `@decorate()` calls, plus `lookup` lookups, `new` expressions, and EDS / flow patterns.
 3. **Graph** — build a Trie of types in `TypeGraphImpl`, with parent links via the chain of `.define()` calls and `@decorate(Parent)` references.
-4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, and optionally `eds.json`.
+4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, `collections.json`, and optionally `eds.json`.
 5. **Write** — files land in the output directory (default `.tactica/`).
 
 ```

@@ -552,7 +552,10 @@ export class TypesGenerator {
 	}
 
 	/**
-	 * Group collection type nodes by their registry interface name and source file.
+	 * Group collection type nodes by their registry interface name and the
+	 * collection's home file (the module declaring the interface — the
+	 * augmentation target), NOT each type's own define file: multi-file
+	 * collections define types across many modules.
 	 * Returns a map keyed by `${registryInterfaceName}::${sourceFile}`.
 	 */
 	private groupCollectionRegistryNodes (): Map<string, TypeNode[]> {
@@ -562,7 +565,8 @@ export class TypesGenerator {
 				if (!node.registryInterfaceName) {
 					continue;
 				}
-				const key = `${node.registryInterfaceName}::${node.sourceFile}`;
+				const homeFile = node.collectionSourceFile ?? node.sourceFile;
+				const key = `${node.registryInterfaceName}::${homeFile}`;
 				const existing = groups.get(key);
 				if (existing) {
 					existing.push(node);
