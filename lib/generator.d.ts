@@ -50,6 +50,13 @@ export declare class TypesGenerator {
          */
     private generateCompleteInstanceInterface;
     /**
+         * Emit one nested-ctor field: dual signatures (construct + the
+         * chain-tip CALL form). The call branch returns exactly what the
+         * construct branch returns, so async tips stay consistent with the
+         * existing async modeling, whatever it emits.
+         */
+    private pushChildConstructorField;
+    /**
          * Generate a simple type declaration for a single type
          */
     generateSingleType(node: TypeNode): string;
@@ -58,6 +65,10 @@ export declare class TypesGenerator {
          * Augment mnemonica's TypeRegistry so lookup('TypeName') returns the typed constructor
          */
     generateTypeRegistry(): GeneratedTypes;
+    /**
+         * Generate constructor parameter list for a type node (the "(…)" part)
+         */
+    private generateConstructorParams;
     /**
          * Generate constructor signature for a type node
          * Uses constructorParams for TypeRegistry signature (not instance properties)

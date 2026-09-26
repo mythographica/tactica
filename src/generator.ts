@@ -141,12 +141,10 @@ export class TypesGenerator {
 
 		// Add nested constructor properties for non-leaf nodes — mirrors
 		// generateCompleteInstanceInterface (types.ts): subtypes construct
-		// from parent instances at any depth, not only from roots
+		// from parent instances at any depth, not only from roots.
 		if (node.children.size > 0) {
 			for (const child of node.children.values()) {
-				const childInstanceType = this.getInstanceTypeName(child);
-				const constructorSig = this.generateConstructorSignature(child);
-				lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
+				this.pushChildConstructorField(lines, indentStr, child);
 			}
 		}
 
@@ -202,9 +200,7 @@ export class TypesGenerator {
 		// Add subtype constructors (non-optional so they're accessible) - only for root types
 		if (!node.parent) {
 			for (const child of node.children.values()) {
-				const childInstanceType = this.getInstanceTypeName(child);
-				const constructorSig = this.generateConstructorSignature(child);
-				lines.push(`${indentStr}\t${child.name}: ${constructorSig} => ${childInstanceType};`);
+				this.pushChildConstructorField(lines, indentStr, child);
 			}
 		}
 	
@@ -280,9 +276,7 @@ export class TypesGenerator {
 		// This follows mnemonica's strictChain behavior
 		if (node.children.size > 0) {
 			for (const child of node.children.values()) {
-				const childInstanceType = this.getInstanceTypeName(child);
-				const constructorSig = this.generateConstructorSignature(child);
-				lines.push(`\t${child.name}: ${constructorSig} => ${childInstanceType};`);
+				this.pushChildConstructorField(lines, '', child);
 			}
 		}
 
@@ -307,6 +301,21 @@ export class TypesGenerator {
 			lines.push('};');
 		}
 		lines.push('');
+	}
+
+	/**
+		 * Emit one nested-ctor field: dual signatures (construct + the
+		 * chain-tip CALL form). The call branch returns exactly what the
+		 * construct branch returns, so async tips stay consistent with the
+		 * existing async modeling, whatever it emits.
+		 */
+	private pushChildConstructorField (lines: string[], indentStr: string, child: TypeNode): void {
+		const childInstanceType = this.getInstanceTypeName(child);
+		const constructorParams = this.generateConstructorParams(child);
+		lines.push(`${indentStr}\t${child.name}: {`);
+		lines.push(`${indentStr}\t\tnew ${constructorParams}: ${childInstanceType};`);
+		lines.push(`${indentStr}\t\t${constructorParams}: ${childInstanceType};`);
+		lines.push(`${indentStr}\t};`);
 	}
 
 	/**
@@ -416,26 +425,27 @@ export class TypesGenerator {
 	}
 
 	/**
-		 * Generate constructor signature for a type node
-		 * Uses constructorParams for TypeRegistry signature (not instance properties)
+		 * Generate constructor parameter list for a type node (the "(…)" part)
 		 */
-	private generateConstructorSignature (node: TypeNode): string {
-		// Use constructorParams if available, otherwise fall back to empty signature
+	private generateConstructorParams (node: TypeNode): string {
 		const params = node.constructorParams;
-
 		if (!params || params.length === 0) {
-			return 'new ()';
+			return '()';
 		}
-
-		// Build typed constructor signature from constructor parameters
 		const props: string[] = [];
 		for (const param of params) {
 			const optional = param.optional ? '?' : '';
 			props.push(`${param.name}${optional}: ${param.type}`);
 		}
+		return `(${props.join(', ')})`;
+	}
 
-		// Return constructor signature with data parameter
-		return `new (${props.join(', ')})`;
+	/**
+		 * Generate constructor signature for a type node
+		 * Uses constructorParams for TypeRegistry signature (not instance properties)
+		 */
+	private generateConstructorSignature (node: TypeNode): string {
+		return `new ${this.generateConstructorParams(node)}`;
 	}
 
 	/**

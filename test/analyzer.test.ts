@@ -1194,5 +1194,64 @@ describe('MnemonicaAnalyzer', () => {
 			const graph = analyzer.getGraph();
 			expect(graph.findType('External')).to.exist;
 		});
+
+		// Two sibling types each own a subtype of the same simple name; each
+		// constructor builds ITS OWN via `new this.StatUpdate()`. The bare
+		// name is ambiguous — the owner is the type defined in the file the
+		// usage sits in (topologica: one file per type).
+		it('resolves this.X to the subtype of the type defined in the same file', () => {
+			const { TypeGraphImpl } = require('../src/graph');
+			const add = (path: string, parent: unknown, file: string) => {
+				const name = path.split('.').pop();
+				const node = TypeGraphImpl.createNode(name, parent, file, 1, 1);
+				analyzer.addTopologicaType(path, node);
+				return node;
+			};
+			const stroke = add('KeyStroke', undefined, 'models/KeyStroke/index.ts');
+			const correct = add('KeyStroke.Correct', stroke, 'models/KeyStroke/Correct/index.ts');
+			const mistake = add('KeyStroke.Mistake', stroke, 'models/KeyStroke/Mistake/index.ts');
+			add('KeyStroke.Correct.StatUpdate', correct, 'models/KeyStroke/Correct/StatUpdate/index.ts');
+			add('KeyStroke.Mistake.StatUpdate', mistake, 'models/KeyStroke/Mistake/StatUpdate/index.ts');
+			const ctor = 'module.exports = function (this: any) { this.statUpdate = new this.StatUpdate(); };';
+			analyzer.analyzeSource(ctor, 'models/KeyStroke/Correct/index.ts');
+			analyzer.analyzeSource(ctor, 'models/KeyStroke/Mistake/index.ts');
+
+			const filesOf = (path: string) => {
+				const files = (analyzer.getUsages().get(path) || [])
+					.filter((usage) => usage.kind === 'instantiation')
+					.map((usage) => usage.location.replace(/:\d+:\d+$/, ''));
+				return files;
+			};
+			expect(filesOf('KeyStroke.Correct.StatUpdate')).to.deep.equal([ 'models/KeyStroke/Correct/index.ts' ]);
+			expect(filesOf('KeyStroke.Mistake.StatUpdate')).to.deep.equal([ 'models/KeyStroke/Mistake/index.ts' ]);
+		});
+
+		// Same shared name, reached through instance variables:
+		// `new lesson.Native()` is Lesson's Native because `lesson` holds a
+		// Run.Lesson instance — not the first `*.Native` defined.
+		it('resolves instance.X through the variable holding the parent instance', () => {
+			const source = [
+				'import { define } from \'mnemonica\';',
+				'const Run = define(\'Run\', function () {});',
+				'const Book = Run.define(\'Book\', function () {});',
+				'Book.define(\'Native\', function () {});',
+				'const Lesson = Run.define(\'Lesson\', function () {});',
+				'Lesson.define(\'Native\', function () {});',
+				'const run = new Run();',
+				'const book = new run.Book();',
+				'new book.Native();',
+				'const lesson = new run.Lesson();',
+				'new lesson.Native();',
+			].join('\n');
+			analyzer.analyzeSource(source, 'engine.ts');
+			const linesOf = (path: string) => {
+				const lines = (analyzer.getUsages().get(path) || [])
+					.filter((usage) => usage.kind === 'instantiation')
+					.map((usage) => usage.location.split(':')[ 1 ]);
+				return lines;
+			};
+			expect(linesOf('Run.Book.Native')).to.deep.equal([ '9' ]);
+			expect(linesOf('Run.Lesson.Native')).to.deep.equal([ '11' ]);
+		});
 	});
 });

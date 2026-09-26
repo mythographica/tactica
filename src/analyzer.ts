@@ -5929,6 +5929,23 @@ export class MnemonicaAnalyzer {
 	}
 	
 	/**
+	 * The one candidate whose parent type is defined in `fileName`, or
+	 * undefined when none or several qualify.
+	 */
+	private subtypeOwnedByFile (candidates: string[], fileName: string): string | undefined {
+		const file = nodePath.resolve(fileName);
+		const owned = candidates.filter((candidate) => {
+			const parent = this.definitions.get(candidate)?.parent;
+			const parentLocation = parent ? this.definitions.get(parent)?.location : undefined;
+			const parentFile = parentLocation ? parentLocation.replace(/:\d+:\d+$/, '') : undefined;
+			const inFile = parentFile !== undefined && nodePath.resolve(parentFile) === file;
+			return inFile;
+		});
+		const result = owned.length === 1 ? owned[ 0 ] : undefined;
+		return result;
+	}
+
+	/**
 			* Resolve full type path from property access
 			*/
 	private resolveTypePath (expr: ts.PropertyAccessExpression): string | undefined {
@@ -5941,14 +5958,40 @@ export class MnemonicaAnalyzer {
 			return fullPath;
 		}
 	
-		// Try just the property name
-		const propName = chain[ chain.length - 1 ];
-		for (const [ path ] of this.definitions) {
-			if (path.endsWith(`.${propName}`) || path === propName) {
-				return path;
+		// Instance receiver: `lesson.Native` where `lesson` is bound to a
+		// Run.Lesson instance means Run.Lesson.Native — resolve through the
+		// variable's type before falling back to the bare name
+		if (chain.length > 1) {
+			const receiverType = this.variableToTypeMap.get(chain[ 0 ]);
+			const viaReceiver = receiverType ? `${receiverType}.${chain.slice(1).join('.')}` : undefined;
+			if (viaReceiver && this.definitions.has(viaReceiver)) {
+				return viaReceiver;
 			}
 		}
-	
+
+		// Try just the property name
+		const propName = chain[ chain.length - 1 ];
+		const candidates: string[] = [];
+		for (const [ path ] of this.definitions) {
+			if (path.endsWith(`.${propName}`) || path === propName) {
+				candidates.push(path);
+			}
+		}
+		// Several types share the name (Correct.StatUpdate and
+		// Mistake.StatUpdate): `new this.StatUpdate()` inside a type's own
+		// file means THAT type's subtype — prefer the candidate whose parent
+		// is defined in the file the access sits in (topologica: one file
+		// per type). Otherwise the first match, as before.
+		if (candidates.length > 1) {
+			const owned = this.subtypeOwnedByFile(candidates, expr.getSourceFile().fileName);
+			if (owned) {
+				return owned;
+			}
+		}
+		if (candidates.length > 0) {
+			return candidates[ 0 ];
+		}
+
 		return fullPath;
 	}
 	

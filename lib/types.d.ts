@@ -255,7 +255,29 @@ export interface InstrumentationJson {
     creationGraph?: CreationGraph;
 }
 /**
- * Flow kind for tracking native instance usage patterns
+ * Flow kind for tracking native instance usage patterns — WHAT FLOWS WHERE
+ * in plain source shapes. Each kind names one syntactic pattern that moves
+ * a typed value, with the shape that produces it:
+ *
+ *   'propertyRead'      reading a field off the instance —
+ *                       `user.name` (also `user?.name` — optional chaining
+ *                       records as a plain propertyRead)
+ *   'propertyWrite'     assigning a field — `user.name = 'x'`
+ *   'methodCall'        calling a method on it — `user.validate()`
+ *   'elementAccess'     bracket read — `user['name']`
+ *   'destructureRead'   destructuring pulls the fields apart —
+ *                       `const { name } = user`
+ *   'passAsArg'         the value crosses into a call as an argument —
+ *                       `processUser(user)` (context names callee + slot)
+ *   'return'            the value leaves the function as its result —
+ *                       `return user`
+ *   'spread'            the fields scatter into a literal — `({ ...user })`
+ *   'reassignment'      the binding is re-pointed — `user = other`
+ *   'instantiation'     a construction-shaped call — `new User()` (also
+ *                       recorded for chain tips and call/apply/fork/merge)
+ *
+ * 'arrayElement' and 'conditionalAccess' are reserved members of the
+ * union — declared, not yet emitted by the analyzer.
  */
 export type FlowKind = 'propertyRead' | 'propertyWrite' | 'methodCall' | 'destructureRead' | 'passAsArg' | 'return' | 'spread' | 'arrayElement' | 'conditionalAccess' | 'elementAccess' | 'reassignment' | 'instantiation';
 /**

@@ -68,18 +68,20 @@ describe('TypesGenerator', () => {
 			expect(result.content).to.not.include('type FirstType =');
 		});
 
-		it('should generate nested constructor properties', () => {
-			const parent = TypeGraphImpl.createNode('Parent', undefined, 'test.ts', 1, 1);
-			const child = TypeGraphImpl.createNode('Child', parent, 'test.ts', 5, 1);
-			
+		it('should generate nested constructor properties with dual signatures', () => {
+			const parent = TypeGraphImpl.createNode('Holder', undefined, 'test.ts', 1, 1);
+			const child = TypeGraphImpl.createNode('Entry', parent, 'test.ts', 5, 1);
+
 			graph.addRoot(parent);
 			graph.addChild(parent, child);
 
 			const result = generator.generateGlobalAugmentation();
 
-			expect(result.content).to.include('Parent');
-			expect(result.content).to.include('Child:');
-			expect(result.content).to.include('new () => Parent_Child');
+			expect(result.content).to.include('Holder');
+			// dual signatures: construct + the chain-tip call form
+			expect(result.content).to.include('Entry: {');
+			expect(result.content).to.include('new (): Holder_Entry;');
+			expect(result.content).to.include('(): Holder_Entry;');
 		});
 
 		it('should include parent in intersection type', () => {
@@ -211,18 +213,20 @@ describe('TypesGenerator', () => {
 			expect(result.content).to.include('\'Order\': new (data: { orderId: string; total: number }) => Order');
 		});
 
-		it('should use constructorParams in types.ts for a nested class-like node', () => {
-			const parent = TypeGraphImpl.createNode('Order', undefined, 'test.ts', 1, 1);
-			const child = TypeGraphImpl.createNode('LineItem', parent, 'test.ts', 5, 1);
+		it('should use constructorParams in types.ts for a nested class-like node, dual signatures', () => {
+			const parent = TypeGraphImpl.createNode('Holder', undefined, 'test.ts', 1, 1);
+			const child = TypeGraphImpl.createNode('Entry', parent, 'test.ts', 5, 1);
 			child.constructorParams = [
-				{ name : 'data', type : '{ sku: string; qty: number }', optional : false }
+				{ name : 'data', type : '{ tag: string; weight: number }', optional : false }
 			];
 			graph.addRoot(parent);
 			graph.addChild(parent, child);
 
 			const result = generator.generateTypesFile();
 
-			expect(result.content).to.include('LineItem: new (data: { sku: string; qty: number }) => Order_LineItem');
+			expect(result.content).to.include('Entry: {');
+			expect(result.content).to.include('new (data: { tag: string; weight: number }): Holder_Entry;');
+			expect(result.content).to.include('(data: { tag: string; weight: number }): Holder_Entry;');
 		});
 	});
 

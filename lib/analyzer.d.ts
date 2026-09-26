@@ -926,6 +926,11 @@ export declare class MnemonicaAnalyzer {
             */
     private getTypeNameFromExpression;
     /**
+     * The one candidate whose parent type is defined in `fileName`, or
+     * undefined when none or several qualify.
+     */
+    private subtypeOwnedByFile;
+    /**
             * Resolve full type path from property access
             */
     private resolveTypePath;
