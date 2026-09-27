@@ -37,6 +37,13 @@ export interface TypeNode {
     properties: Map<string, PropertyInfo>;
     /** Constructor parameters (for TypeRegistry constructor signature) */
     constructorParams?: ConstructorParamInfo[];
+    /**
+     * True when the construct handler is an async function/arrow (detected
+     * syntactically by the async modifier). Emitted constructor shapes then
+     * resolve to Promise<InstanceType>. Async CLASSES are never flagged —
+     * they are typed by the user in userland (documented in AGENTS.md).
+     */
+    isAsync?: boolean;
     /** Parent type node */
     parent?: TypeNode;
     /** Child types */

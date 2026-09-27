@@ -132,6 +132,7 @@ export type UserType_AdminType = ProtoFlat<UserType, {
 - Nested types use `ProtoFlat<Parent, Self>` so overridden parent properties are excluded.
 - Instance-type inheritance is transitive by construction: `ProtoFlat` keeps every non-overridden parent key, and each parent instance type is itself a `ProtoFlat` over its own parent — the ROOT's own constructor-arg fields are present on descendant instance types at any depth (F19 verdict: the law, not a gap; a stale `.tactica` is the usual cause when a root field looks missing).
 - Each nested type emits its own constructor name as `undefined` (strict-chain marker) and similar for siblings.
+- Async function/arrow handlers (`async function`, async arrow — detected syntactically by the async modifier, stored as `TypeNode.isAsync`): the subtype-property twins and the registry entries resolve to `Promise<InstanceType>`; the instance type itself is never wrapped. Async CLASSES (a class constructor returning a Promise) are deliberately NOT detected — no reliable syntactic signal without a type checker — and stay Promise-free; users type them in userland.
 - Source: `TypesGenerator.generateTypesFile()` → `TypesWriter.writeTypesFile()`.
 
 ### `registry.ts` (default mode)
@@ -207,7 +208,7 @@ children's constructor signatures, same as `types.ts`. Source:
 ```
 
 - Structured Trie representation of the type graph. Each node carries the same `name`, `fullPath`, and `location` data as `definitions.json`, but organized as parent/children.
-- Custom-collection roots carry the `collectionId::` prefix on `fullPath` (`collection_1::Product`); nested fullPaths inherit it from the parent (`collection_1::Product.Category`). The `name` field always stays unprefixed.
+- Custom-collection roots carry the `collectionId::` prefix on `fullPath` (`collection_1::Vehicle`); nested fullPaths inherit it from the parent (`collection_1::Vehicle.Axle`). The `name` field always stays unprefixed.
 - **Consumed by:** downstream graph visualizations and by agents that need to understand the mnemonica hierarchy without parsing ASCII art.
 - Source: `TypeGraphImpl.toHierarchy()` → `TypesWriter.writeHierarchyFile()`.
 
@@ -223,7 +224,7 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
     "generatedAt": "2026-09-22T…",
     "collections": [
         { "id": null, "name": "defaultTypes", "registryInterface": "TypeRegistry", "location": null },
-        { "id": "collection_1", "name": "Shop", "registryInterface": "ShopRegistry", "location": "src/collections.ts:5:7" }
+        { "id": "collection_1", "name": "Fleet", "registryInterface": "FleetRegistry", "location": "src/collections.ts:5:7" }
     ]
 }
 ```
@@ -253,7 +254,7 @@ The collection manifest: one entry per minted collection, in minting order. `nam
 - `kind` is `"define" | "decorate"`.
 - `location` is `<file>:<1-based-line>:<1-based-column>`.
 - `parent` is the parent's full path or `null` for root types.
-- Custom-collection types key the map with the `collectionId::` prefix (`collection_1::Product.Category`), and `parent` carries the prefixed path.
+- Custom-collection types key the map with the `collectionId::` prefix (`collection_1::Vehicle.Axle`), and `parent` carries the prefixed path.
 - **Consumed by:** `mnemographica/src/providers/definitionProvider.ts` (Go to Definition), `mnemographica/src/models/Registry.ts` (registry view).
 
 ### `usages.json` (always)
@@ -297,7 +298,7 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 
 `kind ∈ 'wrap' | 'contextConsume' | 'hookAttach'`. Auto-enabled when `@mnemonica/dive` is in `package.json` dependencies; `--eds` / `--no-eds` override.
 
-`wrap` entries also carry the wrappers-graph join fields (all optional, additive): `label` (the string-literal label arg), `callbackScopeId` (the wrapped callback's own scopeId — the preferred creation-graph join), `instanceArg` (the instance/context identifier text), `scopeId` (the scope holding the wrap call site — fallback join), `wrapsTypePath` (the instance argument's mnemonica fullPath, resolved through the scope-variable chain — innermost binding wins, untyped shadowing stays untyped), `via` (the enclosing wrap site's location for textually nested wraps and function-valued returns — the generation chain), and `fn` (the wrap-family function name — `wrap`/`wrapConstructorArg`/`upgradeConstructorArg`/`wrapInstanceMethods`; return-chain entries are `fn: 'wrap'` — joins the call site to dive's engine knot in graph consumers). `scope` attribution is lexical first (owning `define()`/`lazy()` handler or decorated class); wrap sites outside any handler are attributed through the instance/context argument (tracked assignment, else the enclosing parameter's type annotation through the graph law, else a `let`/`var`/`const` declaration with an EXPLICIT type annotation — declaration-site typing only, no flow analysis: the annotation may be the type name (`LedgerUpdate`) or the GENERATED nested-type alias (`UpdatePay_SomeTerminal`, underscore→dotted naming law); an UNANNOTATED let still buckets `unknown`), and the wrap CALLEE identifier follows a `let`/`var` binding to its first statically-visible in-scope assignment — the catch-guard pattern (`let fn; try { fn = new T(…) } catch { return } wrap(fn, …)`) attributes as `T`, while closure-only assignments and never-assigned bindings stay `unknown` (function/class boundaries are not crossed). Tier order for BOTH wrap arguments is one discipline — assignment evidence (a tracked binding or a resolvable in-scope assignment) beats an explicit annotation claim (`let fn: T`, or a wrapper arriving as an annotated parameter), which beats `unknown`; an annotation pins the type only when the assignment is not resolvable (e.g. a userland call return) — a direct `new`/`call`-shaped callee resolves through the same tiers. Nested sites inherit the causing site's scope down the `via` chain — only attributable-to-nothing sites stay under `unknown`. `scopeId`/`wrapsTypePath` are a CLI post-pass (`attachWrapJoinData` in `src/cli.ts`); the rest come from the analyzer's wrap branch.
+`wrap` entries also carry the wrappers-graph join fields (all optional, additive): `label` (the string-literal label arg), `callbackScopeId` (the wrapped callback's own scopeId — the preferred creation-graph join), `instanceArg` (the instance/context identifier text), `scopeId` (the scope holding the wrap call site — fallback join), `wrapsTypePath` (the instance argument's mnemonica fullPath, resolved through the scope-variable chain — innermost binding wins, untyped shadowing stays untyped), `via` (the enclosing wrap site's location for textually nested wraps and function-valued returns — the generation chain), and `fn` (the wrap-family function name — `wrap`/`wrapConstructorArg`/`upgradeConstructorArg`/`wrapInstanceMethods`; return-chain entries are `fn: 'wrap'` — joins the call site to dive's engine knot in graph consumers). `scope` attribution is lexical first (owning `define()`/`lazy()` handler or decorated class); wrap sites outside any handler are attributed through the instance/context argument (tracked assignment, else the enclosing parameter's type annotation through the graph law, else a `let`/`var`/`const` declaration with an EXPLICIT type annotation — declaration-site typing only, no flow analysis: the annotation may be the type name (`FlowUpdate`) or the GENERATED nested-type alias (`FlowRun_SomeStep`, underscore→dotted naming law); an UNANNOTATED let still buckets `unknown`), and the wrap CALLEE identifier follows a `let`/`var` binding to its first statically-visible in-scope assignment — the catch-guard pattern (`let fn; try { fn = new T(…) } catch { return } wrap(fn, …)`) attributes as `T`, while closure-only assignments and never-assigned bindings stay `unknown` (function/class boundaries are not crossed). Tier order for BOTH wrap arguments is one discipline — assignment evidence (a tracked binding or a resolvable in-scope assignment) beats an explicit annotation claim (`let fn: T`, or a wrapper arriving as an annotated parameter), which beats `unknown`; an annotation pins the type only when the assignment is not resolvable (e.g. a userland call return) — a direct `new`/`call`-shaped callee resolves through the same tiers. Nested sites inherit the causing site's scope down the `via` chain — only attributable-to-nothing sites stay under `unknown`. `scopeId`/`wrapsTypePath` are a CLI post-pass (`attachWrapJoinData` in `src/cli.ts`); the rest come from the analyzer's wrap branch.
 
 ### `instrumentation.json` (always)
 

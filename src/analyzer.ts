@@ -2344,6 +2344,9 @@ export class MnemonicaAnalyzer {
 			this.currentGraphAnchor = previousAnchor;
 		}
 
+		// Async constructor detection (async modifier, syntactic only)
+		node.isAsync = this.isAsyncConstructHandler(this.extractConstructorExpression(call));
+
 		// Add to graph
 		if (parentNode) {
 			this.graph.addChild(parentNode, node);
@@ -2445,6 +2448,9 @@ export class MnemonicaAnalyzer {
 		} finally {
 			this.currentGraphAnchor = previousAnchor;
 		}
+
+		// Async constructor detection (async modifier, syntactic only)
+		node.isAsync = this.isAsyncConstructHandler(this.extractConstructorExpression(call));
 
 		// Add to graph
 		if (parentNode) {
@@ -3635,6 +3641,29 @@ export class MnemonicaAnalyzer {
 
 		// Legacy form: define(function Name() {}) or define(() => class Name {})
 		return args[ 0 ];
+	}
+
+	/**
+	 * Detect an async constructor handler: the async modifier on a
+	 * function expression or arrow. Async CLASSES (a class constructor
+	 * returning a Promise) are deliberately NOT detected — the syntactic
+	 * class shape gives no reliable signal without a type checker, and the
+	 * owner decided they are typed by the user in userland.
+	 */
+	private isAsyncConstructHandler (constructorExpr: ts.Expression | undefined): boolean {
+		if (!constructorExpr) {
+			return false;
+		}
+		const isFn = ts.isFunctionExpression(constructorExpr) ||
+			ts.isArrowFunction(constructorExpr);
+		if (!isFn) {
+			return false;
+		}
+		const modifiers = ts.getModifiers(constructorExpr);
+		const result = !!modifiers && modifiers.some((modifier) => {
+			return modifier.kind === ts.SyntaxKind.AsyncKeyword;
+		});
+		return result;
 	}
 
 	/**

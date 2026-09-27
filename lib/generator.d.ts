@@ -51,11 +51,18 @@ export declare class TypesGenerator {
     private generateCompleteInstanceInterface;
     /**
          * Emit one nested-ctor field: dual signatures (construct + the
-         * chain-tip CALL form). The call branch returns exactly what the
-         * construct branch returns, so async tips stay consistent with the
-         * existing async modeling, whatever it emits.
+         * chain-tip CALL form). Both branches resolve to the constructor
+         * result type — Promise<InstanceType> for async handlers, the plain
+         * instance type otherwise (getConstructorResultType).
          */
     private pushChildConstructorField;
+    /**
+     * The type a constructor invocation resolves to: the instance type, or
+     * Promise<InstanceType> for async handlers (isAsync). The instance type
+     * itself is never wrapped — only the constructor RESULT positions
+     * (subtype property twins + registry entries).
+     */
+    private getConstructorResultType;
     /**
          * Generate a simple type declaration for a single type
          */

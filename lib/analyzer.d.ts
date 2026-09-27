@@ -666,6 +666,14 @@ export declare class MnemonicaAnalyzer {
      */
     private extractConstructorExpression;
     /**
+     * Detect an async constructor handler: the async modifier on a
+     * function expression or arrow. Async CLASSES (a class constructor
+     * returning a Promise) are deliberately NOT detected — the syntactic
+     * class shape gives no reliable signal without a type checker, and the
+     * owner decided they are typed by the user in userland.
+     */
+    private isAsyncConstructHandler;
+    /**
      * Extract properties from constructor function
      */
     private extractProperties;

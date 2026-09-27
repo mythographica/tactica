@@ -976,7 +976,7 @@ describe('MnemonicaAnalyzer', () => {
 			expect(instantiation!.constructorText).to.equal('AsyncType');
 		});
 
-		it('should emit a plain constructor signature for async types — no Promise modeling', () => {
+		it('should emit a Promise constructor signature for async types', () => {
 			const source = `
 					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
 						this.value = data.value;
@@ -987,10 +987,84 @@ describe('MnemonicaAnalyzer', () => {
 			const generator = new TypesGenerator(analyzer.getGraph());
 			const registry = generator.generateTypeRegistry().content;
 
-			// `await new` typechecks via await-identity on the plain instance
-			// type — the emitted ctor is the same shape as for sync types
-			expect(registry).to.include('\'AsyncType\': new (data: { value: number }) => AsyncType;');
-			expect(registry).to.not.include('Promise');
+			// async handler => `new` resolves to a Promise at runtime, so the
+			// registry constructor must emit Promise<InstanceType>; `await new`
+			// then yields the instance type itself
+			expect(registry).to.include('\'AsyncType\': new (data: { value: number }) => Promise<AsyncType>;');
+		});
+
+		it('should wrap both subtype-property twins in Promise for an async child', () => {
+			const source = `
+					const RootAsync = define('RootAsync', function (this: any, data: { id: string }) {
+						this.id = data.id;
+					});
+					const SubAsync = RootAsync.define('SubAsync', async function (this: any, data: { name: string }) {
+						this.name = data.name;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const types = generator.generateTypesFile().content;
+
+			expect(types).to.include('new (data: { name: string }): Promise<RootAsync_SubAsync>;');
+			expect(types).to.include('(data: { name: string }): Promise<RootAsync_SubAsync>;');
+		});
+
+		it('should keep the sync subtype of an async parent Promise-free (isAsync is per-node)', () => {
+			const source = `
+					const RootAsync = define('RootAsync', async function (this: any, data: { id: string }) {
+						this.id = data.id;
+					});
+					const SubSync = RootAsync.define('SubSync', function (this: any, data: { name: string }) {
+						this.name = data.name;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const types = generator.generateTypesFile().content;
+
+			expect(types).to.include('new (data: { name: string }): RootAsync_SubSync;');
+			expect(types).to.not.include('Promise<RootAsync_SubSync>');
+		});
+
+		it('should emit Promise for a lazy getter returning an async function', () => {
+			const source = `
+					const LazyAsync = lazy('LazyAsync', () => async function (this: any, data: { value: number }) {
+						this.value = data.value;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const registry = generator.generateTypeRegistry().content;
+
+			expect(registry).to.include('\'LazyAsync\': new (data: { value: number }) => Promise<LazyAsync>;');
+		});
+
+		it('should NOT emit Promise for a class whose constructor returns new Promise (user-typed)', () => {
+			const source = `
+					const AsyncClass = define('AsyncClass', class {
+						value: number;
+						constructor () {
+							this.value = 1;
+							return new Promise((resolve) => {
+								setTimeout(() => resolve(this), 10);
+							});
+						}
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const registry = generator.generateTypeRegistry().content;
+
+			// async CLASSES are typed by the user in userland — the syntactic
+			// shape gives no reliable signal without a type checker, so the
+			// emitted constructor stays the plain instance type
+			expect(registry).to.include('\'AsyncClass\': new () => AsyncClass;');
+			expect(registry).to.not.include('Promise<AsyncClass>');
 		});
 	});
 	

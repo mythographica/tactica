@@ -171,7 +171,23 @@ declare module 'mnemonica' {
 
 **Recommended for new projects.** Explicit imports, better tree-shaking, no global namespace pollution.
 
-**Instance-type inheritance.** Nested instance types flatten the WHOLE ancestor chain: each nested type is `ProtoFlat<ParentInstance, Self>` (mnemonica's `ProtoFlat` keeps every parent key except the ones `Self` overrides), and the parent instance type is itself a `ProtoFlat` over its own parent — so the ROOT's own constructor-arg fields (`uuid` in `PaymentRoot`) are directly present on every descendant instance type, at any depth, alongside intermediate ancestors' fields. If a root field appears missing on a nested type, the usual cause is a stale `.tactica` — regenerate; the composition itself is transitive by construction.
+**Async constructors.** When the construct handler is an `async function` (or async arrow), `new` resolves to a Promise at runtime, so the emitted constructor shapes resolve to `Promise<InstanceType>`: the subtype property on the parent emits `{ new (…): Promise<X>; (…): Promise<X> }` (both twins) and the registry entry emits `new (…) => Promise<X>`. The instance type `X` itself is unchanged, so `await new` yields `X`. Async CLASSES (a class constructor returning a Promise) are not detected — the syntactic shape carries no reliable signal without a type checker — and stay typed as the plain instance type; type them yourself in userland if you need `Promise<X>` there.
+
+**Avoid arrow handlers — use the ESLint plugin.** Construct handlers must be regular functions or classes so the instance can be substituted as `this`. Core rejects sync arrows at `define()` time, but async arrows cannot be detected at runtime and never receive the instance — the failure surfaces far from the cause. The early guard is [`eslint-plugin-no-arrow-this`](https://www.npmjs.com/package/eslint-plugin-no-arrow-this), which flags `this` inside arrow functions before the code runs:
+
+```javascript
+plugins: ['eslint-plugin-no-arrow-this'],
+rules: {
+	// default: warn on `this` inside ANY arrow function
+	'no-arrow-this/no-arrow-this': 'warn',
+	// or restrict to the global/window capture case:
+	// 'no-arrow-this/no-arrow-this': ['warn', { onlyGlobals: true }],
+},
+```
+
+Recommended in every mnemonica project.
+
+**Instance-type inheritance.** Nested instance types flatten the WHOLE ancestor chain: each nested type is `ProtoFlat<ParentInstance, Self>` (mnemonica's `ProtoFlat` keeps every parent key except the ones `Self` overrides), and the parent instance type is itself a `ProtoFlat` over its own parent — so the ROOT's own constructor-arg fields (`serial` in `WidgetRoot`) are directly present on every descendant instance type, at any depth, alongside intermediate ancestors' fields. If a root field appears missing on a nested type, the usual cause is a stale `.tactica` — regenerate; the composition itself is transitive by construction.
 
 ### Legacy global-augmentation mode (`--module-augmentation`)
 
@@ -394,8 +410,8 @@ class Configurable {
 Decorate-class instances need a cast to the generated instance type to access nested constructors at the type level:
 
 ```ts
-const order = new Order() as Order_AugmentedOrder; // … or whatever your generated alias is
-const sub   = new order.AugmentedOrder();
+const gadget = new Gadget() as Gadget_EnhancedGadget; // … or whatever your generated alias is
+const sub   = new gadget.EnhancedGadget();
 ```
 
 ### `Object.assign(this, data)` pattern
@@ -920,8 +936,8 @@ Type Hierarchy (Trie)
 │       ├── properties: { role: string }
 │       └── SuperAdminType
 │           └── properties: { permissions: string[] }
-└── OrderType
-    └── properties: { items: Item[] }
+└── JobType
+    └── properties: { tasks: Task[] }
 ```
 
 ## Known Limitations

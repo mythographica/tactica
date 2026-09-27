@@ -305,17 +305,29 @@ export class TypesGenerator {
 
 	/**
 		 * Emit one nested-ctor field: dual signatures (construct + the
-		 * chain-tip CALL form). The call branch returns exactly what the
-		 * construct branch returns, so async tips stay consistent with the
-		 * existing async modeling, whatever it emits.
+		 * chain-tip CALL form). Both branches resolve to the constructor
+		 * result type — Promise<InstanceType> for async handlers, the plain
+		 * instance type otherwise (getConstructorResultType).
 		 */
 	private pushChildConstructorField (lines: string[], indentStr: string, child: TypeNode): void {
-		const childInstanceType = this.getInstanceTypeName(child);
+		const childInstanceType = this.getConstructorResultType(child);
 		const constructorParams = this.generateConstructorParams(child);
 		lines.push(`${indentStr}\t${child.name}: {`);
 		lines.push(`${indentStr}\t\tnew ${constructorParams}: ${childInstanceType};`);
 		lines.push(`${indentStr}\t\t${constructorParams}: ${childInstanceType};`);
 		lines.push(`${indentStr}\t};`);
+	}
+
+	/**
+	 * The type a constructor invocation resolves to: the instance type, or
+	 * Promise<InstanceType> for async handlers (isAsync). The instance type
+	 * itself is never wrapped — only the constructor RESULT positions
+	 * (subtype property twins + registry entries).
+	 */
+	private getConstructorResultType (node: TypeNode): string {
+		const instanceType = this.getInstanceTypeName(node);
+		const result = node.isAsync ? `Promise<${instanceType}>` : instanceType;
+		return result;
 	}
 
 	/**
@@ -384,7 +396,7 @@ export class TypesGenerator {
 					continue;
 				}
 				const fullPath = this.getFullPath(node);
-				const instanceType = this.getInstanceTypeName(node);
+				const instanceType = this.getConstructorResultType(node);
 				// Generate typed constructor signature for nested types with properties
 				const constructorSig = this.generateConstructorSignature(node);
 				lines.push(`\t\t'${fullPath}': ${constructorSig} => ${instanceType};`);
@@ -405,7 +417,7 @@ export class TypesGenerator {
 			lines.push(`\tinterface ${registryInterfaceName} {`);
 			for (const node of nodes) {
 				const fullPath = this.getFullPath(node);
-				const instanceType = this.getInstanceTypeName(node);
+				const instanceType = this.getConstructorResultType(node);
 				const constructorSig = this.generateConstructorSignature(node);
 				lines.push(`\t\t'${fullPath}': ${constructorSig} => ${instanceType};`);
 			}
