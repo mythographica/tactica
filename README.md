@@ -33,6 +33,12 @@ TypeScript can't infer that `user.AdminType` exists, because `UserType.define()`
 
 Tactica parses your source, builds the type hierarchy, and emits `.tactica/types.ts` + `.tactica/registry.ts`. Once those files are part of your `tsc` compilation, TypeScript understands the full hierarchy — without runtime changes.
 
+> Emitting `define()` results directly instead of using tactica (or the
+> builder pattern) breaks TypeScript 6 declaration emit with a TS2883
+> error. That failure is the guard rail, not a missing export — the full
+> story and the available paths:
+> [mnemonica docs/typed-lookup.md — Declaration emit on TypeScript 6](https://github.com/wentout/mnemonica/blob/master/docs/typed-lookup.md#declaration-emit-on-typescript-6-the-ts2883-symptom).
+
 ## Installation
 
 ```bash

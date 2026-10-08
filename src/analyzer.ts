@@ -357,14 +357,16 @@ export class MnemonicaAnalyzer {
 				id                : null,
 				name              : 'defaultTypes',
 				registryInterface : 'TypeRegistry',
-				location          : null
+				location          : null,
+				language          : 'typescript'
 			});
 		}
 		for (const [ id, info ] of this.collectionInfo) {
 			const entry: CollectionManifestEntry = {
 				id,
 				name     : info.variableName,
-				location : `${info.sourceFile}:${info.line}:${info.column}`
+				location : `${info.sourceFile}:${info.line}:${info.column}`,
+				language : 'typescript'
 			};
 			// absent when the collection declares none — not null, not undefined
 			if (info.registryInterfaceName) {
@@ -3190,8 +3192,16 @@ export class MnemonicaAnalyzer {
 			}
 		}
 
-		// Build full path
-		const fullPath = parentNode ? `${parentNode.fullPath}.${typeName}` : typeName;
+		// Build full path — a root decorated into a custom collection
+		// carries the collectionId:: prefix, exactly like the graph node's
+		// fullPath: definitions.json keys must join hierarchy.json (the
+		// prefix was dropped here before, so a decorated collection root
+		// never joined)
+		const fullPath = parentNode
+			? `${parentNode.fullPath}.${typeName}`
+			: collectionId
+				? `${collectionId}::${typeName}`
+				: typeName;
 
 		// Create definition info for decorate
 		const definition: DefinitionInfo = {

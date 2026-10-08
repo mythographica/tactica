@@ -141,7 +141,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			definitions : definitionsObj,
 		});
@@ -164,7 +164,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			usages      : usagesObj,
 		});
@@ -187,7 +187,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			eds         : edsObj,
 		});
@@ -232,7 +232,7 @@ export class TypesWriter {
 		}
 
 		const json: FlowJson = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			flow        : flowObj,
 		});
@@ -299,7 +299,7 @@ export class TypesWriter {
 		const filePath = path.join(this.outputDir, 'hierarchy.json');
 
 		const json: HierarchyJson = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			roots,
 		});
@@ -320,7 +320,7 @@ export class TypesWriter {
 		const filePath = path.join(this.outputDir, 'collections.json');
 
 		const json: CollectionsJson = this.relativize({
-			version     : '1.0',
+			version     : '1.1',
 			generatedAt : new Date().toISOString(),
 			collections,
 		});

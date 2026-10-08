@@ -27,6 +27,11 @@ consumed by editor extensions and other tools.
 - Code calls `lookup('Some.Type')` and you want the result typed
 - A constructor or subtype type-errors and the fix belongs upstream
   (regenerate `.tactica` before reaching for a cast)
+- TypeScript 6 declaration emit fails with TS2883 ("cannot be named
+  without a reference to 'GlobalRegistry'") — the project exports free
+  `define()` results without a registry merge; tactica is one of the
+  right fixes. Full story:
+  [mnemonica docs/typed-lookup.md — Declaration emit on TypeScript 6](https://github.com/wentout/mnemonica/blob/master/docs/typed-lookup.md#declaration-emit-on-typescript-6-the-ts2883-symptom)
 
 ## How to run
 

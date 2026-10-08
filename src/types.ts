@@ -652,6 +652,12 @@ export interface CollectionManifestEntry {
 	registryInterface?: string;
 	/** createTypesCollection() call site (file:line:col); null for the default collection */
 	location: string | null;
+	/**
+	 * Source language of this collection's codebase (format 1.1; absent in
+	 * 1.0 output, where readers default it to "typescript"). tactica is the
+	 * TypeScript generator, so every entry it writes is "typescript".
+	 */
+	language?: 'typescript';
 }
 
 /**

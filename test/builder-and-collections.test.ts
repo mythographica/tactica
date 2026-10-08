@@ -507,6 +507,37 @@ describe('Builder pattern and custom collections', () => {
 			expect(user).to.exist;
 			expect(user?.registryInterfaceName).to.equal('MyCollectionRegistry');
 		});
+
+		it('should key definitions.json with the collection prefix for @MyCollection.decorate() roots (the hierarchy join)', () => {
+			const source = `
+				import { createTypesCollection } from 'mnemonica';
+
+				export interface MyCollectionRegistry {}
+
+				const MyCollection = createTypesCollection<MyCollectionRegistry>();
+
+				@MyCollection.decorate()
+				class User {
+					id: string;
+					constructor(data: { id: string }) {
+						this.id = data.id;
+					}
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+
+			const hierarchyUser = [ ...analyzer.getGraph().bfs() ]
+				.find(t => t.name === 'User');
+			expect(hierarchyUser).to.exist;
+			expect(hierarchyUser!.fullPath).to.match(/^collection_\d+::User$/);
+
+			// definitions.json keys must equal hierarchy fullPaths — the
+			// decorated collection root used to key unprefixed and never join
+			const definitions = analyzer.getDefinitions();
+			expect(definitions.has(hierarchyUser!.fullPath)).to.be.true;
+			expect(definitions.has('User')).to.be.false;
+		});
 	});
 
 	describe('usage tracking for builder APIs', () => {
@@ -703,14 +734,17 @@ describe('Builder pattern and custom collections', () => {
 				id                : null,
 				name              : 'defaultTypes',
 				registryInterface : 'TypeRegistry',
-				location          : null
+				location          : null,
+				language          : 'typescript'
 			});
 			expect(manifest[ 1 ].id).to.equal('collection_1');
 			expect(manifest[ 1 ].name).to.equal('Shop');
 			expect(manifest[ 1 ].registryInterface).to.equal('ShopRegistry');
+			expect(manifest[ 1 ].language).to.equal('typescript');
 			expect(manifest[ 1 ].location).to.match(/^src\/app\.ts:\d+:\d+$/);
 			expect(manifest[ 2 ].id).to.equal('collection_2');
 			expect(manifest[ 2 ].name).to.equal('Plain');
+			expect(manifest[ 2 ].language).to.equal('typescript');
 			// no Option-B interface -> the field stays absent, not null
 			expect(manifest[ 2 ]).to.not.have.property('registryInterface');
 		});
