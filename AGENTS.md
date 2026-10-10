@@ -232,7 +232,8 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
 `language` is `"typescript"` on every entry tactica writes (format 1.1);
 readers default an absent `language` to `"typescript"` for 1.0 output.
 The six contract files (`hierarchy`, `definitions`, `collections`,
-`usages`, `flow`, `eds`) carry `"version": "1.1"`; `modules`/`scopes`
+`usages`, `flow`, `eds`) carry `"version": "1.1"`, and so does `control`
+(the only version it exists in); `modules`/`scopes`
 keep their own versioning. The schemas themselves ship in
 `@mnemonica/lethe` (`tactica/*.schema.json`) and tactica's output is
 validated against them in `test/lethe-validation.test.ts`.
@@ -263,6 +264,8 @@ The collection manifest: one entry per minted collection, in minting order. `nam
 - `location` is `<file>:<1-based-line>:<1-based-column>`.
 - `parent` is the parent's full path or `null` for root types.
 - Custom-collection types key the map with the `collectionId::` prefix (`collection_1::Vehicle.Axle`), and `parent` carries the prefixed path.
+- `fields` (always present when the CLI writes the file): the type's own fields in declaration order, `{ name, type, optional }` — from `TypeNode.properties`, the same source `types.ts` renders. An empty array means the type has no fields.
+- `args` (present when the constructor parameters were extracted): the constructor's parameters in declaration order, `{ name, type, optional?, kind? }` — from `TypeNode.constructorParams`. The `this` receiver is never listed; a rest parameter carries `kind: "rest"` and no `optional`. Absent means not recorded; an empty array means the constructor takes none.
 - **Consumed by:** `mnemographica/src/providers/definitionProvider.ts` (Go to Definition), `mnemographica/src/models/Registry.ts` (registry view).
 
 ### `usages.json` (always)
@@ -357,6 +360,19 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 - **`creationGraph` (v2, always present from the CLI):** the inside-out walk — anchors are the `instantiation` usages (each pinned to its `holderScopeId`), edges point `caller → callee` (callee closer to the creation site), nodes with no discovered callers are `starter: true`. Module-scope creations are `rooted: true` anchors (labeled, not policed). Module scopes end the invocation walk, but a terminal module gains its IMPORTERS as callers (the exports-and-usage bridge): entry modules hand classes to frameworks as values — a bootstrap call receiving the root module — which no call-walk can see, so the import relation connects them to the center instead. `constructorText` records the constructor expression actually used (decision 1: `strictChain: false` permits non-linear construction); `variable`/`terminatedAt` come from the same-line variable heuristic, `terminatedAt` being the first reassignment site (decision 6 flow termination). Deliberate approximations: namespace imports count any alias reference; method holders bind to their class name; any non-declaration identifier counts as a reference; export wiring alone creates no edge.
 - **Consumed by:** mnemographica's creation graph layer — holder scopes render as diamond knots tangent to their created type's sphere (the v1-points diamond rendering was reverted; diamonds carry creation semantics now). `loadInstrumentation()` ignores `version` and unknown top-level keys, so v2 is backward compatible.
 - Source: points from `MnemonicaAnalyzer.getInstrumentationPoints()`, creation graph from `CreationGraphBuilder` (`src/creation-graph.ts`) → `TypesWriter.writeInstrumentationFile(points, creationGraph)`.
+
+### `control.json` (always)
+
+```json
+{
+    "version": "1.1",
+    "generatedAt": "2026-10-10T…",
+    "callers": { "nodes": [ … ], "edges": [ … ], "anchors": [ … ] },
+    "points": [ … ]
+}
+```
+
+The lethe cross-language rendering of the instrumentation data: `callers` is exactly the creation graph `instrumentation.json` v2 carries under `creationGraph`, `points` exactly the same instrumentation points — only the envelope differs, so the lethe contract can consume control flow without the mnemographica-shaped v2 wrapper. `instrumentation.json` itself stays unchanged (mnemographica reads it). Source: `TypesWriter.writeControlFile(points, creationGraph)`, wired in the CLI right after `writeInstrumentationFile`.
 
 ### `modules.json` (always)
 
@@ -475,7 +491,7 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 Thin filesystem wrapper. One method per output file:
 
-- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeModulesFile`, `writeScopesFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
+- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeControlFile`, `writeModulesFile`, `writeScopesFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
 - `write(generated)` is a legacy alias for `writeTypesFile`.
 - `clean()` empties the output directory; `getOutputDir()` returns the configured path.
 
@@ -507,7 +523,7 @@ Inside-out creation walker (instrumentation walker plan, Phase 3).
 
 **Mode behavior:**
 
-- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`, `collections.json`; optional `eds.json`).
+- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`, `collections.json`; optional `eds.json`).
 - With `--module-augmentation`: writes `index.d.ts` (+ same JSONs). Default mode is the recommended path.
 
 **Exclusion behavior:** the project-conventional `.tactica/` directory (next to the tsconfig) is ALWAYS excluded from analysis, even when `--output` points elsewhere — generated files are never project source. When `--output` is used, that output directory is excluded too. No env variable; the flag is enough.

@@ -1,4 +1,4 @@
-import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode, InstrumentationPoint, ModuleGraph, ScopeAnalysis, CreationGraph, CollectionManifestEntry } from './types';
+import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, HierarchyNode, InstrumentationPoint, ModuleGraph, ScopeAnalysis, CreationGraph, CollectionManifestEntry, TypeGraph } from './types';
 /**
  * Writes generated types to file system
  */
@@ -44,9 +44,15 @@ export declare class TypesWriter {
      */
     getOutputDir(): string;
     /**
-     * Write definitions.json file
+     * Write definitions.json file. When the type graph is passed (the CLI
+     * always passes it), each entry gains `fields` (the type's own fields in
+     * declaration order, from TypeNode.properties) and `args` (the
+     * constructor's parameters, from TypeNode.constructorParams) — the same
+     * source of truth types.ts renders. A rest parameter is emitted with
+     * `kind: 'rest'` and no `optional` (lethe definitions contract); `args`
+     * is omitted only when constructorParams was never extracted.
      */
-    writeDefinitionsFile(definitions: Map<string, DefinitionInfo>): string;
+    writeDefinitionsFile(definitions: Map<string, DefinitionInfo>, graph?: TypeGraph): string;
     /**
      * Write usages.json file
      */
@@ -60,6 +66,14 @@ export declare class TypesWriter {
      * the caller passes creation-graph data — the CLI always does)
      */
     writeInstrumentationFile(points: InstrumentationPoint[], creationGraph?: CreationGraph): string;
+    /**
+     * Write control.json file (lethe contract, format 1.1): `callers` is the
+     * creation graph instrumentation.json v2 carries, `points` the same
+     * plugin-supplied instrumentation points. instrumentation.json keeps its
+     * shape for mnemographica; control.json is the cross-language contract
+     * rendering of the same data.
+     */
+    writeControlFile(points: InstrumentationPoint[], callers: CreationGraph): string;
     /**
      * Write flow.json file
      */

@@ -32,6 +32,12 @@ export interface ConstructorParamInfo {
 	/** The type string - can be a simple type or expanded object literal */
 	type: string;
 	optional: boolean;
+	/**
+	 * How the parameter receives its value. Only 'rest' is emitted (TS
+	 * `...xs`); absent means an ordinary parameter. Mirrors the `kind`
+	 * vocabulary of the lethe definitions contract (definitions.json args).
+	 */
+	kind?: 'rest';
 }
 
 export interface TypeNode {
@@ -111,6 +117,28 @@ export interface GeneratedTypes {
 }
 
 /**
+ * One own field of a type, in declaration order (definitions.json `fields`,
+ * lethe contract). `type` is source-language text for display only.
+ */
+export interface DefinitionField {
+	name: string;
+	type: string;
+	optional: boolean;
+}
+
+/**
+ * One constructor parameter, in declaration order (definitions.json `args`,
+ * lethe contract). The receiver (`this`) is never listed. `optional` absent
+ * means false; a rest parameter carries `kind: 'rest'` and no `optional`.
+ */
+export interface DefinitionArg {
+	name: string;
+	type: string;
+	optional?: boolean;
+	kind?: 'rest';
+}
+
+/**
  * Definition info for code navigation
  */
 export interface DefinitionInfo {
@@ -126,6 +154,18 @@ export interface DefinitionInfo {
 	strictChain: boolean;
 	/** blockErrors config option */
 	blockErrors: boolean;
+	/**
+	 * The type's own fields in declaration order (definitions.json contract,
+	 * lethe `field`). Absent means not recorded; an empty array means the
+	 * type has no fields.
+	 */
+	fields?: DefinitionField[];
+	/**
+	 * The constructor's parameters in declaration order (definitions.json
+	 * contract, lethe `arg`). Absent means not recorded; an empty array
+	 * means the constructor takes none.
+	 */
+	args?: DefinitionArg[];
 }
 
 /**
@@ -293,6 +333,20 @@ export interface InstrumentationJson {
 	 * data (direct library use); always present from the CLI.
 	 */
 	creationGraph?: CreationGraph;
+}
+
+/**
+ * JSON output for control.json (lethe contract, format 1.1): `callers`
+ * carries the same creation graph instrumentation.json v2 carries under
+ * `creationGraph`, `points` the same plugin-supplied instrumentation points.
+ * instrumentation.json stays unchanged for mnemographica; control.json is
+ * the cross-language contract rendering of the same data.
+ */
+export interface ControlJson {
+	version: '1.1';
+	generatedAt: string;
+	callers: CreationGraph;
+	points: InstrumentationPoint[];
 }
 
 /**

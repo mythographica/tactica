@@ -141,10 +141,11 @@ Tactica writes everything under the `--output` directory (default `.tactica/`). 
 | `registry.ts` | default mode | `declare module 'mnemonica' { interface TypeRegistry { … } }` augmentation — powers `lookup<K>()`. |
 | `index.ts` | default mode | Re-exports everything from `types.ts` and `registry.ts`. |
 | `index.d.ts` | with `--module-augmentation` | Single global-augmentation file (legacy mode). |
-| `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`. Consumed by `mnemographica`'s Go to Definition. |
+| `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`, plus `fields` (the type's own fields in declaration order, `{ name, type, optional }`) and `args` (the constructor's parameters in declaration order, `{ name, type, optional?, kind? }` — a rest parameter carries `kind: 'rest'` and no `optional`). Consumed by `mnemographica`'s Go to Definition. |
 | `usages.json` | always | One entry per type, value is an array of `{ location, kind, code, holderScopeId?, constructorText? }` records — where each type is instantiated, referenced, accessed, or looked up. `holderScopeId` points into `scopes.json` (the innermost scope holding the usage); `constructorText` (instantiations only) is the constructor expression text actually used. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
 | `instrumentation.json` | always | v2 envelope. `points`: framework lifecycle crossroads (interceptors, guards, pipes, filters, middleware) detected via **plugin-supplied vocabulary** — heritage declarations, decorator sites, provider-token registrations, `consumer.apply()` wiring. Syntactic only — no dive dependency; with no plugins loaded, `points` is `[]`. `creationGraph`: the inside-out walk from every instantiation site out to the starters — see "Creation graph" below. |
+| `control.json` | always | The lethe cross-language rendering of the same data: `callers` is the instrumentation `creationGraph`, `points` the same instrumentation points. `instrumentation.json` stays unchanged for `mnemographica`. |
 | `modules.json` | always | Module-scope graph: every module's `exportedBindings`/`importedBindings` (functions, classes, consts, types — not only mnemonica types), project-internal `dependencies`, `builtinSpecifiers` (Node builtins are skipped entirely — both `'path'` and `'node:path'` forms), `unresolvedSpecifiers`, circular-import `cycles`, and cross-module mnemonica-type `edges`. Resolution uses `ts.resolveModuleName` with the project's compilerOptions (tsconfig `paths`, extensionless imports, index files) — no type checker. Bindings resolved into `node_modules` are marked `external: true` and never enter `dependencies`. |
 | `scopes.json` | always | Local-scope graph: function/method/arrow scopes only (no block scopes) plus one module scope per file; variables with `typePath` (mnemonica type when known), `isParameter`, `isMutable`, and `reassignments` — each reassignment of a mutable binding is a flow-termination point. `lookup()` initializers resolve through the same tier law as the analyzer (scope-chain receiver first, then the analyzer's source-relative/root law), so scopes metadata never disagrees with the hard-fail verdicts. |
 | `eds.json` | when EDS enabled | Execution-flow patterns (`wrap`, `current`, `getFlow`, `attachHooks` lifecycle wiring). Consumed by tools that visualize execution chains. |
@@ -776,11 +777,12 @@ class TypesWriter {
     writeGlobalAugmentation(generated: GeneratedTypes): string; // → outputDir/index.d.ts
     writeTo(filename: string, content: string): string;         // → outputDir/<filename>
 
-    writeDefinitionsFile(map: Map<string, DefinitionInfo>): string; // → outputDir/definitions.json
+    writeDefinitionsFile(map: Map<string, DefinitionInfo>, graph?: TypeGraph): string; // → outputDir/definitions.json (graph adds fields/args)
     writeUsagesFile     (map: Map<string, UsageInfo[]>):    string; // → outputDir/usages.json
     writeEDSFile        (map: Map<string, EDSInfo[]>):      string; // → outputDir/eds.json
     writeFlowFile       (map: Map<string, FlowInfo[]>):     string; // → outputDir/flow.json
     writeInstrumentationFile(points: InstrumentationPoint[], creationGraph?: CreationGraph): string; // → outputDir/instrumentation.json
+    writeControlFile      (points: InstrumentationPoint[], callers: CreationGraph): string; // → outputDir/control.json
     writeModulesFile      (graph: ModuleGraph):             string; // → outputDir/modules.json
     writeScopesFile       (analysis: ScopeAnalysis):        string; // → outputDir/scopes.json
 
@@ -792,7 +794,7 @@ class TypesWriter {
 
 ### Types
 
-`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson`, `ModuleBindingKind`, `ModuleImportKind`, `ModuleBinding`, `ModuleInfo`, `CrossModuleUsage`, `ModuleGraph`, `ModulesJson`, `ScopeKind`, `ScopeInfo`, `ScopeVariable`, `ScopeAnalysis`, `ScopesJson`, `CreationGraphNode`, `CreationGraphEdge`, `CreationAnchor`, `CreationGraph`, `TacticaPlugin`, `InstrumentationVocabulary` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema. The `mergeTacticaPlugins(plugins)` helper merges plugin vocabulary the same way the analyzer does.
+`TacticaConfig`, `TypeNode`, `TypeGraph`, `PropertyInfo`, `ConstructorParamInfo`, `AnalyzeResult`, `AnalyzeError`, `GeneratedTypes`, `DefinitionInfo`, `DefinitionField`, `DefinitionArg`, `UsageInfo`, `UsagesJson`, `DefinitionsJson`, `EDSInfo`, `EDSJson`, `EDSKind`, `FlowInfo`, `FlowJson`, `FlowKind`, `InstrumentationKind`, `InstrumentationScope`, `InstrumentationPoint`, `InstrumentationJson`, `ControlJson`, `ModuleBindingKind`, `ModuleImportKind`, `ModuleBinding`, `ModuleInfo`, `CrossModuleUsage`, `ModuleGraph`, `ModulesJson`, `ScopeKind`, `ScopeInfo`, `ScopeVariable`, `ScopeAnalysis`, `ScopesJson`, `CreationGraphNode`, `CreationGraphEdge`, `CreationAnchor`, `CreationGraph`, `TacticaPlugin`, `InstrumentationVocabulary` — all exported from `@mnemonica/tactica`. See [`src/types.ts`](src/types.ts) for the full schema. The `mergeTacticaPlugins(plugins)` helper merges plugin vocabulary the same way the analyzer does.
 
 ## EDS (Execution Data Storage) Tracking
 
@@ -931,7 +933,7 @@ Deliberate approximations (name-based, no type checker): namespace imports count
 1. **Parse** — load `tsconfig.json`, build a `ts.Program`, walk each source file's AST.
 2. **Detect** — find `define()` and `@decorate()` calls, plus `lookup` lookups, `new` expressions, and EDS / flow patterns.
 3. **Graph** — build a Trie of types in `TypeGraphImpl`, with parent links via the chain of `.define()` calls and `@decorate(Parent)` references.
-4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, `collections.json`, and optionally `eds.json`.
+4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, `collections.json`, and optionally `eds.json`.
 5. **Write** — files land in the output directory (default `.tactica/`).
 
 ```

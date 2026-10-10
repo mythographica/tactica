@@ -5,7 +5,7 @@ import * as path from 'path';
 import {
 	GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, FlowJson, HierarchyNode, HierarchyJson,
 	InstrumentationPoint, InstrumentationJson, ModuleGraph, ModulesJson, ScopeAnalysis, ScopesJson, CreationGraph,
-	CollectionManifestEntry, CollectionsJson
+	CollectionManifestEntry, CollectionsJson, ControlJson, TypeGraph, DefinitionField, DefinitionArg
 } from './types';
 
 /**
@@ -128,9 +128,15 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Write definitions.json file
+	 * Write definitions.json file. When the type graph is passed (the CLI
+	 * always passes it), each entry gains `fields` (the type's own fields in
+	 * declaration order, from TypeNode.properties) and `args` (the
+	 * constructor's parameters, from TypeNode.constructorParams) — the same
+	 * source of truth types.ts renders. A rest parameter is emitted with
+	 * `kind: 'rest'` and no `optional` (lethe definitions contract); `args`
+	 * is omitted only when constructorParams was never extracted.
 	 */
-	writeDefinitionsFile (definitions: Map<string, DefinitionInfo>): string {
+	writeDefinitionsFile (definitions: Map<string, DefinitionInfo>, graph?: TypeGraph): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'definitions.json');
 
@@ -138,6 +144,46 @@ export class TypesWriter {
 		const definitionsObj: Record<string, DefinitionInfo> = {};
 		for (const [ key, value ] of definitions) {
 			definitionsObj[ key ] = value;
+		}
+
+		if (graph) {
+			for (const [ key, value ] of definitions) {
+				const node = graph.findType(key);
+				if (!node) {
+					continue;
+				}
+				// enrich a copy — the analyzer's definitions map stays untouched
+				const entry: DefinitionInfo = { ...value };
+				const fields: DefinitionField[] = [];
+				for (const propInfo of node.properties.values()) {
+					fields.push({
+						name     : propInfo.name,
+						type     : propInfo.type,
+						optional : propInfo.optional
+					});
+				}
+				entry.fields = fields;
+				if (node.constructorParams !== undefined) {
+					const args: DefinitionArg[] = node.constructorParams.map((param) => {
+						// a rest parameter may always receive nothing:
+						// the contract gives it `kind` and no `optional`
+						const arg: DefinitionArg = param.kind === 'rest'
+							? {
+								name : param.name,
+								type : param.type,
+								kind : 'rest'
+							}
+							: {
+								name     : param.name,
+								type     : param.type,
+								optional : param.optional
+							};
+						return arg;
+					});
+					entry.args = args;
+				}
+				definitionsObj[ key ] = entry;
+			}
 		}
 
 		const json = this.relativize({
@@ -212,6 +258,29 @@ export class TypesWriter {
 		if (creationGraph) {
 			json.creationGraph = creationGraph;
 		}
+
+		const relativized = this.relativize(json);
+		fs.writeFileSync(filePath, JSON.stringify(relativized, null, 2), 'utf-8');
+		return filePath;
+	}
+
+	/**
+	 * Write control.json file (lethe contract, format 1.1): `callers` is the
+	 * creation graph instrumentation.json v2 carries, `points` the same
+	 * plugin-supplied instrumentation points. instrumentation.json keeps its
+	 * shape for mnemographica; control.json is the cross-language contract
+	 * rendering of the same data.
+	 */
+	writeControlFile (points: InstrumentationPoint[], callers: CreationGraph): string {
+		this.ensureDirectory();
+		const filePath = path.join(this.outputDir, 'control.json');
+
+		const json: ControlJson = {
+			version     : '1.1',
+			generatedAt : new Date().toISOString(),
+			callers,
+			points,
+		};
 
 		const relativized = this.relativize(json);
 		fs.writeFileSync(filePath, JSON.stringify(relativized, null, 2), 'utf-8');

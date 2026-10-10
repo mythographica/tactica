@@ -6126,7 +6126,9 @@ export class MnemonicaAnalyzer {
 				params.push({
 					name     : paramName,
 					type     : expandedType,
-					optional : !!param.questionToken || !!param.initializer
+					optional : !!param.questionToken || !!param.initializer,
+					// rest marker for the definitions.json args contract
+					...(param.dotDotDotToken ? { kind : 'rest' as const } : {})
 				});
 			}
 			// Only process first constructor
@@ -6180,7 +6182,9 @@ export class MnemonicaAnalyzer {
 				params.push({
 					name     : paramName,
 					type     : expandedType,
-					optional : !!param.questionToken || !!param.initializer
+					optional : !!param.questionToken || !!param.initializer,
+					// rest marker for the definitions.json args contract
+					...(param.dotDotDotToken ? { kind : 'rest' as const } : {})
 				});
 			}
 		}

@@ -771,7 +771,7 @@ export * from './registry${options.esm ? '.js' : ''}';
 	const scopeAnalysis = scopeWalker.build(scopeResolver);
 	LocalScopeWalker.attachHolderScopeIds(usages, scopeWalker);
 
-	const definitionsPath = writer.writeDefinitionsFile(definitions);
+	const definitionsPath = writer.writeDefinitionsFile(definitions, graph);
 	const usagesPath = writer.writeUsagesFile(usages);
 
 	if (options.verbose) {
@@ -853,6 +853,14 @@ export * from './registry${options.esm ? '.js' : ''}';
 		const anchorCount = creationGraph.anchors.length;
 		console.log(`Generated instrumentation.json at: ${instrumentationPath} (${instrumentation.length} points)`);
 		console.log(`  creation graph: ${nodeCount} nodes, ${edgeCount} edges, ${anchorCount} anchors`);
+	}
+
+	// Always generate control.json (lethe contract, format 1.1): the same
+	// creation graph and points as instrumentation.json, rendered under the
+	// cross-language `callers`/`points` keys.
+	const controlPath = writer.writeControlFile(instrumentation, creationGraph);
+	if (options.verbose) {
+		console.log(`Generated control.json at: ${controlPath}`);
 	}
 
 	// Generate hierarchy.json (structured) and hierarchy.txt (ASCII tree) for the Trie

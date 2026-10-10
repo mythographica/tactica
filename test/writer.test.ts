@@ -4,6 +4,7 @@ import { expect } from 'chai';
 import * as fs from 'fs';
 import * as path from 'path';
 import { TypesWriter } from '../src/writer';
+import { TypeGraphImpl } from '../src/graph';
 import { GeneratedTypes, ModuleGraph } from '../src/types';
 
 describe('TypesWriter', () => {
@@ -146,6 +147,141 @@ describe('TypesWriter', () => {
 			const outputPath = writer.writeDefinitionsFile(new Map());
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
 			expect(json.definitions).to.deep.equal({});
+		});
+
+		it('should enrich entries with fields and args from the graph', () => {
+			const graph = new TypeGraphImpl();
+			const node = TypeGraphImpl.createNode('UserType', undefined, 'src/users.ts', 10, 7);
+			node.properties.set('name', { name : 'name', type : 'string', optional : false });
+			node.properties.set('tag', { name : 'tag', type : 'string', optional : true });
+			node.constructorParams = [
+				{ name : 'data', type : '{ name: string }', optional : false },
+				{ name : 'rest', type : 'unknown[]', optional : false, kind : 'rest' },
+			];
+			graph.addRoot(node);
+
+			const bare = TypeGraphImpl.createNode('BareType', undefined, 'src/bare.ts', 1, 1);
+			graph.addRoot(bare);
+
+			const definitions = new Map([
+				[ 'UserType', {
+					name        : 'UserType',
+					location    : 'src/users.ts:10:7',
+					kind        : 'define' as const,
+					parent      : null,
+					strictChain : true,
+					blockErrors : false,
+				} ],
+				[ 'BareType', {
+					name        : 'BareType',
+					location    : 'src/bare.ts:1:1',
+					kind        : 'define' as const,
+					parent      : null,
+					strictChain : true,
+					blockErrors : false,
+				} ],
+			]);
+
+			const outputPath = writer.writeDefinitionsFile(definitions, graph);
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+
+			expect(json.definitions.UserType.fields).to.deep.equal([
+				{ name : 'name', type : 'string', optional : false },
+				{ name : 'tag', type : 'string', optional : true },
+			]);
+			expect(json.definitions.UserType.args).to.deep.equal([
+				{ name : 'data', type : '{ name: string }', optional : false },
+				// rest: kind, no optional (lethe contract)
+				{ name : 'rest', type : 'unknown[]', kind : 'rest' },
+			]);
+
+			// never-extracted constructorParams: fields present, args absent
+			expect(json.definitions.BareType.fields).to.deep.equal([]);
+			expect(json.definitions.BareType).to.not.have.property('args');
+
+			// the caller's definitions map is not mutated
+			expect(definitions.get('UserType')).to.not.have.property('fields');
+		});
+	});
+
+	describe('writeControlFile()', () => {
+		const callers = {
+			nodes : [
+				{
+					scopeId  : 'src/main.ts',
+					name     : 'src/main.ts',
+					kind     : 'module' as const,
+					filePath : 'src/main.ts',
+					location : 'src/main.ts:1:1',
+					starter  : true,
+				},
+			],
+			edges   : [ { caller : 'src/main.ts', callee : 'src/svc.ts:2:2' } ],
+			anchors : [
+				{
+					location        : 'src/svc.ts:3:9',
+					holderScopeId   : 'src/svc.ts:2:2',
+					typePath        : 'Thing',
+					constructorText : 'Thing',
+				},
+			],
+		};
+
+		it('should write control.json with the lethe 1.1 shape', () => {
+			const points = [
+				{
+					kind      : 'pipe' as const,
+					className : 'ValidationPipe',
+					location  : 'src/user.controller.ts:49:2',
+					code      : '@UsePipes(new ValidationPipe())',
+					scope     : 'method:UserController.createUser' as const,
+					targets   : [ 'UserController' ],
+				},
+			];
+
+			const outputPath = writer.writeControlFile(points, callers);
+
+			expect(fs.existsSync(outputPath)).to.be.true;
+			expect(path.basename(outputPath)).to.equal('control.json');
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.version).to.equal('1.1');
+			expect(json.callers.nodes).to.have.length(1);
+			expect(json.callers.edges[ 0 ].callee).to.equal('src/svc.ts:2:2');
+			expect(json.callers.anchors[ 0 ].typePath).to.equal('Thing');
+			expect(json.points[ 0 ].className).to.equal('ValidationPipe');
+		});
+
+		it('should relativize callers and points paths under the project root', () => {
+			const rootingWriter = new TypesWriter(testDir, path.resolve('/project'));
+			const absoluteCallers = {
+				nodes : [
+					{
+						scopeId  : '/project/src/main.ts',
+						name     : '/project/src/main.ts',
+						kind     : 'module' as const,
+						filePath : '/project/src/main.ts',
+						location : '/project/src/main.ts:1:1',
+						starter  : true,
+					},
+				],
+				edges   : [],
+				anchors : [],
+			};
+			const points = [
+				{
+					kind      : 'guard' as const,
+					className : 'AuthGuard',
+					location  : '/project/src/auth.guard.ts:5:1',
+					code      : 'export class AuthGuard',
+					scope     : 'module' as const,
+					targets   : [],
+				},
+			];
+
+			const outputPath = rootingWriter.writeControlFile(points, absoluteCallers);
+			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
+			expect(json.callers.nodes[ 0 ].scopeId).to.equal('src/main.ts');
+			expect(json.points[ 0 ].location).to.equal('src/auth.guard.ts:5:1');
 		});
 	});
 
