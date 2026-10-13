@@ -77,8 +77,10 @@ export declare class MnemonicaAnalyzer {
      * The collections.json manifest: one entry per minted collection, in
      * minting order, preceded by the default-collection entry whenever
      * default-collection types exist. The default entry has no id/location
-     * (there is no call site — unprefixed fullPaths are its identity) and
-     * its registry interface is the global TypeRegistry.
+     * (there is no call site — unprefixed fullPaths are its identity).
+     * Format 1.2: the registry interface is NOT emitted (it is a
+     * TypeScript-only concern — the in-memory registryInterfaceName that
+     * types.ts/registry.ts are generated from stays on the TypeNode).
      */
     getCollectionsManifest(): CollectionManifestEntry[];
     /**

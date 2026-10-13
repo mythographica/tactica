@@ -138,7 +138,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('definitions.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.definitions.UserType.name).to.equal('UserType');
 			expect(json.definitions.UserType.kind).to.equal('define');
 		});
@@ -227,7 +227,7 @@ describe('TypesWriter', () => {
 			],
 		};
 
-		it('should write control.json with the lethe 1.1 shape', () => {
+		it('should write control.json with the lethe 1.2 shape', () => {
 			const points = [
 				{
 					kind      : 'pipe' as const,
@@ -244,7 +244,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('control.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.callers.nodes).to.have.length(1);
 			expect(json.callers.edges[ 0 ].callee).to.equal('src/svc.ts:2:2');
 			expect(json.callers.anchors[ 0 ].typePath).to.equal('Thing');
@@ -298,7 +298,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('usages.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.usages.UserType).to.have.length(1);
 			expect(json.usages.UserType[ 0 ].kind).to.equal('instantiation');
 		});
@@ -323,7 +323,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('eds.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.eds.UserEntity).to.have.length(1);
 			expect(json.eds.UserEntity[ 0 ].kind).to.equal('wrap');
 		});
@@ -348,7 +348,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('flow.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.flow.UserType).to.have.length(1);
 			expect(json.flow.UserType[ 0 ].kind).to.equal('propertyRead');
 		});
@@ -488,7 +488,7 @@ describe('TypesWriter', () => {
 			expect(fs.existsSync(outputPath)).to.be.true;
 			expect(path.basename(outputPath)).to.equal('hierarchy.json');
 			const json = JSON.parse(fs.readFileSync(outputPath, 'utf-8'));
-			expect(json.version).to.equal('1.1');
+			expect(json.version).to.equal('1.2');
 			expect(json.roots).to.have.length(1);
 			expect(json.roots[ 0 ].fullPath).to.equal('UserType');
 			expect(json.roots[ 0 ].children[ 0 ].fullPath).to.equal('UserType.AdminType');

@@ -220,25 +220,28 @@ ASCII tree rendering of the same Trie that `cli.ts` prints under `--verbose`. Sa
 
 ```json
 {
-    "version": "1.1",
+    "version": "1.2",
     "generatedAt": "2026-09-22T…",
     "collections": [
-        { "id": null, "name": "defaultTypes", "registryInterface": "TypeRegistry", "location": null, "language": "typescript" },
-        { "id": "collection_1", "name": "Fleet", "registryInterface": "FleetRegistry", "location": "src/collections.ts:5:7", "language": "typescript" }
+        { "id": null, "name": "defaultTypes", "location": null, "language": "typescript" },
+        { "id": "collection_1", "name": "Fleet", "location": "src/collections.ts:5:7", "language": "typescript" }
     ]
 }
 ```
 
-`language` is `"typescript"` on every entry tactica writes (format 1.1);
-readers default an absent `language` to `"typescript"` for 1.0 output.
-The six contract files (`hierarchy`, `definitions`, `collections`,
-`usages`, `flow`, `eds`) carry `"version": "1.1"`, and so does `control`
-(the only version it exists in); `modules`/`scopes`
-keep their own versioning. The schemas themselves ship in
+Format 1.2: `version` is **required** and is `"1.2"` in all seven
+contract files (`hierarchy`, `definitions`, `collections`, `usages`,
+`flow`, `eds`, `control`); the schemas accept nothing else — an older
+`.tactica/` is regenerated, not read. `modules`/`scopes` keep their own
+versioning. `language` is required (`"typescript"` on every entry tactica
+writes). The registry interface is NOT part of the manifest — it is a
+TypeScript-only concern; the registry-prefixed aliases in
+`types.ts`/`registry.ts` come from the in-memory
+`TypeNode.registryInterfaceName`. The schemas themselves ship in
 `@mnemonica/lethe` (`tactica/*.schema.json`) and tactica's output is
 validated against them in `test/lethe-validation.test.ts`.
 
-The collection manifest: one entry per minted collection, in minting order. `name` is the variable holding the `createTypesCollection()` result; `location` its call site; `registryInterface` is absent (not null) when the collection declares no Option-B interface. The **default-collection entry comes first whenever default-collection types exist** — it has no call site, so `id`/`location` stay `null` (unprefixed fullPaths are its identity) and its registry interface is the global `TypeRegistry`. The `id` ↔ `registryInterface` pair is the join key between the `collectionId::`-prefixed graph outputs (hierarchy/definitions/usages/flow/eds) and the registry-prefixed aliases in `types.ts` / `registry.ts`. Source: `MnemonicaAnalyzer.getCollectionsManifest()` → `TypesWriter.writeCollectionsFile()`.
+The collection manifest: one entry per minted collection, in minting order. `name` is the variable holding the `createTypesCollection()` result; `location` its call site. The **default-collection entry comes first whenever default-collection types exist** — it has no call site, so `id`/`location` stay `null` (unprefixed fullPaths are its identity). The `id` is the join key for the `collectionId::` prefix on the graph outputs (hierarchy/definitions/usages/flow/eds/control). Source: `MnemonicaAnalyzer.getCollectionsManifest()` → `TypesWriter.writeCollectionsFile()`.
 
 ### `definitions.json` (always)
 
@@ -365,7 +368,7 @@ Native-instance flow patterns (property reads/writes, method calls, destructures
 
 ```json
 {
-    "version": "1.1",
+    "version": "1.2",
     "generatedAt": "2026-10-10T…",
     "callers": { "nodes": [ … ], "edges": [ … ], "anchors": [ … ] },
     "points": [ … ]

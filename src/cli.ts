@@ -855,7 +855,7 @@ export * from './registry${options.esm ? '.js' : ''}';
 		console.log(`  creation graph: ${nodeCount} nodes, ${edgeCount} edges, ${anchorCount} anchors`);
 	}
 
-	// Always generate control.json (lethe contract, format 1.1): the same
+	// Always generate control.json (lethe contract, format 1.2): the same
 	// creation graph and points as instrumentation.json, rendered under the
 	// cross-language `callers`/`points` keys.
 	const controlPath = writer.writeControlFile(instrumentation, creationGraph);

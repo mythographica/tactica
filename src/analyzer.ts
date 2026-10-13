@@ -346,19 +346,20 @@ export class MnemonicaAnalyzer {
 	 * The collections.json manifest: one entry per minted collection, in
 	 * minting order, preceded by the default-collection entry whenever
 	 * default-collection types exist. The default entry has no id/location
-	 * (there is no call site — unprefixed fullPaths are its identity) and
-	 * its registry interface is the global TypeRegistry.
+	 * (there is no call site — unprefixed fullPaths are its identity).
+	 * Format 1.2: the registry interface is NOT emitted (it is a
+	 * TypeScript-only concern — the in-memory registryInterfaceName that
+	 * types.ts/registry.ts are generated from stays on the TypeNode).
 	 */
 	getCollectionsManifest (): CollectionManifestEntry[] {
 		const entries: CollectionManifestEntry[] = [];
 		const hasDefaultTypes = this.graph.getAllTypes().some(t => t.collectionId === undefined);
 		if (hasDefaultTypes) {
 			entries.push({
-				id                : null,
-				name              : 'defaultTypes',
-				registryInterface : 'TypeRegistry',
-				location          : null,
-				language          : 'typescript'
+				id       : null,
+				name     : 'defaultTypes',
+				location : null,
+				language : 'typescript'
 			});
 		}
 		for (const [ id, info ] of this.collectionInfo) {
@@ -368,10 +369,6 @@ export class MnemonicaAnalyzer {
 				location : `${info.sourceFile}:${info.line}:${info.column}`,
 				language : 'typescript'
 			};
-			// absent when the collection declares none — not null, not undefined
-			if (info.registryInterfaceName) {
-				entry.registryInterface = info.registryInterfaceName;
-			}
 			entries.push(entry);
 		}
 		return entries;

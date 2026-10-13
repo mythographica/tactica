@@ -731,21 +731,22 @@ describe('Builder pattern and custom collections', () => {
 
 			expect(manifest).to.have.length(3);
 			expect(manifest[ 0 ]).to.deep.equal({
-				id                : null,
-				name              : 'defaultTypes',
-				registryInterface : 'TypeRegistry',
-				location          : null,
-				language          : 'typescript'
+				id       : null,
+				name     : 'defaultTypes',
+				location : null,
+				language : 'typescript'
 			});
 			expect(manifest[ 1 ].id).to.equal('collection_1');
 			expect(manifest[ 1 ].name).to.equal('Shop');
-			expect(manifest[ 1 ].registryInterface).to.equal('ShopRegistry');
 			expect(manifest[ 1 ].language).to.equal('typescript');
 			expect(manifest[ 1 ].location).to.match(/^src\/app\.ts:\d+:\d+$/);
 			expect(manifest[ 2 ].id).to.equal('collection_2');
 			expect(manifest[ 2 ].name).to.equal('Plain');
 			expect(manifest[ 2 ].language).to.equal('typescript');
-			// no Option-B interface -> the field stays absent, not null
+			// format 1.2: the registry interface is never in the manifest
+			// (TypeScript-only concern; the TypeNode keeps its
+			// registryInterfaceName for types.ts/registry.ts generation)
+			expect(manifest[ 1 ]).to.not.have.property('registryInterface');
 			expect(manifest[ 2 ]).to.not.have.property('registryInterface');
 		});
 

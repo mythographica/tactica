@@ -67,7 +67,7 @@ export declare class TypesWriter {
      */
     writeInstrumentationFile(points: InstrumentationPoint[], creationGraph?: CreationGraph): string;
     /**
-     * Write control.json file (lethe contract, format 1.1): `callers` is the
+     * Write control.json file (lethe contract, format 1.2): `callers` is the
      * creation graph instrumentation.json v2 carries, `points` the same
      * plugin-supplied instrumentation points. instrumentation.json keeps its
      * shape for mnemographica; control.json is the cross-language contract
@@ -93,9 +93,11 @@ export declare class TypesWriter {
     /**
      * Write the collection manifest: one entry per collection (default
      * first when default-collection types exist), ids + display names +
-     * Option-B registry interfaces + call sites. The id↔interface mapping
-     * is the join key between the `collectionId::`-prefixed graph outputs
-     * and the registry-prefixed aliases in types.ts / registry.ts.
+     * call sites + language. The `collectionId::` prefix on graph-output
+     * fullPaths joins to the entry `id`. Format 1.2: the registry
+     * interface is not part of the manifest — the registry-prefixed
+     * aliases in types.ts / registry.ts come from the in-memory
+     * TypeNode.registryInterfaceName instead.
      */
     writeCollectionsFile(collections: CollectionManifestEntry[]): string;
 }

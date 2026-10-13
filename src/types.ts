@@ -336,14 +336,14 @@ export interface InstrumentationJson {
 }
 
 /**
- * JSON output for control.json (lethe contract, format 1.1): `callers`
+ * JSON output for control.json (lethe contract, format 1.2): `callers`
  * carries the same creation graph instrumentation.json v2 carries under
  * `creationGraph`, `points` the same plugin-supplied instrumentation points.
  * instrumentation.json stays unchanged for mnemographica; control.json is
  * the cross-language contract rendering of the same data.
  */
 export interface ControlJson {
-	version: '1.1';
+	version: '1.2';
 	generatedAt: string;
 	callers: CreationGraph;
 	points: InstrumentationPoint[];
@@ -695,23 +695,24 @@ export interface HierarchyJson {
  * One entry of the collections.json manifest. The default collection is
  * emitted first whenever default-collection types exist: it has no call
  * site, so `id` and `location` stay null (unprefixed fullPaths ARE its
- * identity) and its registry interface is the global `TypeRegistry`.
+ * identity). Format 1.2: the registry interface is NOT part of the
+ * manifest (a TypeScript-only concern — the in-memory
+ * `registryInterfaceName` that types.ts/registry.ts are generated from
+ * stays on the TypeNode).
  */
 export interface CollectionManifestEntry {
 	/** Minted id used in `collectionId::` fullPath prefixes; null for the default collection */
 	id: string | null;
 	/** Variable holding the createTypesCollection() result ('defaultTypes' for the default collection) */
 	name: string;
-	/** Option-B registry interface name; absent when the collection declares none */
-	registryInterface?: string;
 	/** createTypesCollection() call site (file:line:col); null for the default collection */
 	location: string | null;
 	/**
-	 * Source language of this collection's codebase (format 1.1; absent in
-	 * 1.0 output, where readers default it to "typescript"). tactica is the
-	 * TypeScript generator, so every entry it writes is "typescript".
+	 * Source language of this collection's codebase (format 1.2: required —
+	 * there is no default language). tactica is the TypeScript generator,
+	 * so every entry it writes is "typescript".
 	 */
-	language?: 'typescript';
+	language: 'typescript';
 }
 
 /**

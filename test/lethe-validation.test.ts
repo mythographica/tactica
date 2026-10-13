@@ -56,7 +56,7 @@ describe('lethe schema validation of tactica output', () => {
 		});
 	}
 
-	it('emits format 1.1 with language "typescript" on every collection entry', () => {
+	it('emits format 1.2 with language "typescript" on every collection entry', () => {
 		const outputDir = fs.mkdtempSync(
 			path.join(os.tmpdir(), 'tactica-lethe-format-')
 		);
@@ -69,17 +69,19 @@ describe('lethe schema validation of tactica output', () => {
 			const collections = JSON.parse(
 				fs.readFileSync(path.join(outputDir, 'collections.json'), 'utf-8')
 			);
-			expect(collections.version).to.equal('1.1');
+			expect(collections.version).to.equal('1.2');
 			expect(collections.collections.length).to.be.greaterThan(0);
 			for (const entry of collections.collections) {
 				expect(entry.language, `collection ${entry.name}`).to.equal('typescript');
+				// format 1.2: the registry interface is no longer in the manifest
+				expect(entry, `collection ${entry.name}`).to.not.have.property('registryInterface');
 			}
 
 			for (const kind of [ 'hierarchy', 'definitions', 'usages', 'flow' ]) {
 				const data = JSON.parse(
 					fs.readFileSync(path.join(outputDir, `${kind}.json`), 'utf-8')
 				);
-				expect(data.version, `${kind}.json version`).to.equal('1.1');
+				expect(data.version, `${kind}.json version`).to.equal('1.2');
 			}
 		} finally {
 			fs.rmSync(outputDir, { recursive : true, force : true });
@@ -99,7 +101,7 @@ describe('lethe schema validation of tactica output', () => {
 			const control = JSON.parse(
 				fs.readFileSync(path.join(outputDir, 'control.json'), 'utf-8')
 			);
-			expect(control.version).to.equal('1.1');
+			expect(control.version).to.equal('1.2');
 			expect(control.callers).to.have.all.keys('nodes', 'edges', 'anchors');
 			expect(control.points).to.be.an('array');
 

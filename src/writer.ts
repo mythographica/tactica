@@ -187,7 +187,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			definitions : definitionsObj,
 		});
@@ -210,7 +210,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			usages      : usagesObj,
 		});
@@ -233,7 +233,7 @@ export class TypesWriter {
 		}
 
 		const json = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			eds         : edsObj,
 		});
@@ -265,7 +265,7 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Write control.json file (lethe contract, format 1.1): `callers` is the
+	 * Write control.json file (lethe contract, format 1.2): `callers` is the
 	 * creation graph instrumentation.json v2 carries, `points` the same
 	 * plugin-supplied instrumentation points. instrumentation.json keeps its
 	 * shape for mnemographica; control.json is the cross-language contract
@@ -276,7 +276,7 @@ export class TypesWriter {
 		const filePath = path.join(this.outputDir, 'control.json');
 
 		const json: ControlJson = {
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			callers,
 			points,
@@ -301,7 +301,7 @@ export class TypesWriter {
 		}
 
 		const json: FlowJson = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			flow        : flowObj,
 		});
@@ -368,7 +368,7 @@ export class TypesWriter {
 		const filePath = path.join(this.outputDir, 'hierarchy.json');
 
 		const json: HierarchyJson = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			roots,
 		});
@@ -380,16 +380,18 @@ export class TypesWriter {
 	/**
 	 * Write the collection manifest: one entry per collection (default
 	 * first when default-collection types exist), ids + display names +
-	 * Option-B registry interfaces + call sites. The id↔interface mapping
-	 * is the join key between the `collectionId::`-prefixed graph outputs
-	 * and the registry-prefixed aliases in types.ts / registry.ts.
+	 * call sites + language. The `collectionId::` prefix on graph-output
+	 * fullPaths joins to the entry `id`. Format 1.2: the registry
+	 * interface is not part of the manifest — the registry-prefixed
+	 * aliases in types.ts / registry.ts come from the in-memory
+	 * TypeNode.registryInterfaceName instead.
 	 */
 	writeCollectionsFile (collections: CollectionManifestEntry[]): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'collections.json');
 
 		const json: CollectionsJson = this.relativize({
-			version     : '1.1',
+			version     : '1.2',
 			generatedAt : new Date().toISOString(),
 			collections,
 		});
