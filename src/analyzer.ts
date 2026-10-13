@@ -4756,13 +4756,22 @@ export class MnemonicaAnalyzer {
 			}
 			// Check if this looks like a type access pattern
 			if (propName && this.isLikelyTypeName(propName)) {
+				// new x.Sub(…): the NewExpression branch already recorded
+				// the site as an instantiation, so a propertyAccess record
+				// would duplicate it — one record per site, the same law as
+				// the clone guard above. (A whole-callee-parenthesized
+				// new (x.Sub)() never matches here: the access's parent is
+				// the ParenthesizedExpression, and the instantiation branch
+				// cannot resolve that callee — this access stays the site's
+				// only record.)
+				const isNewCallee = ts.isNewExpression(node.parent) && node.parent.expression === node;
 				const { line, character } = ts.getLineAndCharacterOfPosition(
 					sourceFile,
 					node.getStart(sourceFile)
 				);
 					// Try to resolve full path
 				const fullPath = this.resolveTypePath(node);
-				if (fullPath) {
+				if (fullPath && !isNewCallee) {
 					this.addUsage(fullPath, {
 						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
 						kind     : 'propertyAccess',

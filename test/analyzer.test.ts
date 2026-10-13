@@ -1233,6 +1233,75 @@ describe('MnemonicaAnalyzer', () => {
 		});
 	});
 
+	describe('new x.Sub() usage dedup', () => {
+		const defineSource = `
+				import { define } from 'mnemonica';
+				const Parent = define('Parent', function () {});
+				const Child = Parent.define('Child', function () {});
+			`;
+
+		it('records the new-callee exactly once (instantiation only)', () => {
+			const source = `
+					const parent = new Parent();
+					const child = new parent.Child();
+				`;
+
+			analyzer.analyzeSource(defineSource);
+			analyzer.analyzeSource(source);
+
+			const childUsages = analyzer.getUsages().get('Parent.Child');
+			expect(childUsages).to.have.length(1);
+			expect(childUsages![ 0 ].kind).to.equal('instantiation');
+		});
+
+		it('keeps the propertyAccess record for a bare access', () => {
+			const source = `
+					const parent = new Parent();
+					const ChildCtor = parent.Child;
+				`;
+
+			analyzer.analyzeSource(defineSource);
+			analyzer.analyzeSource(source);
+
+			const childUsages = analyzer.getUsages().get('Parent.Child');
+			expect(childUsages).to.have.length(1);
+			expect(childUsages![ 0 ].kind).to.equal('propertyAccess');
+		});
+
+		it('records the parenthesized/as-receiver callee once (instantiation only)', () => {
+			// new (parent as object).Child() — the property access IS the
+			// NewExpression's callee through the wrapped receiver
+			const source = `
+					const parent = new Parent();
+					const child = new (parent as object).Child();
+				`;
+
+			analyzer.analyzeSource(defineSource);
+			analyzer.analyzeSource(source);
+
+			const childUsages = analyzer.getUsages().get('Parent.Child');
+			expect(childUsages).to.have.length(1);
+			expect(childUsages![ 0 ].kind).to.equal('instantiation');
+		});
+
+		it('keeps the propertyAccess record for a whole-callee-parenthesized new', () => {
+			// new (parent.Child)() — the NewExpression branch cannot resolve
+			// a ParenthesizedExpression callee, so the property access is the
+			// site's only record and must survive the dedup
+			const source = `
+					const parent = new Parent();
+					const child = new (parent.Child)();
+				`;
+
+			analyzer.analyzeSource(defineSource);
+			analyzer.analyzeSource(source);
+
+			const childUsages = analyzer.getUsages().get('Parent.Child');
+			expect(childUsages).to.have.length(1);
+			expect(childUsages![ 0 ].kind).to.equal('propertyAccess');
+		});
+	});
+
 	describe('extractConstructorParams', () => {
 		it('should extract constructor params with generic type args (Array<string>, Map<K,V>)', () => {
 			const source = `
