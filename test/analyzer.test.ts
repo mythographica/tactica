@@ -264,7 +264,7 @@ describe('MnemonicaAnalyzer', () => {
 			expect(type.properties.get('value')?.type).to.equal('number');
 		});
 
-		it('should detect unnamed root lazy() call with function getter', () => {
+		it('should reject the unnamed root lazy() form with an analyzer error', () => {
 			const source = `
 				const MyType = lazy(() => function MyType(this: any, data: { id: string }) {
 					this.id = data.id;
@@ -273,11 +273,41 @@ describe('MnemonicaAnalyzer', () => {
 
 			const result = analyzer.analyzeSource(source);
 
-			expect(result.errors).to.have.length(0);
-			expect(result.types).to.have.length(1);
-			const [ type ] = result.types;
-			expect(type.name).to.equal('MyType');
-			expect(type.properties.get('id')?.type).to.equal('string');
+			// the runtime throws TYPENAME_MUST_BE_A_STRING for the unnamed
+			// form — tactica generates no type for code that crashes
+			expect(result.types).to.have.length(0);
+			expect(result.errors).to.have.length(1);
+			const [ error ] = result.errors;
+			expect(error.message).to.equal('lazy() requires a type name: lazy(\'Name\', getter)');
+			expect(error.line).to.equal(2);
+			expect(error.column).to.equal(20);
+		});
+
+		it('should reject the unnamed method lazy() form (Type.lazy(getter))', () => {
+			const source = `
+				const Parent = define('Parent', function () {});
+				const Child = Parent.lazy(() => class Child {});
+			`;
+
+			const result = analyzer.analyzeSource(source);
+
+			// only the named Parent is generated
+			expect(result.types.map(t => t.fullPath)).to.deep.equal([ 'Parent' ]);
+			expect(result.errors).to.have.length(1);
+			expect(result.errors[ 0 ].message).to.equal('lazy() requires a type name: lazy(\'Name\', getter)');
+		});
+
+		it('should reject the unnamed explicit-source lazy() form (lazy(source, getter))', () => {
+			const source = `
+				const Parent = define('Parent', function () {});
+				const Child = lazy(Parent, () => class Child {});
+			`;
+
+			const result = analyzer.analyzeSource(source);
+
+			expect(result.types.map(t => t.fullPath)).to.deep.equal([ 'Parent' ]);
+			expect(result.errors).to.have.length(1);
+			expect(result.errors[ 0 ].message).to.equal('lazy() requires a type name: lazy(\'Name\', getter)');
 		});
 
 		it('should detect method lazy() call on a parent type', () => {

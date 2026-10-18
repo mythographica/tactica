@@ -2399,6 +2399,22 @@ export class MnemonicaAnalyzer {
 		const startPos = positionNode.getStart(sourceFile);
 		const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, startPos);
 
+		// The unnamed forms — lazy(getter), Type.lazy(getter, config?),
+		// lazy(source, getter, config?) — throw TYPENAME_MUST_BE_A_STRING at
+		// runtime (the name is required), so generating a type from the
+		// getter's constructor name would bless code that crashes. They are
+		// an analyzer error naming the call site and the required form.
+		const lazyArgs = this.extractLazyCallArgs(call);
+		if (lazyArgs && lazyArgs.name === undefined) {
+			this.errors.push({
+				message : 'lazy() requires a type name: lazy(\'Name\', getter)',
+				file    : sourceFile.fileName,
+				line    : line + 1,
+				column  : character + 1,
+			});
+			return;
+		}
+
 		if (!lazyContext.typeName) {
 			this.errors.push({
 				message : 'Could not extract type name from lazy() call',
@@ -2478,7 +2494,9 @@ export class MnemonicaAnalyzer {
 	/**
 	 * Extract lazy() call arguments into a normalized shape.
 	 * Handles named/unnamed and explicit-source forms, both as free calls
-	 * and as method calls.
+	 * and as method calls. The unnamed shapes return `name: undefined` —
+	 * processLazyCall rejects them with an analyzer error (the runtime
+	 * requires the name), so no type is generated for them.
 	 */
 	private extractLazyCallArgs (call: ts.CallExpression): {
 		source?: ts.Expression;

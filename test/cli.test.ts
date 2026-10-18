@@ -325,3 +325,42 @@ describe('run() EDS join data', () => {
 		}
 	});
 });
+
+describe('run() analyzer error warnings', () => {
+	// Analyzer errors (e.g. the unnamed lazy() form — the runtime throws
+	// TYPENAME_MUST_BE_A_STRING on it) never abort the run: the offending
+	// call is skipped, the warning prints once (both passes visit the same
+	// call site), and the exit code stays 0.
+	const fixtureDir = path.join(__dirname, 'fixtures', 'cli-lazy-unnamed');
+
+	it('should print the analyzer error as a warning, once, and still generate', () => {
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-lazy-unnamed-'));
+		const warnings: string[] = [];
+		const originalWarn = console.warn;
+		console.warn = (message: unknown) => {
+			warnings.push(String(message));
+		};
+		let exitCode: number;
+		let typesTs: string;
+		try {
+			exitCode = run({
+				project : path.join(fixtureDir, 'tsconfig.json'),
+				outputDir,
+			});
+			typesTs = fs.readFileSync(path.join(outputDir, 'types.ts'), 'utf-8');
+		} finally {
+			console.warn = originalWarn;
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+
+		expect(exitCode).to.equal(0);
+		const lazyWarnings = warnings.filter(w => w.includes('lazy() requires a type name'));
+		expect(lazyWarnings).to.have.length(1);
+		expect(lazyWarnings[ 0 ]).to.include(`${path.join('src', 'models.ts')}:9:27`);
+		expect(lazyWarnings[ 0 ]).to.include('lazy(\'Name\', getter)');
+
+		expect(typesTs).to.include('export type Parent =');
+		expect(typesTs).to.include('export type Parent_Good =');
+		expect(typesTs).to.not.include('Bad');
+	});
+});

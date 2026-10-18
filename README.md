@@ -131,6 +131,8 @@ You should commit `.tactica/` if you want type information to flow through CI wi
 
 EDS tracking is **auto-enabled** when `@mnemonica/dive` is present in `package.json` dependencies; otherwise it is off. `--eds` / `--no-eds` override the auto-detection.
 
+Analyzer errors (for example the unnamed `lazy()` form, which the runtime rejects with `TYPENAME_MUST_BE_A_STRING`) never abort the run: the offending call is skipped, each error prints once as a `tactica: <file>:<line>:<column> <message>` warning on stderr (not `--verbose`-gated), and the exit code stays 0.
+
 ## Generated Files
 
 Tactica writes everything under the `--output` directory (default `.tactica/`). All file paths inside the JSON files are emitted **project-relative** (anchored at the tsconfig directory) so the output is portable across machines; consumers resolve them against the directory holding `.tactica`. Earlier versions emitted absolute paths, so consumers should accept both.
@@ -256,7 +258,7 @@ Chained calls (`define('A').define('B')`) and nested calls via variable referenc
 ### `lazy()` definitions
 
 ```ts
-const AdminType = UserType.lazy(() => class AdminType {
+const AdminType = UserType.lazy('AdminType', () => class AdminType {
     role: string;
     constructor (role: string) {
         this.role = role;
@@ -264,7 +266,7 @@ const AdminType = UserType.lazy(() => class AdminType {
 });
 ```
 
-All forms are recognized: free `lazy('Name', getter)`, method `Type.lazy(...)`, and chained `define('A').lazy('B', getter)`. The getter is followed, and the returned constructor is analyzed like a direct `define()` handler — properties and constructor parameters are extracted and emitted in `types.ts` / `registry.ts` like any other type.
+The name is required — the runtime throws `TYPENAME_MUST_BE_A_STRING` for the unnamed forms (`lazy(getter)`, `Type.lazy(getter)`, `lazy(source, getter)`), so tactica reports them as analyzer errors naming the call site and generates no type for them. The named forms are all recognized: free `lazy('Name', getter)`, method `Type.lazy('Name', getter)`, chained `define('A').lazy('B', getter)`, and explicit-source `lazy(source, 'Name', getter)`. The getter is followed, and the returned constructor is analyzed like a direct `define()` handler — properties and constructor parameters are extracted and emitted in `types.ts` / `registry.ts` like any other type.
 
 ### Construction shapes beyond plain `new`
 

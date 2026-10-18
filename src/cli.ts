@@ -20,7 +20,7 @@ import {
 	resolveGraphTypeReference, TypeGraphImpl 
 } from './graph';
 import {
-	TacticaConfig, TypeNode, EDSInfo, ScopeAnalysis
+	TacticaConfig, TypeNode, EDSInfo, ScopeAnalysis, AnalyzeError
 } from './types';
 import { TacticaPlugin } from './plugins';
 
@@ -581,13 +581,18 @@ function run (options: CLIOptions): number {
 	// Module-scope tracking (imports/exports for modules.json) happens in the
 	// same pass — it needs only the AST, not the collected definitions.
 	const moduleGraphBuilder = new ModuleGraphBuilder(program);
+	// Analyzer errors (e.g. an unnamed lazy() call) never abort the run —
+	// the offending call is simply skipped — but they are ALWAYS printed,
+	// once each: both passes visit the same call sites, so dedupe by key.
+	const analyzerErrors: AnalyzeError[] = [];
 	for (const sourceFile of sourceFiles) {
 		if (options.verbose) {
 			console.log(`Analyzing (definitions): ${sourceFile.fileName}`);
 		}
 
 		try {
-			analyzer.analyzeFile(sourceFile);
+			const definitionsPass = analyzer.analyzeFile(sourceFile);
+			analyzerErrors.push(...definitionsPass.errors);
 			moduleGraphBuilder.addFile(sourceFile);
 		} catch (err) {
 			console.error(`Error analyzing ${sourceFile.fileName}:`, err);
@@ -603,11 +608,23 @@ function run (options: CLIOptions): number {
 		}
 
 		try {
-			analyzer.analyzeFile(sourceFile);
+			const usagesPass = analyzer.analyzeFile(sourceFile);
+			analyzerErrors.push(...usagesPass.errors);
 		} catch (err) {
 			console.error(`Error analyzing ${sourceFile.fileName}:`, err);
 			throw err;
 		}
+	}
+
+	const seenWarnings = new Set<string>();
+	for (const analyzerError of analyzerErrors) {
+		const key = `${analyzerError.file}:${analyzerError.line}:${analyzerError.column}:${analyzerError.message}`;
+		if (seenWarnings.has(key)) {
+			continue;
+		}
+		seenWarnings.add(key);
+		const relFile = path.relative(projectDir, analyzerError.file);
+		console.warn(`tactica: ${relFile}:${analyzerError.line}:${analyzerError.column} ${analyzerError.message}`);
 	}
 
 	// Generate types from mnemonica analysis

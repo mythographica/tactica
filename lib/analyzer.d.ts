@@ -477,7 +477,9 @@ export declare class MnemonicaAnalyzer {
     /**
      * Extract lazy() call arguments into a normalized shape.
      * Handles named/unnamed and explicit-source forms, both as free calls
-     * and as method calls.
+     * and as method calls. The unnamed shapes return `name: undefined` —
+     * processLazyCall rejects them with an analyzer error (the runtime
+     * requires the name), so no type is generated for them.
      */
     private extractLazyCallArgs;
     /**
