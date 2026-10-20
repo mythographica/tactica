@@ -488,6 +488,68 @@ describe('MnemonicaAnalyzer - Instrumentation Points', () => {
 		});
 	});
 
+	describe('factory construction (decoratorArgFactories instantiation)', () => {
+		const constructingPlugin: TacticaPlugin = {
+			useDecorators         : { Body : 'pipe' },
+			decoratorArgFactories : {
+				forType : { kind : 'pipe', targetArg : 0, instantiation : true },
+			},
+		};
+		const source = `
+			import { define, lookup } from 'mnemonica';
+			import { Body } from '@nestjs/common';
+			import { mvp } from '@mnemonica/nestjs';
+
+			define('CrateEntity', function (this: { name: string }, data: { name: string }) {
+				this.name = data.name;
+			});
+			const CrateType = lookup('CrateEntity');
+
+			export class CrateController {
+				create (@Body(mvp.forType(CrateType, CrateDto)) crate: unknown) {
+					return crate;
+				}
+				untyped (@Body(mvp.forType(NotAType, CrateDto)) crate: unknown) {
+					return crate;
+				}
+			}
+
+			export class CrateDto {}
+		`;
+
+		it('records the factory call as an instantiation of the resolved target type', () => {
+			const constructing = new MnemonicaAnalyzer(undefined, [ constructingPlugin ]);
+			constructing.analyzeSource(source);
+
+			const constructions = (constructing.getUsages().get('CrateEntity') ?? [])
+				.filter(u => u.kind === 'instantiation');
+			expect(constructions).to.deep.equal([ {
+				location        : 'temp.ts:12:19',
+				kind            : 'instantiation',
+				code            : 'mvp.forType(CrateType, CrateDto)',
+				constructorText : 'CrateType',
+			} ]);
+			const flows = (constructing.getFlowUsages().get('CrateEntity') ?? [])
+				.filter(f => f.kind === 'instantiation');
+			expect(flows).to.deep.equal([ {
+				location : 'temp.ts:12:19',
+				kind     : 'instantiation',
+				code     : 'mvp.forType(CrateType, CrateDto)',
+				context  : 'plugin factory construction',
+			} ]);
+			// the instrumentation point is unchanged by the flag
+			const site = constructing.getInstrumentationPoints().find(p => p.className === 'CrateType');
+			expect(site?.kind).to.equal('pipe');
+		});
+
+		it('records nothing without the flag', () => {
+			analyzer.analyzeSource(source);
+			const constructions = (analyzer.getUsages().get('CrateEntity') ?? [])
+				.filter(u => u.kind === 'instantiation');
+			expect(constructions).to.deep.equal([]);
+		});
+	});
+
 	describe('APP_* global registrations', () => {
 		it('should detect APP_GUARD / APP_PIPE / APP_INTERCEPTOR / APP_FILTER providers', () => {
 			const source = `

@@ -580,6 +580,13 @@ export declare class MnemonicaAnalyzer {
      */
     private resolveConstructionFnTypePath;
     /**
+     * Resolve an expression passed where a constructor is expected (the
+     * Ctor of call/apply/bind, a plugin factory's constructed target) to a
+     * defined type's fullPath: value scope for identifiers, chain
+     * resolution for property accesses.
+     */
+    private resolveCtorArgTypePath;
+    /**
      * instance.fork(...) / instance.clone(...) on a tracked variable —
      * runtime returns `this`, so the result carries the source type.
      */
@@ -988,6 +995,14 @@ export declare class MnemonicaAnalyzer {
      * referenced class identifier.
      */
     private collectInstrumentationDecorator;
+    /**
+     * A plugin-listed decorator-arg factory with `instantiation: true`
+     * (`@Body(mvp.forType(Entity, Dto))`) constructs the type at its
+     * target argument later, at runtime: record the factory call as that
+     * type's `instantiation` usage and flow, the same as call/apply. A
+     * target that resolves to no defined type records nothing.
+     */
+    private recordFactoryConstruction;
     /**
      * Detect global registrations: object literals shaped like
      * `{ provide: <plugin-listed token>, useClass: X }`.

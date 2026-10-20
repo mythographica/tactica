@@ -21,7 +21,7 @@ export type { ScopeTypeResolver } from './scopes';
 export { CreationGraphBuilder } from './creation-graph';
 export { mergeTacticaPlugins } from './plugins';
 export type {
-	TacticaPlugin, InstrumentationVocabulary
+	TacticaPlugin, InstrumentationVocabulary, DecoratorArgFactory
 } from './plugins';
 
 

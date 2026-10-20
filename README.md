@@ -861,7 +861,8 @@ interface TacticaPlugin {
     appTokens?: Record<string, InstrumentationKind>;
     // factory calls inside listed decorators' args: factory method name ->
     // kind + which factory-call argument holds the target class (default 0)
-    decoratorArgFactories?: Record<string, { kind: InstrumentationKind; targetArg?: number }>;
+    // + whether the factory constructs that target (instantiation)
+    decoratorArgFactories?: Record<string, { kind: InstrumentationKind; targetArg?: number; instantiation?: boolean }>;
     // opt in to shape-based `consumer.apply(Mw).forRoutes(...)` detection
     middlewareWiring?: boolean;
 }
@@ -871,7 +872,7 @@ Programmatic callers pass plugins directly: `new MnemonicaAnalyzer(program, plug
 
 - **Heritage** — `class X implements <plugin-listed interface>` (matched by interface identifier name). Bare declarations carry scope `module` (attachment statically unknown).
 - **Decorator sites** — plugin-listed decorators on classes, methods, or method parameters, including inline instances (`@Register(new Impl(…))`). One point per referenced class; scope is `controller:<Name>` or `method:<Class>.<method>` (parameter-decorated sites take the enclosing method's scope — the attachment is the handler, not the argument name).
-- **Decorator-arg factories** — a `CallExpression` argument of the form `<anything>.<factory>(…)` inside a listed decorator's args (class, method, or parameter position), e.g. `@UsePipes(mvp.forType(Dto))` and the parameter form `@Body(mvp.forType(Entity, Dto))`: when `<factory>` is plugin-listed, a point of the configured `kind` is emitted with the class in `targetArg` (default 0) as the target. Factory calls whose method name is not listed are ignored, as are listed factories whose configured position is not an identifier. Points resolve `location`/`code` to the target's declaration and dedupe exactly like other decorator sites.
+- **Decorator-arg factories** — a `CallExpression` argument of the form `<anything>.<factory>(…)` inside a listed decorator's args (class, method, or parameter position), e.g. `@UsePipes(mvp.forType(Dto))` and the parameter form `@Body(mvp.forType(Entity, Dto))`: when `<factory>` is plugin-listed, a point of the configured `kind` is emitted with the class in `targetArg` (default 0) as the target. Factory calls whose method name is not listed are ignored, as are listed factories whose configured position is not an identifier. Points resolve `location`/`code` to the target's declaration and dedupe exactly like other decorator sites. With `instantiation: true` the plugin declares that the factory constructs its target on the caller's behalf (a pipe running `new Target(body)` per request): when the target argument resolves to a defined type — a `lookup()` alias, a type name, or a type path — the factory call is also recorded in `usages.json` and `flow.json` as an `instantiation` of that type, `constructorText` being the argument text.
 - **Global providers** — `{ provide: <plugin-listed token>, useClass: X }` object literals → scope `global`. `useExisting`/`useFactory` without `useClass` are skipped.
 - **Middleware wiring** — `consumer.apply(Mw).forRoutes(...)` inside a class's `configure()` method → scope `module`, targets from `forRoutes` arguments when statically readable. Requires `middlewareWiring: true` from any loaded plugin.
 

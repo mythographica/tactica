@@ -3022,6 +3022,17 @@ export class MnemonicaAnalyzer {
 			return undefined;
 		}
 		const [ , ctorArg ] = call.arguments;
+		const known = this.resolveCtorArgTypePath(ctorArg);
+		return known;
+	}
+
+	/**
+	 * Resolve an expression passed where a constructor is expected (the
+	 * Ctor of call/apply/bind, a plugin factory's constructed target) to a
+	 * defined type's fullPath: value scope for identifiers, chain
+	 * resolution for property accesses.
+	 */
+	private resolveCtorArgTypePath (ctorArg: ts.Expression): string | undefined {
 		let resolved: string | undefined;
 		if (ts.isPropertyAccessExpression(ctorArg)) {
 			resolved = this.resolveTypePath(ctorArg);
@@ -6377,6 +6388,12 @@ export class MnemonicaAnalyzer {
 						className = targetArg.text;
 						argKind = factory.kind;
 					}
+					// The plugin declares that this factory constructs its
+					// target on the caller's behalf: the call site is a
+					// construction like `new`, recorded as an instantiation
+					if (targetArg && factory.instantiation) {
+						this.recordFactoryConstruction(arg, targetArg, sourceFile);
+					}
 				}
 			}
 			if (!className) {
@@ -6391,6 +6408,35 @@ export class MnemonicaAnalyzer {
 				targets,
 			});
 		}
+	}
+
+	/**
+	 * A plugin-listed decorator-arg factory with `instantiation: true`
+	 * (`@Body(mvp.forType(Entity, Dto))`) constructs the type at its
+	 * target argument later, at runtime: record the factory call as that
+	 * type's `instantiation` usage and flow, the same as call/apply. A
+	 * target that resolves to no defined type records nothing.
+	 */
+	private recordFactoryConstruction (
+		call: ts.CallExpression,
+		targetArg: ts.Expression,
+		sourceFile: ts.SourceFile
+	): void {
+		const constructedPath = this.resolveCtorArgTypePath(targetArg);
+		if (!constructedPath) {
+			return;
+		}
+		this.recordConstructionUsage(call, constructedPath, sourceFile, targetArg.getText(sourceFile));
+		const { line, character } = ts.getLineAndCharacterOfPosition(
+			sourceFile,
+			call.getStart(sourceFile)
+		);
+		this.addFlow(constructedPath, {
+			location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+			kind     : 'instantiation',
+			code     : call.getText(sourceFile).slice(0, 100),
+			context  : 'plugin factory construction',
+		});
 	}
 
 	/**
