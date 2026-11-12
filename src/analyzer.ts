@@ -181,6 +181,11 @@ export class MnemonicaAnalyzer {
 	private builderCandidates: BuilderCandidate[] = [];
 	private excludedTypePaths = new Set<string>();
 	private generatedTypeImports = new Map<string, Set<string>>();
+	// Absolute directories holding the generated output; an import resolving
+	// into one of them (relative or through tsconfig `paths`) is generated
+	private generatedOutputDirs: string[] = [];
+	// `${containingFile}::${specifier}` -> does it resolve into the output
+	private generatedSpecifierCache = new Map<string, boolean>();
 	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
 	private moduleObjectVariables = new Set<string>();
 	// file -> (local name -> imported name) for named imports from
@@ -297,6 +302,16 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Directories holding the generated output. Imports resolving into them
+	 * name generated types, whatever specifier reaches them (a relative
+	 * path, a tsconfig `paths` alias, a custom --output name).
+	 */
+	setGeneratedOutputDirs (dirs: string[]): void {
+		this.generatedOutputDirs = dirs.map(dir => nodePath.resolve(dir));
+		this.generatedSpecifierCache.clear();
+	}
+
+	/**
 	 * Reset usage-related state for a fresh pass.
 	 * Call before the usage-collection pass to avoid duplicates from definition pass.
 	 */
@@ -365,11 +380,14 @@ export class MnemonicaAnalyzer {
 		const result: BuilderValue[] = [];
 		const seen = new Set<string>();
 		for (const candidate of this.builderCandidates) {
-			if (candidate.excluded) {
+			// excludedTypePaths covers both passes: a candidate recorded in
+			// pass 1, before a cross-file alias was known, stays excluded
+			// once pass 2 finds its self-reference
+			if (candidate.excluded || this.excludedTypePaths.has(candidate.fullPath)) {
 				continue;
 			}
 			for (const exported of candidate.exports) {
-				const key = `${candidate.kind}|${exported.sourceFile}|${exported.name}|${candidate.fullPath}`;
+				const key =`${candidate.kind}|${exported.sourceFile}|${exported.name}|${candidate.fullPath}`;
 				if (seen.has(key)) {
 					continue;
 				}
@@ -645,6 +663,46 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Does an import specifier name the generated output? A conventional
+	 * `.tactica` path always does; otherwise the specifier is resolved with
+	 * the program's compilerOptions (tsconfig `paths` included) as if the
+	 * generated files existed — on a fresh clone they are not written yet.
+	 */
+	private isGeneratedTypeSpecifier (specifier: string): boolean {
+		if (specifier.includes('.tactica')) {
+			return true;
+		}
+		const outputDirs = this.generatedOutputDirs;
+		if (outputDirs.length === 0) {
+			return false;
+		}
+		const cacheKey = `${this.currentReferencedTypeFile}::${specifier}`;
+		const cached = this.generatedSpecifierCache.get(cacheKey);
+		if (cached !== undefined) {
+			return cached;
+		}
+		const insideOutput = (fileOrDir: string): boolean => {
+			const absolute = nodePath.resolve(fileOrDir);
+			const inside = outputDirs.some(dir => absolute === dir || absolute.startsWith(dir + nodePath.sep));
+			return inside;
+		};
+		const host: ts.ModuleResolutionHost = {
+			fileExists      : fileName => insideOutput(fileName) || ts.sys.fileExists(fileName),
+			readFile        : fileName => ts.sys.readFile(fileName),
+			directoryExists : directoryName => insideOutput(directoryName) || ts.sys.directoryExists(directoryName),
+		};
+		const resolved = ts.resolveModuleName(
+			specifier,
+			this.currentReferencedTypeFile,
+			this.referencedTypeCompilerOptions,
+			host
+		).resolvedModule;
+		const result = resolved !== undefined && insideOutput(resolved.resolvedFileName);
+		this.generatedSpecifierCache.set(cacheKey, result);
+		return result;
+	}
+
+	/**
 	 * Track imports from 'mnemonica' so aliases of the module object and
 	 * createTypesCollection are recognized without relying on the type checker.
 	 */
@@ -654,7 +712,7 @@ export class MnemonicaAnalyzer {
 		}
 
 		const { moduleSpecifier } = node;
-		if (ts.isStringLiteral(moduleSpecifier) && moduleSpecifier.text.includes('.tactica')) {
+		if (ts.isStringLiteral(moduleSpecifier) && this.isGeneratedTypeSpecifier(moduleSpecifier.text)) {
 			let imports = this.generatedTypeImports.get(this.currentReferencedTypeFile);
 			if (!imports) {
 				imports = new Set<string>();
@@ -2903,27 +2961,52 @@ export class MnemonicaAnalyzer {
 		return configResult;
 	}
 
+	/**
+	 * Does the handler name a generated type — directly, or through the type
+	 * aliases, interfaces and classes it references (followed across files,
+	 * each declaration once)? Such a handler is typed by its own registry
+	 * entry, so its value cannot be derived.
+	 */
 	private hasGeneratedTypeReference (handler: ConstructorHandler | undefined): boolean {
 		if (!handler) {
 			return false;
 		}
-		const imports = this.generatedTypeImports.get(this.currentReferencedTypeFile);
-		if (!imports || imports.size === 0) {
-			return false;
+		const visited = new Set<ts.Node>();
+		const result = this.referencesGeneratedType(handler, this.currentReferencedTypeFile, visited);
+		return result;
+	}
+
+	private referencesGeneratedType (node: ts.Node, file: string, visited: Set<ts.Node>): boolean {
+		if (ts.isIdentifier(node) && this.generatedTypeImports.get(file)?.has(node.text)) {
+			return true;
 		}
-		let found = false;
-		const visit = (node: ts.Node): void => {
-			if (found) {
-				return;
+		// `type X = …`, `this: X`, `interface X extends Y`: follow the named
+		// declaration, resolved from the file that uses the name
+		let referencedName: ts.Identifier | undefined;
+		if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
+			referencedName = node.typeName;
+		} else if (ts.isExpressionWithTypeArguments(node) && ts.isIdentifier(node.expression)) {
+			referencedName = node.expression;
+		}
+		if (referencedName) {
+			const declaration = this.resolveReferencedTypeDeclaration(referencedName.text, file);
+			if (declaration && !visited.has(declaration.node)) {
+				visited.add(declaration.node);
+				if (this.referencesGeneratedType(declaration.node, declaration.file, visited)) {
+					return true;
+				}
 			}
-			if (ts.isIdentifier(node) && imports.has(node.text)) {
-				found = true;
-				return;
+		}
+		const children: ts.Node[] = [];
+		ts.forEachChild(node, child => {
+			children.push(child);
+		});
+		for (const child of children) {
+			if (this.referencesGeneratedType(child, file, visited)) {
+				return true;
 			}
-			ts.forEachChild(node, visit);
-		};
-		visit(handler);
-		return found;
+		}
+		return false;
 	}
 
 	private hasSelfTypeAnnotation (handler: ConstructorHandler | undefined, fullPath: string): boolean {

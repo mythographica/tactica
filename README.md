@@ -253,7 +253,7 @@ Aliases in `types.ts` read derived instances back with `LookedUpInstance<TypeReg
 **Extracted** (tactica reads the source):
 
 - inline or unexported `define`, `@decorate` (and typeomatica's `@Strict` beside it), topologica directory types, Option B collections;
-- a handler that uses a type from the generated `.tactica` anywhere in its signature (`this`, a parameter, the return type), and every exported value whose chain passes through such a handler. Deriving those would be circular: the value's type would depend on the registry it is part of.
+- a handler that uses a type from the generated `.tactica` anywhere in its signature (`this`, a parameter, the return type), and every exported value whose chain passes through such a handler. Deriving those would be circular: the value's type would depend on the registry it is part of. The generated type counts however it is reached: imported by a relative path, a tsconfig `paths` alias or from a custom `--output` directory, named directly or through your own type aliases and interfaces (followed across files and `extends` clauses).
 
 ```ts
 // extracted: the handler takes a generated type, so typeof Notes depends on TypeRegistry

@@ -25,6 +25,8 @@ export declare class MnemonicaAnalyzer {
     private builderCandidates;
     private excludedTypePaths;
     private generatedTypeImports;
+    private generatedOutputDirs;
+    private generatedSpecifierCache;
     private moduleObjectVariables;
     private mnemonicaNamedImports;
     private createTypesCollectionVariables;
@@ -56,6 +58,12 @@ export declare class MnemonicaAnalyzer {
     private currentGraphAnchor;
     private processedCalls;
     constructor(program?: ts.Program, plugins?: TacticaPlugin[]);
+    /**
+     * Directories holding the generated output. Imports resolving into them
+     * name generated types, whatever specifier reaches them (a relative
+     * path, a tsconfig `paths` alias, a custom --output name).
+     */
+    setGeneratedOutputDirs(dirs: string[]): void;
     /**
      * Reset usage-related state for a fresh pass.
      * Call before the usage-collection pass to avoid duplicates from definition pass.
@@ -125,6 +133,13 @@ export declare class MnemonicaAnalyzer {
      */
     private visitNode;
     private trackConstructorBinding;
+    /**
+     * Does an import specifier name the generated output? A conventional
+     * `.tactica` path always does; otherwise the specifier is resolved with
+     * the program's compilerOptions (tsconfig `paths` included) as if the
+     * generated files existed — on a fresh clone they are not written yet.
+     */
+    private isGeneratedTypeSpecifier;
     /**
      * Track imports from 'mnemonica' so aliases of the module object and
      * createTypesCollection are recognized without relying on the type checker.
@@ -517,7 +532,14 @@ export declare class MnemonicaAnalyzer {
      * Extract config options from lazy() call
      */
     private extractLazyConfig;
+    /**
+     * Does the handler name a generated type — directly, or through the type
+     * aliases, interfaces and classes it references (followed across files,
+     * each declaration once)? Such a handler is typed by its own registry
+     * entry, so its value cannot be derived.
+     */
     private hasGeneratedTypeReference;
+    private referencesGeneratedType;
     private hasSelfTypeAnnotation;
     private recordBuilderCandidate;
     private markBuilderExport;

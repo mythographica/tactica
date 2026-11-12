@@ -9,3 +9,4 @@ reports
 plans
 PLAN.md
 /test/fixtures/builder-compat/.tactica/
+/test/fixtures/self-reference-custom-output/generated/

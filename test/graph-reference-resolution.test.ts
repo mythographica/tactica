@@ -677,6 +677,80 @@ new ByReceiver({ mark: 'y' });
 			}
 		}).timeout(20000);
 
+		it('keeps handlers naming their generated type extracted through paths aliases and local aliases', () => {
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-self-reference-detection-'));
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureRoot, 'self-reference-detection', 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const registryPath = path.join(outputDir, 'registry.ts');
+				const registry = fs.readFileSync(registryPath, 'utf8');
+
+				// `~tactica/types` (paths alias), a local alias, and an alias
+				// in another file reached through `extends`: all extracted
+				expect(registry).to.include('\'Courier\': RegistryEntry<Courier, \'Courier\', object,');
+				expect(registry).to.include('\'Courier.Attempt\': RegistryEntry<Courier_Attempt,');
+				expect(registry).to.include('\'Ledger\': RegistryEntry<Ledger, \'Ledger\', object,');
+				expect(registry).to.include('\'Shelf\': RegistryEntry<Shelf, \'Shelf\', object,');
+				expect(registry).to.not.include('typeof CourierCtor');
+				expect(registry).to.not.include('typeof LedgerCtor');
+				expect(registry).to.not.include('typeof ShelfCtor');
+				// no generated type in the signature: still derived
+				expect(registry).to.include('\'Plain\': typeof PlainCtor;');
+
+				const usagePath = path.join(outputDir, 'usage.ts');
+				fs.writeFileSync(usagePath, [
+					'import { lookup } from \'mnemonica\';',
+					'import \'./registry\';',
+					'',
+					'const CourierCtor = lookup(\'Courier\');',
+					'const courier = new CourierCtor({ maxAttempts: 3, baseMs: 10 });',
+					'const maxAttempts: number = courier.maxAttempts;',
+					'const reason: string = new courier.Attempt(\'timeout\').reason;',
+					'const LedgerCtor = lookup(\'Ledger\');',
+					'const amount: number = new LedgerCtor({ code: \'a\', amount: 1 }).amount;',
+					'const ShelfCtor = lookup(\'Shelf\');',
+					'const label: string = new ShelfCtor({ label: \'x\' }).label;',
+					'void [ maxAttempts, reason, amount, label ];',
+					'',
+				].join('\n'));
+
+				const compileErrors = compileGeneratedTypes(
+					[ path.join(outputDir, 'types.ts'), registryPath, usagePath ],
+					outputDir
+				);
+				expect(compileErrors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		}).timeout(20000);
+
+		it('keeps a handler importing from a custom --output dir extracted', () => {
+			const fixtureDir = path.join(fixtureRoot, 'self-reference-custom-output');
+			const outputDir = path.join(fixtureDir, 'generated');
+			fs.rmSync(outputDir, { recursive : true, force : true });
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureDir, 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const registry = fs.readFileSync(path.join(outputDir, 'registry.ts'), 'utf8');
+				expect(registry).to.include('\'Crate\': RegistryEntry<Crate, \'Crate\', object,');
+				expect(registry).to.not.include('typeof CrateCtor');
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		}).timeout(20000);
+
 		it('hard-fails on same-namespace duplicates, reporting every site', () => {
 			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-graph-duplicates-'));
 			try {

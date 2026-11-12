@@ -498,6 +498,8 @@ function run (options: CLIOptions): number {
 	// never project source. resolve() both sides — tsconfigPath may be
 	// relative ('./tsconfig.json') while sourceFile.fileName is absolute
 	const conventionalOutputDir = path.resolve(process.cwd(), path.dirname(tsconfigPath), '.tactica');
+	// a handler importing from either dir names its own generated type
+	analyzer.setGeneratedOutputDirs([ outputDirPath, conventionalOutputDir ]);
 
 	// Collect source files to analyze
 	const sourceFiles: ts.SourceFile[] = [];
