@@ -68,7 +68,7 @@ src/
 ├── plugins.ts              # TacticaPlugin interface + mergeTacticaPlugins — framework instrumentation vocabulary
 ├── topologica-analyzer.ts  # AST analyzer for Topologica directory structures
 ├── graph.ts                # Trie-based TypeGraphImpl
-├── generator.ts            # generates types.ts / registry.ts / index.d.ts
+├── generator.ts            # generates types.ts / registry.ts
 ├── writer.ts               # writes .tactica/* files
 └── cli.ts                  # CLI entry point, parseArgs, run, watch, main
 ```
@@ -115,44 +115,56 @@ Tactica writes to `--output` (default `.tactica/`). The contract below is what *
 ### `types.ts` (default mode)
 
 ```ts
-import type { ProtoFlat } from 'mnemonica';
+import type { ProtoFlat, LookedUpConstructor, LookedUpInstance } from 'mnemonica';
+import type { TypeRegistry } from './registry';
 
-export type UserType = {
+export type User = LookedUpInstance<TypeRegistry, 'User'>;      // derived
+
+export type UserType = {                                        // extracted
     name: string;
-    AdminType: new (data: { role: string }) => UserType_AdminType;
+    AdminType: LookedUpConstructor<TypeRegistry, 'UserType.AdminType', true>;
 };
 
 export type UserType_AdminType = ProtoFlat<UserType, {
     role: string;
-    AdminType: undefined;
+    AdminType?: undefined;
 }>;
 ```
 
 - One `export type` per discovered type, named `<DottedPath>` with `.` → `_`.
+- Derived types (exported default-collection builder values and exported free `define` results; see README "Derived and extracted types") are `LookedUpInstance<TypeRegistry, 'Path'>` aliases. Extracted types are written out, in core's shape.
+- Extracted child constructor fields are `LookedUpConstructor<TypeRegistry, 'Path', true>`, so extracted and derived instances and constructors cross both ways.
 - Nested types use `ProtoFlat<Parent, Self>` so overridden parent properties are excluded.
 - Instance-type inheritance is transitive by construction: `ProtoFlat` keeps every non-overridden parent key, and each parent instance type is itself a `ProtoFlat` over its own parent — the ROOT's own constructor-arg fields are present on descendant instance types at any depth (F19 verdict: the law, not a gap; a stale `.tactica` is the usual cause when a root field looks missing).
-- Each nested type emits its own constructor name as `undefined` (strict-chain marker) and similar for siblings.
-- Async function/arrow handlers (`async function`, async arrow — detected syntactically by the async modifier, stored as `TypeNode.isAsync`): the subtype-property twins and the registry entries resolve to `Promise<InstanceType>`; the instance type itself is never wrapped. Async CLASSES (a class constructor returning a Promise) are deliberately NOT detected — no reliable syntactic signal without a type checker — and stay Promise-free; users type them in userland.
+- Each nested type emits its own constructor name, and its siblings', as optional `undefined`: at runtime they are `undefined` on the child, and the marker overrides the constructor field `ProtoFlat` would otherwise inherit from the parent.
+- An annotated `this` is the instance type (`this: any` gives `any`); assignments beyond it add nothing. Handlers without a `this` annotation, and handlers whose `this` is a generated `.tactica` type or names the define's own graph type, are typed from their bodies.
+- Async function/arrow handlers (`async function`, async arrow — detected syntactically by the async modifier, stored as `TypeNode.isAsync`): the registry entry is `AsyncRegistryEntry<X, …>`, so construction is typed `Promise<X>`; the instance type itself is never wrapped. A class constructor returning a Promise is rejected by TypeScript itself (TS2409), so async classes stay Promise-free.
+- Looped defines (computed names over a closed const-object key set) are metadata only: no `types.ts` or `registry.ts` entries.
 - Source: `TypesGenerator.generateTypesFile()` → `TypesWriter.writeTypesFile()`.
 
 ### `registry.ts` (default mode)
 
 ```ts
+import type { App } from '../src/app';
+type FromBuilder = RegistryOf<typeof App>;
+
 import type { UserType, UserType_AdminType } from './types';
 
 declare module 'mnemonica' {
-    interface TypeRegistry {
-        'UserType': new (data: { name: string }) => UserType;
-        'UserType.AdminType': new (data: { role: string }) => UserType_AdminType;
+    interface TypeRegistry extends FromBuilder {
+        'UserType': RegistryEntry<UserType, 'UserType', object, [data: { name: string }]>;
+        'UserType.AdminType': RegistryEntry<UserType_AdminType, 'UserType.AdminType', UserType, [data: { role: string }]>;
     }
 }
 
-import type { TypeRegistry } from 'mnemonica';
+import type { RegistryEntry, RegistryOf, TypeRegistry } from 'mnemonica';
 export type { TypeRegistry };
 ```
 
 - Module augmentation of `mnemonica.TypeRegistry`.
-- Keys are full dotted paths (`'A.B.C'`); values are typed constructors that return the corresponding instance type.
+- `FromBuilder` is the intersection of `RegistryOf<typeof X>` over the exported default-collection builder values; exported free `define` results enter as `'Name': typeof X`. Values extracted for self-reference, and values whose chain passes through them, are not in it.
+- Keys are full dotted paths (`'A.B.C'`); extracted values are core's `RegistryEntry<Instance, 'Path', ParentInstance, [args]>` (`AsyncRegistryEntry` for async handlers; roots have `object` as parent).
+- `RegistryOf`, `RegistryEntry` and `AsyncRegistryEntry` are imported only when used, so an empty registry imports none of them (`noUnusedLocals`).
 - Source: `TypesGenerator.generateTypeRegistry()` → `TypesWriter.writeTo('registry.ts', …)`.
 
 ### `index.ts` (default mode)
@@ -163,25 +175,6 @@ export * from './registry';
 ```
 
 In ESM mode (`--esm`) the imports gain `.js` extensions.
-
-### `index.d.ts` (legacy `--module-augmentation` mode)
-
-```ts
-import type { ProtoFlat } from 'mnemonica';
-export {};
-declare global {
-    interface UserType { … }        // all types, merges with @decorate classes
-    type UserType_AdminType = ProtoFlat<UserType, { … }>; // nested types only
-}
-```
-
-Single file; types are global. Consumed via tsconfig `include` (typeRoots does
-not pick it up — `.tactica` is not a package folder). Root types are declared
-ONLY as interfaces: a same-named `type` alias would collide with the merging
-interface in the same global scope (TS2300). Nested types keep their
-`ProtoFlat` aliases (interfaces cannot express computed types) and carry their
-children's constructor signatures, same as `types.ts`. Source:
-`TypesGenerator.generateGlobalAugmentation()` → `TypesWriter.writeGlobalAugmentation()`.
 
 ### `hierarchy.json` (always)
 
@@ -484,9 +477,8 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 ### `TypesGenerator`
 
-- `generateTypesFile()` → default-mode `types.ts` content.
-- `generateTypeRegistry()` → default-mode `registry.ts` content.
-- `generateGlobalAugmentation()` → legacy-mode `index.d.ts` content.
+- `generateTypesFile()` → `types.ts` content.
+- `generateTypeRegistry()` → `registry.ts` content.
 - `generateSingleType(node)` → one type's text.
 - Constructor takes `(graph, esm = false)`; `esm: true` appends `.js` to relative imports.
 
@@ -494,7 +486,7 @@ Trie-based hierarchy. `roots` (top-level) and `allTypes` (by full dotted path). 
 
 Thin filesystem wrapper. One method per output file:
 
-- `writeTypesFile`, `writeGlobalAugmentation`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeControlFile`, `writeModulesFile`, `writeScopesFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
+- `writeTypesFile`, `writeDefinitionsFile`, `writeUsagesFile`, `writeEDSFile`, `writeFlowFile`, `writeInstrumentationFile`, `writeControlFile`, `writeModulesFile`, `writeScopesFile`, `writeHierarchyFile`, `writeTo(filename, content)`.
 - `write(generated)` is a legacy alias for `writeTypesFile`.
 - `clean()` empties the output directory; `getOutputDir()` returns the configured path.
 
@@ -516,7 +508,6 @@ Inside-out creation walker (instrumentation walker plan, Phase 3).
 -i, --include <patterns>    Comma-separated include patterns
 -e, --exclude <patterns>    Comma-separated exclude patterns
 -t, --topologica <dirs>     Comma-separated Topologica directories
--m, --module-augmentation   Legacy mode — emit single .tactica/index.d.ts
     --esm                   Append .js to relative imports (NodeNext ESM)
     --eds                   Force-enable EDS tracking
     --no-eds                Force-disable EDS tracking
@@ -524,16 +515,11 @@ Inside-out creation walker (instrumentation walker plan, Phase 3).
 -h, --help                  Show help
 ```
 
-**Mode behavior:**
-
-- Default (no `--module-augmentation`): writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`, `collections.json`; optional `eds.json`).
-- With `--module-augmentation`: writes `index.d.ts` (+ same JSONs). Default mode is the recommended path.
+**Output behavior:** writes `types.ts` + `registry.ts` + `index.ts` (always + `definitions.json`, `usages.json`, `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`, `hierarchy.txt`, `collections.json`; optional `eds.json`).
 
 **Exclusion behavior:** the project-conventional `.tactica/` directory (next to the tsconfig) is ALWAYS excluded from analysis, even when `--output` points elsewhere — generated files are never project source. When `--output` is used, that output directory is excluded too. No env variable; the flag is enough.
 
 **Analyzer errors are warnings, not failures:** they print once each as `tactica: <file>:<line>:<column> <message>` on stderr (never `--verbose`-gated, deduped across the definitions/usages passes), the offending call is skipped, and the exit code stays 0. Only the graph identity law (resolution failures) aborts the run.
-
-The flag name `--module-augmentation` is historical; what it actually does is emit a **global**-augmentation single file. Renaming would be a breaking change to existing scripts.
 
 ## Testing
 
@@ -554,17 +540,20 @@ After changing analyzer behavior:
 - `lazy('TypeName', getter)` — all named forms: free `lazy('Name', getter)`, method `Type.lazy('Name', getter)`, chained `define('A').lazy('B', getter)`, and explicit-source `lazy(source, 'Name', getter)`. The name is required (the runtime throws `TYPENAME_MUST_BE_A_STRING` without it), so the unnamed forms (`lazy(getter)`, `Type.lazy(getter)`, `lazy(source, getter)`) are reported as analyzer errors naming the call site, and no type is generated for them. The getter is followed and the returned constructor is analyzed like a direct `define()` handler (properties and constructor parameters extracted).
 - Builder pattern on the imported `mnemonica` module object: `mnemonica.define('A').define('B')`, `const App = mnemonica; App.define('C')`, `App.lookup('A').define('D')`. Module object aliases from imports (`import { mnemonica as m }`, `import * as mnemonica`, default import) and variable aliases are tracked.
 - Explicit-source APIs: `define(source, 'TypeName', handler)` and `lookup(source, 'TypeName')`, where `source` is a module object, custom collection, or type variable.
+- Exported builder values on the default collection, and exported free `define` results, are **derived**: their types come from the value (`RegistryOf<typeof X>` / `typeof X`), not from extraction. Every export form is followed (direct, re-export, aliased, later `export { X }`, default). A handler that uses a generated `.tactica` type anywhere in its signature is extracted instead (self-reference, decided syntactically), and so is every exported value whose chain passes through it.
+- Looped defines with computed names: a helper parameter typed `keyof typeof Data` (inline or via a local alias), or a `for…of Object.keys(Data)` variable, where `Data` is a const object literal. One node per key, in declaration order, under the define's parent; metadata only (hierarchy, definitions). Anything not a closed const-object key set keeps the "Could not extract type name" warning.
 - Custom collections: `createTypesCollection()` results are tracked. Types defined on a collection live in the graph under a `collectionId::`-prefixed full path; they are **not** emitted in `.tactica/types.ts` and **not** added to the global `TypeRegistry` augmentation unless the collection declares a registry interface (Option B, `createTypesCollection<Registry>()`) — then they emit prefixed with the interface name plus a per-collection augmentation. The augmentation targets the module holding the `createTypesCollection<Registry>()` call (the interface is confirmed declared there), so multi-file collections share one augmented interface no matter how many modules define types. Subtypes inherit the collection from their parent. Constructor-relative lookups on variables bound to a collection type resolve relative-first within that collection (the type's own subtypes, then the collection root) — the runtime lookup law, same as for default-collection types.
 - `@decorate()`, `@decorate(Parent)`, `@decorate({…options})`, `@decorate(Parent, {…options})`.
   - `Parent` is resolved through the variable map, so aliases work: `const User = define('UserEntity', …); @decorate(User)` produces `UserEntity.<ClassName>`.
   - Options are reflected in `definitions.json` (`strictChain`, `blockErrors`).
   - Constructor parameters are extracted from decorated classes and emitted in `registry.ts` / `types.ts` signatures.
+- An annotated `this` is the instance type, as a class is typed by its declared fields; `this: any` gives `any`. The body patterns below type only handlers without a `this` annotation, or whose `this` is a generated `.tactica` type / the define's own graph name.
 - `Object.assign(this, data)` (extracts from `data`'s type annotation — inline literal or named alias/interface/class).
 - Direct parameter access (`this.name = name`) and one-level data access (`this.id = data.id`), where the data parameter may be an inline literal or a NAMED alias/interface/class — named params decompose through the same import-aware referenced-type machinery as constructor signatures (inherited members included), and a bare `this.x = data` keeps the full expanded shape. Inference never overwrites a known annotation with `unknown` (`Record<string, unknown>` counts as known — exact whole-type match, not a substring) and never drops an optionality modifier.
 - Arithmetic, template literals, built-in calls (`Date.now`, `parseInt`, `String`, …), `new` expressions on built-ins, ternary, logical-OR fallback. Generic built-ins keep their explicit type arguments (`new Map<string, number>()` → `Map<string, number>`); without arguments a known generic global emits unknown-filled parameters (`Map<unknown, unknown>`, `Set<unknown>`) — a bare generic name is never emitted (TS2314).
 - Construction shapes beyond plain `new` (recognized within the existing output contract — `instantiation` kind + value-scope bindings, no new fields; `await` is transparent throughout): chain construction (`new R().A()`, `await new R().A().B()` — the tip call records the `instantiation` and the result var binds to the TIP type); `instance.fork()`/`instance.clone()` in BOTH call and property forms (`entry.clone`, core: `readonly clone: this`) — result var binds to the source type AND records an `instantiation` at the site (fork re-runs construction: hooks fire, a distinct instance on a distinct line — owner's decision; byte-indistinguishable from `new` until the deferred mechanism-kind revision); `utils.merge(a, b)` / curried `utils.fork(instance)(...)` — result binds to arg 0's type (documented approximation: a's lineage over b's context) and records an `instantiation` for a's type (curried: at the invocation site, plus the inner binding line); mnemonica `call`/`apply(entity, Ctor, …)` — import-aware (actual `'mnemonica'` imports or module-object members only), the Ctor arg records the `instantiation` and the result var binds to the Ctor type; `@decorate()`-ed classes resolve as the Ctor through the graph tiers, undecorated plain classes bind nothing (no graph entry — never a bare name), free-call `decorate(Class)` is not tracked (decorator syntax only); `bind(entity, Ctor)` — no usage, the bound var binds to the Ctor type (invoking the bound fn, incl. `await f(...)`, is not followed). Bindings surface lexically after the binding statement, and a construction nested inside a class/function body of the initializer binds nothing — scope boundaries are not crossed (`define('X', class { m = new Map() })` keeps X bound to X, never to `Map`); consumers counting constructions should expect fork/merge sites among the `instantiation` entries — the mechanism distinction (new vs fork vs call) is NOT in the outputs until the deferred contract revision.
 - Async constructor functions.
-- `as TypeConstructor<{…}>` casting (and `as ConstructorFunction<{…}>` legacy alias) for plain function constructors.
+- Identifier-held handlers: const function/class expressions, function/class declarations, and imported handlers resolve to their declarations and extract exactly like inline handlers, including through `lazy()`, `Type.define()`, and chained `define()`. `as TypeConstructor<{…}>` (and `as ConstructorFunction<{…}>` legacy alias) is unwrapped to the function inside; the cast's type argument is not used for extraction. Unresolvable identifiers keep empty extraction.
 - Typeomatica `@Strict` decorator alongside `@decorate`; `Object.setPrototypeOf(MyType.prototype, new BaseClass(…))`.
 
 Falls back to `unknown` when inference fails.

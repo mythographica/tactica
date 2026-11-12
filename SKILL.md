@@ -50,27 +50,42 @@ augmented interface instead of the global `TypeRegistry`.
 
 ## What it types
 
+- **Derived types:** an exported builder value on the default collection
+  (`export const App = mnemonica.define(…).define(…)`,
+  `export const Sessions = App.lookup('User').define(…)`) or an exported
+  free `define` result is not re-extracted: `registry.ts` extends its
+  `RegistryOf<typeof X>` (or uses `typeof X`), and `types.ts` reads the
+  instances back with `LookedUpInstance<TypeRegistry, 'Path'>`. The
+  builder and tactica then give the same type for the same runtime type.
+- **Extracted types:** everything else (inline or unexported `define`,
+  `@decorate`, handlers that use a generated `.tactica` type, topologica,
+  Option B) is written out in core's vocabulary: registry entries are
+  `RegistryEntry<X, 'Path', Parent, [args]>`, subtype fields
+  `LookedUpConstructor<TypeRegistry, 'Path', true>`, so extracted and
+  derived instances are assignable both ways.
 - One `export type` per discovered type, named by dotted path with `_`
-  separators; nested types are `ProtoFlat<Parent, Self>`, so ancestor
-  fields are present on descendants by construction.
-- Every parent instance type carries its subtype constructors:
-  `Child: { new (args): Child; (args): Child }` — the construct form
-  and the chain-tip call form.
-- `registry.ts` augments mnemonica's `TypeRegistry` so the free
-  `lookup('Parent.Child')` returns the typed constructor.
+  separators; nested extracted types are `ProtoFlat<Parent, Self>`, so
+  ancestor fields are present on descendants by construction.
+- **An annotated `this` is the type:** `function (this: Shape, …)` gives
+  `Shape`, and assignments beyond it add nothing (`this: any` gives
+  `any`). Only a handler without a `this` annotation is typed from its
+  body.
+- Handlers held in a const (`const h = function …; define('X', h)`) are
+  followed like inline ones.
+- Looped defines over a const object's keys enter hierarchy and
+  definitions only; their types come from the builder value.
 
 ## Async constructors
 
-When a construct handler is an `async function` (or async arrow),
-tactica emits `Promise<X>` for both constructor shapes — the subtype
-property and the registry entry — because `new` resolves to a Promise
-at runtime. The instance type `X` itself is unchanged, so
-`await new` yields `X`.
+When a construct handler is an `async function` (or async arrow), `new`
+resolves to a Promise at runtime. Extracted async types are registered as
+`AsyncRegistryEntry<X, …>` (mnemonica ≥ 1.4.7), so construction is typed
+`Promise<X>` and `await` yields `X` with its own subtypes; derived async
+types get the same typing from mnemonica's builder.
 
-Async **classes** (a class constructor returning a Promise) are NOT
-detected — the syntactic shape carries no reliable signal without a
-type checker — and stay typed as the plain instance type. Type them in
-userland when `Promise<X>` is needed there.
+A class constructor returning a Promise cannot be written in typed code
+(TypeScript rejects it, TS2409), so async **classes** stay typed as the
+plain instance.
 
 ## Avoid arrow handlers — use the ESLint plugin
 
@@ -107,16 +122,16 @@ written by contributors who have not internalized the rule.
 import { mnemonica } from 'mnemonica';
 
 export const App = mnemonica
-	.define('Widget', function (this: Widget, data: { id: string }) {
+	.define('Widget', function (this: { id: string }, data: { id: string }) {
 		this.id = data.id;
 	})
-	.define('Gadget', async function (this: Gadget, data: { serial: number }) {
+	.define('Gadget', async function (this: { serial: number }, data: { serial: number }) {
 		this.serial = await register(data.serial);
 		return this;
 	});
 ```
 
-After `npx tactica`, `lookup('App.Gadget')` is typed
-`new (data: { serial: number }) => Promise<Gadget>` — a forgotten
-`await` is now a type error at the call site instead of a silent
-`undefined` at runtime.
+After `npx tactica`, `App` is derived, and the free `lookup('Widget')` is
+typed exactly as `App.lookup('Widget')`. `new widget.Gadget({ serial: 1 })`
+is a `Promise` — a forgotten `await` is a type error at the call site
+instead of a silent `undefined` at runtime.

@@ -119,7 +119,7 @@ import { BasePrototype, ConstructorFunction } from 'typeomatica';
 
 const baseProto = BasePrototype({ strictAccessCheck: true });
 
-const MyFn = function (this: any) {
+const MyFn = function () {
 	this.sub_sub_field = 123;
 } as ConstructorFunction<{ sub_sub_field: number }>;
 
@@ -152,7 +152,7 @@ class MyFnSubClass {
 import { define } from 'mnemonica';
 import { ConstructorFunction } from 'mnemonica';
 
-const MyFn = function (this: any) {
+const MyFn = function () {
 	this.sub_sub_field = 123;
 } as ConstructorFunction<{ sub_sub_field: number }>;
 
@@ -294,7 +294,7 @@ class BaseClassOnly extends BaseClass {
 }
 
 // Mnemonica code should still be detected
-const MnemonicaType = define('MnemonicaType', function(this: any) {
+const MnemonicaType = define('MnemonicaType', function() {
 	this.mnemonicaField = 'test';
 });
 `;
@@ -383,7 +383,7 @@ class Order {
 			const code = `
 import { define, decorate } from 'mnemonica';
 
-const User = define('UserEntity', function(this: any) {
+const User = define('UserEntity', function() {
 	this.id = '';
 });
 

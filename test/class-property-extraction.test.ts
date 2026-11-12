@@ -74,6 +74,26 @@ describe('Class Property Extraction', () => {
 			expect(userType.properties.get('active')?.type).to.equal('boolean');
 		});
 
+		it('should infer widened literal types for unannotated class field initializers', () => {
+			const source = `
+				import { define } from 'mnemonica';
+
+				export const Inline = define('Inline', class {
+					label = 'inline';
+					count = 1;
+					active = true;
+				});
+			`;
+
+			const result = analyzer.analyzeSource(source);
+
+			expect(result.errors).to.have.length(0);
+			const [ inlineType ] = result.types;
+			expect(inlineType.properties.get('label')?.type).to.equal('string');
+			expect(inlineType.properties.get('count')?.type).to.equal('number');
+			expect(inlineType.properties.get('active')?.type).to.equal('boolean');
+		});
+
 		it('should extract class with optional properties', () => {
 			const source = `
 				import { define } from 'mnemonica';

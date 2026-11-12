@@ -1,5 +1,5 @@
 import * as ts from 'typescript';
-import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint, ResolutionError, CollectionManifestEntry } from './types';
+import { AnalyzeResult, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, InstrumentationPoint, ResolutionError, CollectionManifestEntry, BuilderValue } from './types';
 import { TypeGraphImpl } from './graph';
 import { TacticaPlugin } from './plugins';
 /**
@@ -18,9 +18,13 @@ export declare class MnemonicaAnalyzer {
     private flowUsages;
     private edsScopeByNode;
     private functionBindings;
+    private constructorBindings;
     private nestedWrapVia;
     private wrapEntryByNode;
     private variableToTypeMap;
+    private builderCandidates;
+    private excludedTypePaths;
+    private generatedTypeImports;
     private moduleObjectVariables;
     private mnemonicaNamedImports;
     private createTypesCollectionVariables;
@@ -69,6 +73,7 @@ export declare class MnemonicaAnalyzer {
      * Get the type graph
      */
     getGraph(): TypeGraphImpl;
+    getBuilderValues(): BuilderValue[];
     /**
      * Get collected definitions
      */
@@ -119,6 +124,7 @@ export declare class MnemonicaAnalyzer {
      * Visit a node in the AST
      */
     private visitNode;
+    private trackConstructorBinding;
     /**
      * Track imports from 'mnemonica' so aliases of the module object and
      * createTypesCollection are recognized without relying on the type checker.
@@ -470,6 +476,7 @@ export declare class MnemonicaAnalyzer {
      * Process a define() call
      */
     private processDefineCall;
+    private processDefineContext;
     /**
      * Process a lazy() call
      */
@@ -510,6 +517,11 @@ export declare class MnemonicaAnalyzer {
      * Extract config options from lazy() call
      */
     private extractLazyConfig;
+    private hasGeneratedTypeReference;
+    private hasSelfTypeAnnotation;
+    private recordBuilderCandidate;
+    private markBuilderExport;
+    private trackBuilderExportAssignment;
     /**
         * Track variable assignments that capture define() results
         * e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
@@ -613,6 +625,17 @@ export declare class MnemonicaAnalyzer {
      */
     private extractTypeName;
     /**
+     * Resolve a computed define name only when it ranges over a closed const
+     * object key set. Arbitrary strings and unresolved unions stay on the
+     * existing warning-and-skip path.
+     */
+    private extractComputedTypeNames;
+    private resolveLoopKeyNames;
+    private resolveObjectKeysCall;
+    private resolveParameterKeyNames;
+    private resolveKeyofType;
+    private resolveConstObjectKeys;
+    /**
      * Extract the full define() call context: type name, parent type, and collection.
      * Handles direct calls, property-access calls, chained calls, and the
      * explicit-source form `define(source, 'TypeName', handler)`.
@@ -670,10 +693,14 @@ export declare class MnemonicaAnalyzer {
         * Get property chain from nested access
         */
     private getPropertyChain;
+    private findConstructorInModule;
+    private resolveHeldConstructor;
+    private unwrapConstructorAssertions;
+    private resolveConstructorExpression;
     /**
      * Determine the constructor expression for either a define() or lazy() call.
      * For define() this is the construct handler; for lazy() it is the value
-     * returned by the lazy getter.
+     * returned by the lazy getter. Identifiers resolve to their declarations.
      */
     private extractConstructorExpression;
     /**
@@ -720,6 +747,8 @@ export declare class MnemonicaAnalyzer {
      * Infer method type from method declaration
      */
     private inferMethodType;
+    private hasGeneratedThisAnnotation;
+    private hasAnyThisAnnotation;
     /**
         * Extract properties from `this` parameter type annotation
         * Handles patterns like: function(this: SomeType, data: SomeType) { }

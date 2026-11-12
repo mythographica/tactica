@@ -1,24 +1,12 @@
 'use strict';
 
 import { expect } from 'chai';
-import * as fs from 'fs';
-import * as path from 'path';
 import { MnemonicaAnalyzer } from '../src/analyzer';
-import { TypesGenerator } from '../src/generator';
-import { TypesWriter } from '../src/writer';
 
 /**
  * Integration test based on core/test-ts/test-example.ts pattern
  */
 describe('Integration: core/test-ts/test-example.ts pattern', () => {
-	const testOutputDir = path.join(__dirname, '.test-integration');
-
-	afterEach(() => {
-		if (fs.existsSync(testOutputDir)) {
-			fs.rmSync(testOutputDir, { recursive : true });
-		}
-	});
-
 	it('should analyze the test-example.ts pattern', () => {
 		// Source code matching test-ts/test-example.ts
 		const sourceCode = `
@@ -81,107 +69,6 @@ console.log(first, firstO, second, second2, f1, f2);
 		// happens after parent is defined. SecondType gets registered separately.
 		// In a real scenario with a TS program, the binding would be resolved.
 		expect(graph.getAllTypes().length).to.be.greaterThan(0);
-	});
-
-	it('should generate types for the pattern', () => {
-		const sourceCode = `
-const FirstType = define('FirstType', function (this: { first: string }) {
-	this.first = 'FirstType';
-});
-
-const SecondType = FirstType.define('SecondType', function (this: { second: string }) {
-	this.second = 'SecondType';
-});
-`;
-
-		const analyzer = new MnemonicaAnalyzer();
-		analyzer.analyzeSource(sourceCode, 'test.ts');
-
-		const graph = analyzer.getGraph();
-		const generator = new TypesGenerator(graph);
-		const generated = generator.generateGlobalAugmentation();
-
-		// Should generate content
-		expect(generated.content).to.include('FirstType');
-		expect(generated.content).to.include('SecondType');
-		expect(generated.content).to.include('declare global');
-
-		// Should list the generated types
-		expect(generated.types).to.include('FirstType');
-		expect(generated.types).to.include('FirstType_SecondType');
-	});
-
-	it('should write generated types to file', () => {
-		const sourceCode = `
-const UserType = define('UserType', function (this: { name: string }) {
-	this.name = '';
-});
-
-const AdminType = UserType.define('AdminType', function (this: { role: string }) {
-	this.role = 'admin';
-});
-`;
-
-		const analyzer = new MnemonicaAnalyzer();
-		analyzer.analyzeSource(sourceCode, 'test.ts');
-
-		const graph = analyzer.getGraph();
-		const generator = new TypesGenerator(graph);
-		const generated = generator.generateGlobalAugmentation();
-
-		const writer = new TypesWriter(testOutputDir);
-		const outputPath = writer.writeGlobalAugmentation(generated);
-
-		// File should exist
-		expect(fs.existsSync(outputPath)).to.be.true;
-
-		// Content should be valid
-		const content = fs.readFileSync(outputPath, 'utf-8');
-		expect(content).to.include('@mnemonica/tactica');
-		expect(content).to.include('UserType');
-		expect(content).to.include('AdminType');
-	});
-
-	it('should handle complex nested hierarchy', () => {
-		const sourceCode = `
-const A = define('A', function (this: { a: number }) {
-	this.a = 1;
-});
-
-const B = A.define('B', function (this: { b: string }) {
-	this.b = 'b';
-});
-
-const C = B.define('C', function (this: { c: boolean }) {
-	this.c = true;
-});
-
-const D = C.define('D', function (this: { d: string[] }) {
-	this.d = [];
-});
-`;
-
-		const analyzer = new MnemonicaAnalyzer();
-		analyzer.analyzeSource(sourceCode, 'test.ts');
-
-		const graph = analyzer.getGraph();
-
-		// Should find all types (they may be registered as separate roots
-		// due to the single-pass analysis limitation)
-		const allTypes = graph.getAllTypes();
-		expect(allTypes.some(t => t.name === 'A')).to.be.true;
-		expect(allTypes.some(t => t.name === 'B')).to.be.true;
-		expect(allTypes.some(t => t.name === 'C')).to.be.true;
-		expect(allTypes.some(t => t.name === 'D')).to.be.true;
-
-		const generator = new TypesGenerator(graph);
-		const generated = generator.generateGlobalAugmentation();
-
-		// Should include all instance interfaces
-		expect(generated.content).to.include('A');
-		expect(generated.content).to.include('B');
-		expect(generated.content).to.include('C');
-		expect(generated.content).to.include('D');
 	});
 
 	it('should handle @decorate() decorator pattern', () => {

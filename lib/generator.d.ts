@@ -1,4 +1,4 @@
-import { TypeNode, GeneratedTypes, ResolutionError } from './types';
+import { TypeNode, GeneratedTypes, ResolutionError, BuilderValue } from './types';
 import { TypeGraphImpl } from './graph';
 /**
  * Path-aware resolver for mnemonica graph type names referenced inside type
@@ -12,33 +12,18 @@ export type GraphReferenceResolver = (simpleName: string, currentNode: TypeNode)
 export declare class TypesGenerator {
     private graph;
     private referenceResolver?;
+    private builderValues;
     private esm;
     private outputDir;
     private resolutionErrors;
-    constructor(graph: TypeGraphImpl, esm?: boolean, outputDir?: string, referenceResolver?: GraphReferenceResolver | undefined);
+    constructor(graph: TypeGraphImpl, esm?: boolean, outputDir?: string, referenceResolver?: GraphReferenceResolver | undefined, builderValues?: BuilderValue[]);
     /**
      * Get import path with optional .js extension for ESM NodeNext
      */
     private importPath;
-    /**
-        * Generate global augmentation file that augments user classes directly
-        * This allows using decorated classes without manual type casting
-        *
-        * All types are placed in the global scope via declare global, which allows
-        * them to be accessed from any module without imports. Interfaces declared
-        * in the global scope will merge with classes of the same name in user modules.
-        */
-    generateGlobalAugmentation(): GeneratedTypes;
-    /**
-         * Generate instance type alias (describes what the instance IS)
-         * Uses ProtoFlat for proper inheritance (excludes overridden parent props)
-         */
-    private generateInstanceType;
-    /**
-         * Generate class interface for TypeScript declaration merging
-         * This merges with the actual class to provide proper typing
-         */
-    private generateClassInterface;
+    private derivedTypePaths;
+    private builderImportName;
+    private pushBuilderImports;
     /**
         * Generate a types.ts file with complete instance interfaces
         * This includes all properties extracted from the constructors
@@ -50,10 +35,10 @@ export declare class TypesGenerator {
          */
     private generateCompleteInstanceInterface;
     /**
-         * Emit one nested-ctor field: dual signatures (construct + the
-         * chain-tip CALL form). Both branches resolve to the constructor
-         * result type — Promise<InstanceType> for async handlers, the plain
-         * instance type otherwise (getConstructorResultType).
+         * Emit one nested-ctor field. Default-collection children use core's
+         * complete constructor surface. Option B uses dual signatures:
+         * construct + the chain-tip CALL form, both resolving through
+         * getConstructorResultType.
          */
     private pushChildConstructorField;
     /**
@@ -76,6 +61,7 @@ export declare class TypesGenerator {
          * Generate constructor parameter list for a type node (the "(…)" part)
          */
     private generateConstructorParams;
+    private generateConstructorArgs;
     /**
          * Generate constructor signature for a type node
          * Uses constructorParams for TypeRegistry signature (not instance properties)

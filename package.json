@@ -1,6 +1,6 @@
 {
 	"name": "@mnemonica/tactica",
-	"version": "0.4.9",
+	"version": "0.5.0",
 	"description": "Type definition generator for Mnemonica: statically analyzes define() calls and emits .tactica types, registry, and metadata",
 	"main": "lib/index.js",
 	"types": "lib/index.d.ts",
@@ -22,6 +22,8 @@
 		"test": "TS_NODE_PROJECT=./tsconfig.test.json mocha test/**/*.test.ts",
 		"test:coverage": "npx nyc npm test",
 		"test:coverage:html": "npx nyc --reporter=html npm test",
+		"test:ts:compat": "node ./lib/cli.js --project ./test/fixtures/builder-compat/tsconfig.json --output ./test/fixtures/builder-compat/.tactica && tsc -p ./test/fixtures/builder-compat/tsconfig.json",
+		"test:ts:7": "node ./lib/cli.js --project ./test/fixtures/builder-compat/tsconfig.json --output ./test/fixtures/builder-compat/.tactica && npx -y -p typescript@7.0.2 tsc -p ./test/fixtures/builder-compat/tsconfig.json",
 		"lint": "npx eslint --fix ./src ./test",
 		"lint:check": "npx eslint ./src ./test",
 		"use:public": "rm -rf node_modules package-lock.json && npm install mnemonica@latest typeomatica@latest --save && npm install mnemonica@latest --save-dev && npm install mnemonica@latest --save-peer && echo 'Switched to PUBLIC npm dependencies (latest)'",
@@ -46,7 +48,7 @@
 	"homepage": "https://github.com/mythographica/tactica#readme",
 	"license": "MIT",
 	"peerDependencies": {
-		"mnemonica": "^1.4.2"
+		"mnemonica": "^1.4.7"
 	},
 	"devDependencies": {
 		"@istanbuljs/nyc-config-typescript": "^1.0.2",
@@ -63,7 +65,7 @@
 		"eslint-plugin-no-arrow-this": "^1.3.0",
 		"globals": "^15.15.0",
 		"husky": "^9.1.7",
-		"mnemonica": "1.4.2",
+		"mnemonica": "1.4.7",
 		"mocha": "^8.4.0",
 		"nyc": "^18.0.0",
 		"ts-node": "^10.9.2",

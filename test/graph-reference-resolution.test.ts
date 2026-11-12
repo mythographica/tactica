@@ -16,7 +16,9 @@ import { TypesGenerator } from '../src/generator';
  */
 const compileGeneratedTypes = (files: string[], baseUrl: string): string[] => {
 	const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
-	const program = ts.createProgram(files, {
+	const registryPath = path.join(baseUrl, 'registry.ts');
+	const programFiles = fs.existsSync(registryPath) ? [ ...files, registryPath ] : files;
+	const program = ts.createProgram(programFiles, {
 		strict             : true,
 		noEmit             : true,
 		target             : ts.ScriptTarget.ES2020,
@@ -26,8 +28,12 @@ const compileGeneratedTypes = (files: string[], baseUrl: string): string[] => {
 		paths              : { mnemonica : [ mnemonicaTypes ] },
 		ignoreDeprecations : '6.0',
 	});
+	// Some analyzer fixtures are intentionally not valid TypeScript programs.
+	// Check the generated files and their usage assertions, not fixture sources.
+	const generatedFiles = new Set(programFiles.map(file => path.resolve(file)));
 	const errors = ts.getPreEmitDiagnostics(program)
 		.filter(d => d.category === ts.DiagnosticCategory.Error)
+		.filter(d => !d.file || generatedFiles.has(path.resolve(d.file.fileName)))
 		.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
 	const result = errors;
 	return result;
@@ -594,11 +600,9 @@ new ByReceiver({ mark: 'y' });
 				const typesPath = path.join(outputDir, 'types.ts');
 				const content = fs.readFileSync(typesPath, 'utf8');
 
-				// (b) no circularity: the alias never lands in the emitted
-				// type, which carries plain extracted properties only
-				expect(content).to.include('export type Widget = {');
-				expect(content).to.include('label: string;');
-				expect(content).to.include('size: number;');
+				// (b) no circularity: the emitted type uses the derived registry
+				// view and never repeats the stand-in alias
+				expect(content).to.include('export type Widget = LookedUpInstance<TypeRegistry, \'Widget\'>;');
 				expect(content).to.not.include('TWidgetInstance');
 
 				// (c) call-site assignability: the typed lookup constructor
@@ -644,8 +648,7 @@ new ByReceiver({ mark: 'y' });
 				// Object.assign(this, args) identifier form — the
 				// intersection this-alias is ergonomic-only and its members
 				// are never expanded
-				expect(content).to.include('code: string;');
-				expect(content).to.include('amount: number;');
+				expect(content).to.include('export type VaultRoot = LookedUpInstance<TypeRegistry, \'VaultRoot\'>;');
 				expect(content).to.include('export type VaultRoot_FailedUnlock = ProtoFlat<VaultRoot, {');
 				expect(content).to.not.include('TVaultInstance');
 				expect(content).to.not.include('TEntryArgs');

@@ -232,12 +232,15 @@ describe('ModuleGraphBuilder', () => {
 			expect(builtins.dependencies).to.deep.equal([]);
 		});
 
-		it('should mark node_modules-resolved bindings as external', () => {
+		it('should mark package-resolved bindings as external', () => {
 			const builtins = getModule('builtins.ts');
 			const defineBinding = builtins.importedBindings.find(b => b.name === 'define');
 			expect(defineBinding).to.exist;
 			expect(defineBinding?.external).to.be.true;
-			expect(defineBinding?.sourceModule).to.include('node_modules');
+			// the resolved path is not asserted: a linked package (file:,
+			// npm link, workspaces) resolves to its real location, outside
+			// any node_modules
+			expect(builtins.dependencies).to.not.include(defineBinding?.sourceModule);
 			// Externals never enter dependencies
 			for (const dep of builtins.dependencies) {
 				expect(dep).to.not.include('node_modules');

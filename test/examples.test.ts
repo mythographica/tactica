@@ -9,15 +9,15 @@ describe('Tactica Example Files', () => {
 			const code = `
 import { define } from 'mnemonica';
 
-const UserType = define('UserType', function (this: any) {
+const UserType = define('UserType', function () {
 	this.name = '';
 });
 
-const AdminType = UserType.define('AdminType', function (this: any) {
+const AdminType = UserType.define('AdminType', function () {
 	this.role = 'admin';
 });
 
-const SuperAdminType = AdminType.define('SuperAdminType', function (this: any) {
+const SuperAdminType = AdminType.define('SuperAdminType', function () {
 	this.isSystemAdmin = true;
 });
 `;
@@ -128,19 +128,19 @@ class AdminEntity {
 			const code = `
 import { define } from 'mnemonica';
 
-const StandardType = define('StandardType', function (this: any) {
+const StandardType = define('StandardType', function () {
 	this.data = 'standard';
 });
 
-const HiddenMethodsType = define('HiddenMethodsType', function (this: any) {
+const HiddenMethodsType = define('HiddenMethodsType', function () {
 	this.data = 'hidden';
 }, { exposeInstanceMethods: false });
 
-const HiddenTypeShorthand = define('HiddenTypeShorthand', function (this: any) {
+const HiddenTypeShorthand = define('HiddenTypeShorthand', function () {
 	this.data = 'shorthand';
 }, false);
 
-const StandardSubtype = StandardType.define('StandardSubtype', function (this: any) {
+const StandardSubtype = StandardType.define('StandardSubtype', function () {
 	this.subtypeData = 'subtype';
 });
 `;
@@ -169,13 +169,13 @@ const StandardSubtype = StandardType.define('StandardSubtype', function (this: a
 			// Simulate multiple files
 			const file1 = `
 import { define } from 'mnemonica';
-const UserType = define('UserType', function (this: any) {
+const UserType = define('UserType', function () {
 	this.name = '';
 });
 `;
 			const file2 = `
 import { define } from 'mnemonica';
-const ProductType = define('ProductType', function (this: any) {
+const ProductType = define('ProductType', function () {
 	this.price = 0;
 });
 `;
@@ -209,15 +209,15 @@ class Order {
 import { define, decorate } from 'mnemonica';
 
 // Define hierarchy
-const ServiceType = define('ServiceType', function (this: any) {
+const ServiceType = define('ServiceType', function () {
 	this.id = '';
 });
 
-const WebServiceType = ServiceType.define('WebServiceType', function (this: any) {
+const WebServiceType = ServiceType.define('WebServiceType', function () {
 	this.endpoint = '';
 });
 
-const DatabaseServiceType = ServiceType.define('DatabaseServiceType', function (this: any) {
+const DatabaseServiceType = ServiceType.define('DatabaseServiceType', function () {
 	this.connectionString = '';
 });
 

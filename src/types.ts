@@ -13,8 +13,6 @@ export interface TacticaConfig {
 	exclude?: string[];
 	/** Enable verbose logging */
 	verbose?: boolean;
-	/** Generate global augmentation instead of module augmentation (default: true) */
-	globalAugmentation?: boolean;
 }
 
 export interface PropertyInfo {
@@ -40,6 +38,19 @@ export interface ConstructorParamInfo {
 	kind?: 'rest';
 }
 
+export interface BuilderValue {
+	/** Exported name used by registry.ts to import the builder value. */
+	name: string;
+	/** Module whose exported binding is imported by registry.ts. */
+	sourceFile: string;
+	/** RegistryOf for builder-held values, typeof for exported free defines. */
+	kind: 'registryOf' | 'typeof';
+	/** Full path of the constructor held by the exported value. */
+	fullPath: string;
+	/** True when the binding uses default-import syntax. */
+	defaultImport?: boolean;
+}
+
 export interface TypeNode {
 	/** Type name (e.g., "SecondType") */
 	name: string;
@@ -49,6 +60,8 @@ export interface TypeNode {
 	properties: Map<string, PropertyInfo>;
 	/** Constructor parameters (for TypeRegistry constructor signature) */
 	constructorParams?: ConstructorParamInfo[];
+	/** Explicit instance-type override from a this: any handler annotation. */
+	instanceTypeOverride?: 'any';
 	/**
 	 * True when the construct handler is an async function/arrow (detected
 	 * syntactically by the async modifier). Emitted constructor shapes then
@@ -56,6 +69,8 @@ export interface TypeNode {
 	 * they are typed by the user in userland (documented in AGENTS.md).
 	 */
 	isAsync?: boolean;
+	/** Computed loop definitions contribute graph metadata but no TS entries. */
+	metadataOnly?: boolean;
 	/** Parent type node */
 	parent?: TypeNode;
 	/** Child types */

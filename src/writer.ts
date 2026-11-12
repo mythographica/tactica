@@ -80,16 +80,6 @@ export class TypesWriter {
 	}
 
 	/**
-	 * Write global augmentation file (index.d.ts - module augmentation mode)
-	 */
-	writeGlobalAugmentation (generated: GeneratedTypes): string {
-		this.ensureDirectory();
-		const filePath = path.join(this.outputDir, 'index.d.ts');
-		fs.writeFileSync(filePath, generated.content, 'utf-8');
-		return filePath;
-	}
-
-	/**
 	 * Write to a custom filename
 	 */
 	writeTo (filename: string, content: string): string {

@@ -24,10 +24,6 @@ export declare class TypesWriter {
      */
     writeTypesFile(generated: GeneratedTypes): string;
     /**
-     * Write global augmentation file (index.d.ts - module augmentation mode)
-     */
-    writeGlobalAugmentation(generated: GeneratedTypes): string;
-    /**
      * Write to a custom filename
      */
     writeTo(filename: string, content: string): string;

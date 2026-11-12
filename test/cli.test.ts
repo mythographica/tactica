@@ -59,16 +59,6 @@ describe('parseArgs()', () => {
 		expect(opts.exclude).to.deep.equal([ '**/*.spec.ts' ]);
 	});
 
-	it('should parse --module-augmentation as globalAugmentation:false', () => {
-		const opts = parseArgs([ '--module-augmentation' ]);
-		expect(opts.globalAugmentation).to.be.false;
-	});
-
-	it('should parse -m shorthand for module-augmentation', () => {
-		const opts = parseArgs([ '-m' ]);
-		expect(opts.globalAugmentation).to.be.false;
-	});
-
 	it('should parse --verbose flag', () => {
 		expect(parseArgs([ '--verbose' ]).verbose).to.be.true;
 		expect(parseArgs([ '-v' ]).verbose).to.be.true;
@@ -362,5 +352,57 @@ describe('run() analyzer error warnings', () => {
 		expect(typesTs).to.include('export type Parent =');
 		expect(typesTs).to.include('export type Parent_Good =');
 		expect(typesTs).to.not.include('Bad');
+	});
+
+	describe('run() derived registry', () => {
+		it('should merge exported builder values and preserve extracted rows', () => {
+			const fixtureDir = path.join(__dirname, 'fixtures', 'builder-compat');
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-cli-builder-compat-'));
+			let registryTs: string;
+			let typesTs: string;
+			let hierarchyJson: { roots: Array<{ fullPath: string; children: Array<{ name: string; fullPath: string }> }> };
+			let definitionsJson: { definitions: Record<string, { parent: string | null; fields: unknown[]; args: unknown[] }> };
+			try {
+				const exitCode = run({
+					project : path.join(fixtureDir, 'tsconfig.json'),
+					outputDir,
+				});
+				expect(exitCode).to.equal(0);
+				registryTs = fs.readFileSync(path.join(outputDir, 'registry.ts'), 'utf-8');
+				typesTs = fs.readFileSync(path.join(outputDir, 'types.ts'), 'utf-8');
+				hierarchyJson = JSON.parse(fs.readFileSync(path.join(outputDir, 'hierarchy.json'), 'utf-8'));
+				definitionsJson = JSON.parse(fs.readFileSync(path.join(outputDir, 'definitions.json'), 'utf-8'));
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+
+			expect(registryTs).to.include('type FromBuilder = RegistryOf<typeof App> & RegistryOf<typeof Sessions> & RegistryOf<typeof KlassCtor>');
+			expect(registryTs).to.include('\'Widget\': typeof WidgetCtor;');
+			expect(registryTs).to.include('\'Gadget\': RegistryEntry<Gadget, \'Gadget\', object, [g: string]>;');
+			expect(registryTs).to.include('\'Mirror\': RegistryEntry<Mirror, \'Mirror\', object, [data: { m: number }]>;');
+			expect(typesTs).to.include('export type User = LookedUpInstance<TypeRegistry, \'User\'>;');
+			expect(typesTs).to.include('export type User_Session = LookedUpInstance<TypeRegistry, \'User.Session\'>;');
+			expect(typesTs).to.include('export type Klass = LookedUpInstance<TypeRegistry, \'Klass\'>;');
+			expect(typesTs).to.include('export type Gadget = {');
+			expect(typesTs).to.include('export type Mirror = {');
+			expect(typesTs).to.include('Chained: LookedUpConstructor<TypeRegistry, \'Parameter.Chained\', true>;');
+			expect(typesTs).to.include('Chained?: undefined;');
+
+			const runRoot = hierarchyJson.roots.find(node => node.fullPath === 'collection_1::Run');
+			expect(runRoot).to.exist;
+			expect(runRoot!.children.map(child => child.name)).to.deep.equal([ 'Prepare', 'Produce' ]);
+			expect(runRoot!.children.map(child => child.fullPath)).to.deep.equal([
+				'collection_1::Run.Prepare',
+				'collection_1::Run.Produce',
+			]);
+			expect(definitionsJson.definitions[ 'collection_1::Run.Prepare' ].parent).to.equal('collection_1::Run');
+			expect(definitionsJson.definitions[ 'collection_1::Run.Produce' ].parent).to.equal('collection_1::Run');
+			expect(definitionsJson.definitions[ 'collection_1::Run.Prepare' ].fields).to.deep.equal([]);
+			expect(definitionsJson.definitions[ 'collection_1::Run.Prepare' ].args).to.deep.equal([]);
+			expect(registryTs).to.not.include('Run.Prepare');
+			expect(registryTs).to.not.include('Run.Produce');
+			expect(typesTs).to.not.include('Run_Prepare');
+			expect(typesTs).to.not.include('Run_Produce');
+		});
 	});
 });

@@ -6,7 +6,7 @@ import {
 	TypeNode, PropertyInfo, AnalyzeResult, AnalyzeError,
 	DefinitionInfo, UsageInfo, ConstructorParamInfo,
 	EDSInfo, FlowInfo, InstrumentationKind, InstrumentationPoint,
-	InstrumentationScope, ResolutionError, CollectionManifestEntry
+	InstrumentationScope, ResolutionError, CollectionManifestEntry, BuilderValue
 } from './types';
 import {
 	TypeGraphImpl, resolveGraphTypeReference, GraphTypeReferenceResult 
@@ -22,6 +22,21 @@ interface CollectionInfo {
 	/** 1-based position of the createTypesCollection() variable declaration */
 	line: number;
 	column: number;
+}
+
+interface BuilderExport {
+	name: string;
+	sourceFile: string;
+	defaultImport?: boolean;
+}
+
+interface BuilderCandidate {
+	name: string;
+	sourceFile: string;
+	kind: 'registryOf' | 'typeof';
+	fullPath: string;
+	exports: BuilderExport[];
+	excluded: boolean;
 }
 
 /**
@@ -78,6 +93,10 @@ interface ReferencedTypeResolution {
 	resolvedPath: string;
 	isExternal: boolean;
 }
+
+type ConstructorHandler = ts.Expression | ts.FunctionDeclaration | ts.ClassDeclaration;
+type FunctionConstructorHandler = ts.FunctionExpression | ts.ArrowFunction | ts.FunctionDeclaration;
+type ClassConstructorHandler = ts.ClassExpression | ts.ClassDeclaration;
 
 /**
  * Global/builtin type names that are safe to emit bare into generated files
@@ -144,6 +163,9 @@ export class MnemonicaAnalyzer {
 	// Same-file function bindings (`fileName#name` -> function node) for
 	// resolving wrap(fn) arguments syntactically — the checker stays unused
 	private functionBindings = new Map<string, ts.FunctionLikeDeclaration>();
+	// Constructor values by declaring file and exported/local name. Resolution
+	// uses the same import and re-export wiring as referenced-type declarations.
+	private constructorBindings = new Map<string, Map<string, ConstructorHandler>>();
 	// wrap call node -> location of the enclosing wrap site (plus that
 	// site's scope attribution), so nested wrap() calls inside a wrapped
 	// body carry the `via` link — and inherit the scope when they have
@@ -155,6 +177,10 @@ export class MnemonicaAnalyzer {
 	private wrapEntryByNode = new Map<ts.Node, EDSInfo>();
 	// Track variable assignments: variableName -> fullPath of the type it holds
 	private variableToTypeMap = new Map<string, string>();
+	// Exported builder values and their transitive self-reference exclusions.
+	private builderCandidates: BuilderCandidate[] = [];
+	private excludedTypePaths = new Set<string>();
+	private generatedTypeImports = new Map<string, Set<string>>();
 	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
 	private moduleObjectVariables = new Set<string>();
 	// file -> (local name -> imported name) for named imports from
@@ -335,6 +361,31 @@ export class MnemonicaAnalyzer {
 		return this.graph;
 	}
 
+	getBuilderValues (): BuilderValue[] {
+		const result: BuilderValue[] = [];
+		const seen = new Set<string>();
+		for (const candidate of this.builderCandidates) {
+			if (candidate.excluded) {
+				continue;
+			}
+			for (const exported of candidate.exports) {
+				const key = `${candidate.kind}|${exported.sourceFile}|${exported.name}|${candidate.fullPath}`;
+				if (seen.has(key)) {
+					continue;
+				}
+				seen.add(key);
+				result.push({
+					name          : exported.name,
+					sourceFile    : exported.sourceFile,
+					kind          : candidate.kind,
+					fullPath      : candidate.fullPath,
+					defaultImport : exported.defaultImport
+				});
+			}
+		}
+		return result;
+	}
+
 	/**
 	 * Get collected definitions
 	 */
@@ -507,6 +558,8 @@ export class MnemonicaAnalyzer {
 		this.trackImports(node);
 		this.trackModuleObjectAliases(node);
 		this.trackCollectionAliases(node, sourceFile);
+		this.trackBuilderExportAssignment(node);
+		this.trackConstructorBinding(node);
 
 		// Check for define() calls
 		if (this.isDefineCall(node)) {
@@ -569,6 +622,28 @@ export class MnemonicaAnalyzer {
 		}
 	}
 
+	private trackConstructorBinding (node: ts.Node): void {
+		let name: string | undefined;
+		let handler: ConstructorHandler | undefined;
+		if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+			name = node.name.text;
+			handler = node.initializer;
+		} else if ((ts.isFunctionDeclaration(node) || ts.isClassDeclaration(node)) && node.name) {
+			name = node.name.text;
+			handler = node;
+		}
+		if (!name || !handler) {
+			return;
+		}
+		const filePath = this.currentReferencedTypeFile;
+		let bindings = this.constructorBindings.get(filePath);
+		if (!bindings) {
+			bindings = new Map<string, ConstructorHandler>();
+			this.constructorBindings.set(filePath, bindings);
+		}
+		bindings.set(name, handler);
+	}
+
 	/**
 	 * Track imports from 'mnemonica' so aliases of the module object and
 	 * createTypesCollection are recognized without relying on the type checker.
@@ -579,6 +654,25 @@ export class MnemonicaAnalyzer {
 		}
 
 		const { moduleSpecifier } = node;
+		if (ts.isStringLiteral(moduleSpecifier) && moduleSpecifier.text.includes('.tactica')) {
+			let imports = this.generatedTypeImports.get(this.currentReferencedTypeFile);
+			if (!imports) {
+				imports = new Set<string>();
+				this.generatedTypeImports.set(this.currentReferencedTypeFile, imports);
+			}
+			const generatedClause = node.importClause;
+			if (generatedClause?.name) {
+				imports.add(generatedClause.name.text);
+			}
+			if (generatedClause?.namedBindings && ts.isNamedImports(generatedClause.namedBindings)) {
+				for (const element of generatedClause.namedBindings.elements) {
+					imports.add(element.name.text);
+				}
+			}
+			if (generatedClause?.namedBindings && ts.isNamespaceImport(generatedClause.namedBindings)) {
+				imports.add(generatedClause.namedBindings.name.text);
+			}
+		}
 		if (!ts.isStringLiteral(moduleSpecifier) || moduleSpecifier.text !== 'mnemonica') {
 			return;
 		}
@@ -955,6 +1049,7 @@ export class MnemonicaAnalyzer {
 			for (const element of node.exportClause.elements) {
 				const exportedName = element.name.text;
 				const localName = element.propertyName ? element.propertyName.text : exportedName;
+				this.markBuilderExport(exportedName, localName, filePath, specifierText);
 				if (specifierText) {
 					// export { X } from '…' / export { X as Y } from '…'
 					let reExports = this.referencedTypeReExports.get(filePath);
@@ -2272,9 +2367,30 @@ export class MnemonicaAnalyzer {
 			return;
 		}
 
+		const computedNames = this.extractComputedTypeNames(call);
+		if (computedNames !== undefined) {
+			for (const typeName of computedNames) {
+				const computedContext = this.extractDefineContext(call, typeName);
+				this.processDefineContext(call, sourceFile, computedContext, true);
+			}
+			return;
+		}
+
 		// Get the type name and source context from arguments
 		const defineContext = this.extractDefineContext(call);
+		this.processDefineContext(call, sourceFile, defineContext, false);
+	}
 
+	private processDefineContext (
+		call: ts.CallExpression,
+		sourceFile: ts.SourceFile,
+		defineContext: {
+			typeName?: string;
+			parentType?: TypeNode;
+			collectionId?: string;
+		},
+		metadataOnly: boolean
+	): void {
 		// For chained calls like define('A').define('B'), we want the position of the .define('B') part
 		// not the start of the entire expression
 		let positionNode: ts.Node = call;
@@ -2320,6 +2436,7 @@ export class MnemonicaAnalyzer {
 			collectionId
 		);
 		this.applyCollectionEmissionInfo(node, collectionId);
+		node.metadataOnly = metadataOnly;
 
 		// Same-namespace duplicate detection (hard-fail law): key by the
 		// runtime namespace — collection roots `<collection>::<name>`, or
@@ -2343,6 +2460,8 @@ export class MnemonicaAnalyzer {
 			this.currentGraphAnchor = previousAnchor;
 		}
 
+		const constructorExpr = this.extractConstructorExpression(call);
+		node.instanceTypeOverride = this.hasAnyThisAnnotation(constructorExpr) ? 'any' : undefined;
 		// Async constructor detection (async modifier, syntactic only)
 		node.isAsync = this.isAsyncConstructHandler(this.extractConstructorExpression(call));
 
@@ -2363,12 +2482,14 @@ export class MnemonicaAnalyzer {
 			blockErrors : config.blockErrors ?? false,
 		};
 		this.definitions.set(node.fullPath, definition);
-		this.edsScopeByNode.set(call, node.fullPath);
+		if (!metadataOnly) {
+			this.edsScopeByNode.set(call, node.fullPath);
 
-		// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
-		// A multi-hop initializer binds the LAST hop: define() returns the
-		// defined type's constructor (F18)
-		this.trackVariableAssignment(call, parentNode, node.fullPath);
+			// Track variable assignment: const User = define('UserEntity', ...) -> map "User" to "UserEntity"
+			// A multi-hop initializer binds the LAST hop: define() returns the
+			// defined type's constructor (F18)
+			this.trackVariableAssignment(call, parentNode, node.fullPath, sourceFile);
+		}
 	}
 
 	/**
@@ -2464,6 +2585,8 @@ export class MnemonicaAnalyzer {
 			this.currentGraphAnchor = previousAnchor;
 		}
 
+		const constructorExpr = this.extractConstructorExpression(call);
+		node.instanceTypeOverride = this.hasAnyThisAnnotation(constructorExpr) ? 'any' : undefined;
 		// Async constructor detection (async modifier, syntactic only)
 		node.isAsync = this.isAsyncConstructHandler(this.extractConstructorExpression(call));
 
@@ -2488,7 +2611,7 @@ export class MnemonicaAnalyzer {
 
 		// Track variable assignment: const LazyType = lazy('LazyType', ...) -> map "LazyType" -> "LazyType"
 		// For chained calls like const X = lazy('A').define('B'), we want to map X -> A (the root)
-		this.trackVariableAssignment(call, parentNode, node.fullPath);
+		this.trackVariableAssignment(call, parentNode, node.fullPath, sourceFile);
 	}
 
 	/**
@@ -2624,7 +2747,7 @@ export class MnemonicaAnalyzer {
 	 * Extract a constructor name from a class expression, class declaration,
 	 * or named function expression.
 	 */
-	private extractConstructorName (constructorExpr: ts.Expression): string | undefined {
+	private extractConstructorName (constructorExpr: ConstructorHandler): string | undefined {
 		if (ts.isClassExpression(constructorExpr) && constructorExpr.name) {
 			return constructorExpr.name.text;
 		}
@@ -2780,6 +2903,133 @@ export class MnemonicaAnalyzer {
 		return configResult;
 	}
 
+	private hasGeneratedTypeReference (handler: ConstructorHandler | undefined): boolean {
+		if (!handler) {
+			return false;
+		}
+		const imports = this.generatedTypeImports.get(this.currentReferencedTypeFile);
+		if (!imports || imports.size === 0) {
+			return false;
+		}
+		let found = false;
+		const visit = (node: ts.Node): void => {
+			if (found) {
+				return;
+			}
+			if (ts.isIdentifier(node) && imports.has(node.text)) {
+				found = true;
+				return;
+			}
+			ts.forEachChild(node, visit);
+		};
+		visit(handler);
+		return found;
+	}
+
+	private hasSelfTypeAnnotation (handler: ConstructorHandler | undefined, fullPath: string): boolean {
+		if (!handler || !ts.isFunctionLike(handler)) {
+			return false;
+		}
+		const typeName = fullPath.split('.').pop();
+		for (const parameter of handler.parameters) {
+			if (!ts.isIdentifier(parameter.name) || parameter.name.text !== 'this' || !parameter.type) {
+				continue;
+			}
+			const annotation = parameter.type.getText();
+			const result = annotation === typeName || annotation.endsWith(`.${typeName}`) ||
+				annotation === `InstanceType<typeof ${typeName}>`;
+			return result;
+		}
+		return false;
+	}
+
+	private recordBuilderCandidate (
+		name: string,
+		fullPath: string,
+		kind: 'registryOf' | 'typeof',
+		sourceFile: ts.SourceFile,
+		declaration: ts.VariableDeclaration,
+		excluded: boolean
+	): void {
+		const candidate: BuilderCandidate = {
+			name,
+			sourceFile : sourceFile.fileName,
+			kind,
+			fullPath,
+			exports    : [],
+			excluded
+		};
+		const statement = declaration.parent.parent;
+		const modifiers = ts.isVariableStatement(statement) ? ts.getModifiers(statement) ?? [] : [];
+		const isDefault = modifiers.some(modifier => modifier.kind === ts.SyntaxKind.DefaultKeyword);
+		const isExported = modifiers.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword);
+		if (isExported) {
+			candidate.exports.push({
+				name          : name,
+				sourceFile    : sourceFile.fileName,
+				defaultImport : isDefault
+			});
+		}
+		this.builderCandidates.push(candidate);
+	}
+
+	private markBuilderExport (
+		exportedName: string,
+		originalName: string,
+		filePath: string,
+		moduleSpecifier?: string
+	): void {
+		if (!moduleSpecifier) {
+			for (const candidate of this.builderCandidates) {
+				const matchesCandidate = nodePath.resolve(candidate.sourceFile) === nodePath.resolve(filePath)
+					&& candidate.name === originalName
+					&& !candidate.excluded;
+				if (matchesCandidate) {
+					candidate.exports.push({ name : exportedName, sourceFile : filePath });
+				}
+			}
+			return;
+		}
+		const resolution = this.resolveReferencedTypeModule(moduleSpecifier, filePath);
+		if (resolution?.isExternal) {
+			return;
+		}
+		const fallbackPath = moduleSpecifier.endsWith('.ts')
+			? nodePath.resolve(nodePath.dirname(filePath), moduleSpecifier)
+			: `${nodePath.resolve(nodePath.dirname(filePath), moduleSpecifier)}.ts`;
+		const resolvedPath = resolution?.resolvedPath ?? fallbackPath;
+		for (const candidate of this.builderCandidates) {
+			if (nodePath.resolve(candidate.sourceFile) !== nodePath.resolve(resolvedPath) || candidate.excluded) {
+				continue;
+			}
+			const matchesName = originalName === 'default'
+				? candidate.exports.some(exported => exported.name === 'default')
+				: candidate.name === originalName;
+			if (matchesName) {
+				candidate.exports.push({
+					name          : exportedName,
+					sourceFile    : filePath,
+					defaultImport : originalName === 'default'
+				});
+			}
+		}
+	}
+
+	private trackBuilderExportAssignment (node: ts.Node): void {
+		if (!ts.isExportAssignment(node) || !ts.isIdentifier(node.expression)) {
+			return;
+		}
+		const filePath = this.currentReferencedTypeFile;
+		for (const candidate of this.builderCandidates) {
+			const matchesCandidate = nodePath.resolve(candidate.sourceFile) === nodePath.resolve(filePath)
+				&& candidate.name === node.expression.text
+				&& !candidate.excluded;
+			if (matchesCandidate) {
+				candidate.exports.push({ name : node.expression.text, sourceFile : filePath, defaultImport : true });
+			}
+		}
+	}
+
 	/**
 		* Track variable assignments that capture define() results
 		* e.g., const User = define('UserEntity', ...) maps "User" -> "UserEntity"
@@ -2788,7 +3038,8 @@ export class MnemonicaAnalyzer {
 	private trackVariableAssignment (
 		call: ts.CallExpression,
 		parentNode: TypeNode | undefined,
-		fullPath: string
+		fullPath: string,
+		sourceFile: ts.SourceFile
 	): void {
 		// Check if this call is the right-hand side of a variable declaration
 		// Walk up the tree to find VariableDeclaration
@@ -2811,6 +3062,19 @@ export class MnemonicaAnalyzer {
 					// keeps it — pinned behavior)
 					if (parentNode && this.variableToTypeMap.has(varName)) {
 						return;
+					}
+					const typeNode = this.graph.findType(fullPath);
+					if (typeNode?.collectionId === undefined) {
+						const selfReference = this.hasGeneratedTypeReference(this.extractConstructorExpression(call)) ||
+						this.hasSelfTypeAnnotation(this.extractConstructorExpression(call), fullPath);
+						const excluded = selfReference || (
+							parentNode !== undefined && this.excludedTypePaths.has(parentNode.fullPath)
+						);
+						if (excluded) {
+							this.excludedTypePaths.add(fullPath);
+						}
+						const kind = ts.isIdentifier(call.expression) ? 'typeof' : 'registryOf';
+						this.recordBuilderCandidate(varName, fullPath, kind, sourceFile, current, excluded);
 					}
 					this.variableToTypeMap.set(varName, fullPath);
 					this.trackFileGraphBinding(varName, fullPath);
@@ -3321,16 +3585,133 @@ export class MnemonicaAnalyzer {
 	}
 
 	/**
+	 * Resolve a computed define name only when it ranges over a closed const
+	 * object key set. Arbitrary strings and unresolved unions stay on the
+	 * existing warning-and-skip path.
+	 */
+	private extractComputedTypeNames (call: ts.CallExpression): string[] | undefined {
+		const [ firstArg ] = call.arguments;
+		if (!firstArg || !ts.isIdentifier(firstArg)) {
+			return undefined;
+		}
+		const loopNames = this.resolveLoopKeyNames(firstArg);
+		if (loopNames !== undefined) {
+			return loopNames;
+		}
+		const parameterNames = this.resolveParameterKeyNames(firstArg, call.getSourceFile());
+		return parameterNames;
+	}
+
+	private resolveLoopKeyNames (name: ts.Identifier): string[] | undefined {
+		let current: ts.Node | undefined = name.parent;
+		while (current) {
+			if (ts.isForOfStatement(current) && ts.isVariableDeclarationList(current.initializer)) {
+				const declaration = current.initializer.declarations.find(candidate =>
+					ts.isIdentifier(candidate.name) && candidate.name.text === name.text);
+				if (declaration) {
+					const result = this.resolveObjectKeysCall(current.expression, current.getSourceFile());
+					return result;
+				}
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	private resolveObjectKeysCall (expression: ts.Expression, sourceFile: ts.SourceFile): string[] | undefined {
+		if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression)) {
+			return undefined;
+		}
+		const access = expression.expression;
+		const [ argument ] = expression.arguments;
+		if (!ts.isIdentifier(access.expression) || access.expression.text !== 'Object' ||
+			access.name.text !== 'keys' || !argument || !ts.isIdentifier(argument)) {
+			return undefined;
+		}
+		const result = this.resolveConstObjectKeys(argument.text, sourceFile);
+		return result;
+	}
+
+	private resolveParameterKeyNames (name: ts.Identifier, sourceFile: ts.SourceFile): string[] | undefined {
+		let current: ts.Node | undefined = name.parent;
+		while (current) {
+			if (ts.isFunctionLike(current)) {
+				const parameter = current.parameters.find(candidate =>
+					ts.isIdentifier(candidate.name) && candidate.name.text === name.text);
+				if (parameter) {
+					if (!parameter.type) {
+						return undefined;
+					}
+					const result = this.resolveKeyofType(parameter.type, sourceFile);
+					return result;
+				}
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	private resolveKeyofType (typeNode: ts.TypeNode, sourceFile: ts.SourceFile): string[] | undefined {
+		if (ts.isParenthesizedTypeNode(typeNode)) {
+			const result = this.resolveKeyofType(typeNode.type, sourceFile);
+			return result;
+		}
+		if (ts.isTypeOperatorNode(typeNode) && typeNode.operator === ts.SyntaxKind.KeyOfKeyword) {
+			const queried = typeNode.type;
+			if (ts.isTypeQueryNode(queried) && ts.isIdentifier(queried.exprName)) {
+				const result = this.resolveConstObjectKeys(queried.exprName.text, sourceFile);
+				return result;
+			}
+			return undefined;
+		}
+		if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+			const referencedName = typeNode.typeName.text;
+			const alias = sourceFile.statements.find((statement): statement is ts.TypeAliasDeclaration =>
+				ts.isTypeAliasDeclaration(statement) && statement.name.text === referencedName);
+			if (alias) {
+				const result = this.resolveKeyofType(alias.type, sourceFile);
+				return result;
+			}
+		}
+		return undefined;
+	}
+
+	private resolveConstObjectKeys (name: string, sourceFile: ts.SourceFile): string[] | undefined {
+		for (const statement of sourceFile.statements) {
+			if (!ts.isVariableStatement(statement) ||
+				(statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+				continue;
+			}
+			for (const declaration of statement.declarationList.declarations) {
+				if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name ||
+					!declaration.initializer || !ts.isObjectLiteralExpression(declaration.initializer)) {
+					continue;
+				}
+				const names: string[] = [];
+				for (const property of declaration.initializer.properties) {
+					if (!ts.isPropertyAssignment(property) ||
+						(!ts.isIdentifier(property.name) && !ts.isStringLiteral(property.name))) {
+						return undefined;
+					}
+					names.push(property.name.text);
+				}
+				return names;
+			}
+		}
+		return undefined;
+	}
+
+	/**
 	 * Extract the full define() call context: type name, parent type, and collection.
 	 * Handles direct calls, property-access calls, chained calls, and the
 	 * explicit-source form `define(source, 'TypeName', handler)`.
 	 */
-	private extractDefineContext (call: ts.CallExpression): {
+	private extractDefineContext (call: ts.CallExpression, typeNameOverride?: string): {
 		typeName?: string;
 		parentType?: TypeNode;
 		collectionId?: string;
 	} {
-		const typeName = this.extractTypeName(call);
+		const typeName = typeNameOverride ?? this.extractTypeName(call);
 		if (!typeName) {
 			return {};
 		}
@@ -3643,40 +4024,132 @@ export class MnemonicaAnalyzer {
 		return chain;
 	}
 
+	private findConstructorInModule (
+		modulePath: string,
+		name: string,
+		depth: number
+	): ConstructorHandler | undefined {
+		if (depth > MAX_REEXPORT_CHASE_DEPTH) {
+			return undefined;
+		}
+
+		const bindings = this.constructorBindings.get(modulePath);
+		const direct = bindings?.get(name);
+		if (direct) {
+			return direct;
+		}
+		const localAlias = this.referencedTypeExportAliases.get(modulePath)?.get(name);
+		if (localAlias) {
+			const aliased = bindings?.get(localAlias);
+			if (aliased) {
+				return aliased;
+			}
+		}
+
+		const reExportSpecifier = this.referencedTypeReExports.get(modulePath)?.get(name);
+		if (reExportSpecifier) {
+			const nextResolution = this.resolveReferencedTypeModule(reExportSpecifier, modulePath);
+			if (nextResolution && !nextResolution.isExternal) {
+				const found = this.findConstructorInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		const stars = this.referencedTypeExportStars.get(modulePath);
+		if (stars) {
+			for (const starSpecifier of stars) {
+				const nextResolution = this.resolveReferencedTypeModule(starSpecifier, modulePath);
+				if (!nextResolution || nextResolution.isExternal) {
+					continue;
+				}
+				const found = this.findConstructorInModule(nextResolution.resolvedPath, name, depth + 1);
+				if (found) {
+					return found;
+				}
+			}
+		}
+
+		return undefined;
+	}
+
+	private resolveHeldConstructor (name: string, fromFile: string): ConstructorHandler | undefined {
+		const filePath = nodePath.resolve(fromFile);
+		const imported = this.referencedTypeImports.get(filePath)?.get(name);
+		if (imported && !imported.isNamespace) {
+			const resolution = this.resolveReferencedTypeModule(imported.specifier, filePath);
+			if (resolution && !resolution.isExternal) {
+				const found = this.findConstructorInModule(resolution.resolvedPath, imported.originalName, 0);
+				if (found) {
+					return found;
+				}
+			}
+		}
+		const local = this.constructorBindings.get(filePath)?.get(name);
+		return local;
+	}
+
+	private unwrapConstructorAssertions (handler: ConstructorHandler): ConstructorHandler {
+		let current = handler;
+		while (ts.isParenthesizedExpression(current) || ts.isAsExpression(current) ||
+			ts.isTypeAssertionExpression(current)) {
+			current = current.expression;
+		}
+		return current;
+	}
+
+	private resolveConstructorExpression (
+		expression: ts.Expression,
+		sourceFile: ts.SourceFile
+	): ConstructorHandler | undefined {
+		const current = this.unwrapConstructorAssertions(expression);
+		if (!ts.isIdentifier(current)) {
+			return current;
+		}
+		const resolved = this.resolveHeldConstructor(current.text, sourceFile.fileName);
+		if (!resolved) {
+			return current;
+		}
+		const result = this.unwrapConstructorAssertions(resolved);
+		return result;
+	}
+
 	/**
 	 * Determine the constructor expression for either a define() or lazy() call.
 	 * For define() this is the construct handler; for lazy() it is the value
-	 * returned by the lazy getter.
+	 * returned by the lazy getter. Identifiers resolve to their declarations.
 	 */
-	private extractConstructorExpression (call: ts.CallExpression): ts.Expression | undefined {
+	private extractConstructorExpression (call: ts.CallExpression): ConstructorHandler | undefined {
 		const expr = call.expression;
 		const name = ts.isIdentifier(expr)
 			? expr.text
 			: ts.isPropertyAccessExpression(expr)
 				? expr.name.text
 				: '';
+		let handler: ts.Expression | undefined;
 
 		if (name === 'lazy') {
 			const lazyArgs = this.extractLazyCallArgs(call);
-			if (!lazyArgs) {
-				return undefined;
+			if (lazyArgs) {
+				handler = this.unwrapLazyGetter(lazyArgs.getter);
 			}
-			return this.unwrapLazyGetter(lazyArgs.getter);
+		} else {
+			const args = call.arguments;
+			if (ts.isStringLiteral(args[ 0 ])) {
+				const [ , modernHandler ] = args;
+				handler = modernHandler;
+			} else {
+				const [ legacyHandler ] = args;
+				handler = legacyHandler;
+			}
 		}
 
-		// define() call
-		const args = call.arguments;
-		if (args.length === 0) {
+		if (!handler) {
 			return undefined;
 		}
-
-		// Modern form: define('Name', handler, config?)
-		if (ts.isStringLiteral(args[ 0 ])) {
-			return args[ 1 ];
-		}
-
-		// Legacy form: define(function Name() {}) or define(() => class Name {})
-		return args[ 0 ];
+		const result = this.resolveConstructorExpression(handler, call.getSourceFile());
+		return result;
 	}
 
 	/**
@@ -3686,12 +4159,12 @@ export class MnemonicaAnalyzer {
 	 * class shape gives no reliable signal without a type checker, and the
 	 * owner decided they are typed by the user in userland.
 	 */
-	private isAsyncConstructHandler (constructorExpr: ts.Expression | undefined): boolean {
+	private isAsyncConstructHandler (constructorExpr: ConstructorHandler | undefined): boolean {
 		if (!constructorExpr) {
 			return false;
 		}
 		const isFn = ts.isFunctionExpression(constructorExpr) ||
-			ts.isArrowFunction(constructorExpr);
+			ts.isArrowFunction(constructorExpr) || ts.isFunctionDeclaration(constructorExpr);
 		if (!isFn) {
 			return false;
 		}
@@ -3710,21 +4183,28 @@ export class MnemonicaAnalyzer {
 		if (!constructorExpr) {
 			return new Map<string, PropertyInfo>();
 		}
-		const result = this.extractPropertiesFromConstructor(constructorExpr);
-		return result;
+		const referencingFile = this.currentReferencedTypeFile;
+		this.currentReferencedTypeFile = nodePath.resolve(constructorExpr.getSourceFile().fileName);
+		try {
+			const result = this.extractPropertiesFromConstructor(constructorExpr);
+			return result;
+		} finally {
+			this.currentReferencedTypeFile = referencingFile;
+		}
 	}
 
 	/**
 	 * Extract properties from a constructor expression (function, arrow, or class).
 	 */
-	private extractPropertiesFromConstructor (constructorExpr: ts.Expression): Map<string, PropertyInfo> {
+	private extractPropertiesFromConstructor (constructorExpr: ConstructorHandler): Map<string, PropertyInfo> {
 		const properties = new Map<string, PropertyInfo>();
 
 		// Build type map from data parameter (for this.x = data.x patterns)
 		const dataTypeMap = this.buildDataTypeMap(constructorExpr);
 
 		// Handle function expression
-		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr)) {
+		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr) ||
+			ts.isFunctionDeclaration(constructorExpr)) {
 			const { body } = constructorExpr;
 
 			// First, extract properties from `this` parameter type annotation
@@ -3734,8 +4214,15 @@ export class MnemonicaAnalyzer {
 				properties.set(name, propInfo);
 			}
 
-			// Function body with statements
-			if (ts.isBlock(body)) {
+			// An annotated this is the complete declared instance type: assignments
+			// beyond it add nothing. A generated .tactica or graph-name annotation
+			// is the output, not the source, so those handlers keep assignment extraction.
+			const hasGeneratedReference = this.hasGeneratedThisAnnotation(constructorExpr);
+			const hasAuthoritativeThisAnnotation = !hasGeneratedReference && constructorExpr.parameters.some(param => {
+				const result = ts.isIdentifier(param.name) && param.name.text === 'this' && param.type !== undefined;
+				return result;
+			});
+			if (!hasAuthoritativeThisAnnotation && body && ts.isBlock(body)) {
 				for (const stmt of body.statements) {
 					if (ts.isExpressionStatement(stmt)) {
 						this.extractPropertyFromStatement(stmt.expression, properties, dataTypeMap);
@@ -3745,7 +4232,7 @@ export class MnemonicaAnalyzer {
 		}
 
 		// Handle class expression
-		if (ts.isClassExpression(constructorExpr)) {
+		if (ts.isClassExpression(constructorExpr) || ts.isClassDeclaration(constructorExpr)) {
 			// First pass: collect all property types for method inference
 			const classPropertyTypes = this.extractClassPropertyTypes(constructorExpr);
 
@@ -3765,9 +4252,13 @@ export class MnemonicaAnalyzer {
 
 					const name = ts.isIdentifier(member.name) ? member.name.text : '';
 					if (name) {
+						let type = this.inferType(member.type);
+						if (type === 'unknown' && member.initializer) {
+							type = this.inferTypeFromInitializer(member.initializer);
+						}
 						properties.set(name, {
 							name,
-							type     : this.inferType(member.type),
+							type,
 							optional : !!member.questionToken,
 						});
 					}
@@ -3831,10 +4322,11 @@ export class MnemonicaAnalyzer {
 	 * Build a type map from all parameters with inline object type annotations
 	 * Returns a map of "paramName.propertyName" -> type
 	 */
-	private buildDataTypeMap (handlerArg: ts.Expression): Map<string, string> {
+	private buildDataTypeMap (handlerArg: ConstructorHandler): Map<string, string> {
 		const typeMap = new Map<string, string>();
 
-		if (!ts.isFunctionExpression(handlerArg) && !ts.isArrowFunction(handlerArg)) {
+		if (!ts.isFunctionExpression(handlerArg) && !ts.isArrowFunction(handlerArg) &&
+			!ts.isFunctionDeclaration(handlerArg)) {
 			return typeMap;
 		}
 
@@ -4139,7 +4631,7 @@ export class MnemonicaAnalyzer {
 	 * Maps property names to their TypeScript type strings
 	 * Note: Includes private/protected properties for method inference
 	 */
-	private extractClassPropertyTypes (classDecl: ts.ClassExpression): Map<string, string> {
+	private extractClassPropertyTypes (classDecl: ClassConstructorHandler): Map<string, string> {
 		const propertyTypes = new Map<string, string>();
 
 		for (const member of classDecl.members) {
@@ -4174,11 +4666,50 @@ export class MnemonicaAnalyzer {
 		return `() => ${returnType}`;
 	}
 
+	private hasGeneratedThisAnnotation (handler: ConstructorHandler): boolean {
+		if (this.hasGeneratedTypeReference(handler)) {
+			return true;
+		}
+		if (!ts.isFunctionExpression(handler) && !ts.isArrowFunction(handler) &&
+			!ts.isFunctionDeclaration(handler)) {
+			return false;
+		}
+		for (const param of handler.parameters) {
+			const isThis = ts.isIdentifier(param.name) && param.name.text === 'this';
+			if (!isThis || !param.type || !ts.isTypeReferenceNode(param.type) ||
+				!ts.isIdentifier(param.type.typeName)) {
+				continue;
+			}
+			const typeName = param.type.typeName.text;
+			if (this.currentGraphAnchor?.name === typeName || this.currentGraphAnchor?.fullPath === typeName) {
+				return true;
+			}
+			const graphType = this.graph.findTypeByName(typeName);
+			if (graphType) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private hasAnyThisAnnotation (handler: ConstructorHandler | undefined): boolean {
+		if (!handler || (!ts.isFunctionExpression(handler) && !ts.isArrowFunction(handler) &&
+			!ts.isFunctionDeclaration(handler))) {
+			return false;
+		}
+		const result = handler.parameters.some(param => {
+			const matches = ts.isIdentifier(param.name) && param.name.text === 'this' &&
+				param.type?.kind === ts.SyntaxKind.AnyKeyword;
+			return matches;
+		});
+		return result;
+	}
+
 	/**
 		* Extract properties from `this` parameter type annotation
 		* Handles patterns like: function(this: SomeType, data: SomeType) { }
 		*/
-	private extractThisParamProperties (handlerArg: ts.FunctionExpression | ts.ArrowFunction):
+	private extractThisParamProperties (handlerArg: FunctionConstructorHandler):
 		Map<string, PropertyInfo> {
 		const properties = new Map<string, PropertyInfo>();
 
@@ -6181,20 +6712,33 @@ export class MnemonicaAnalyzer {
 	private extractConstructorParams (call: ts.CallExpression): ConstructorParamInfo[] {
 		const constructorExpr = this.extractConstructorExpression(call);
 		if (!constructorExpr) {
-			return [];
+			const fallbackParams: ConstructorParamInfo[] = [ {
+				name     : 'args',
+				type     : 'unknown[]',
+				optional : false,
+				kind     : 'rest',
+			} ];
+			return fallbackParams;
 		}
-		const result = this.extractConstructorParamsFromConstructor(constructorExpr);
-		return result;
+		const referencingFile = this.currentReferencedTypeFile;
+		this.currentReferencedTypeFile = nodePath.resolve(constructorExpr.getSourceFile().fileName);
+		try {
+			const result = this.extractConstructorParamsFromConstructor(constructorExpr);
+			return result;
+		} finally {
+			this.currentReferencedTypeFile = referencingFile;
+		}
 	}
 
 	/**
 			 * Extract constructor parameters from a constructor expression.
 			 */
-	private extractConstructorParamsFromConstructor (constructorExpr: ts.Expression): ConstructorParamInfo[] {
+	private extractConstructorParamsFromConstructor (constructorExpr: ConstructorHandler): ConstructorParamInfo[] {
 		const params: ConstructorParamInfo[] = [];
 	
 		// Handle function expression or arrow function
-		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr)) {
+		if (ts.isFunctionExpression(constructorExpr) || ts.isArrowFunction(constructorExpr) ||
+			ts.isFunctionDeclaration(constructorExpr)) {
 			// Look for constructor parameters (second param after `this`)
 			// Patterns: function(this: Type, data: { ... }) or (this: Type, data: { ... }) =>
 			for (let i = 0; i < constructorExpr.parameters.length; i++) {
@@ -6225,7 +6769,7 @@ export class MnemonicaAnalyzer {
 		}
 	
 		// Handle class expression - check constructor method
-		if (ts.isClassExpression(constructorExpr)) {
+		if (ts.isClassExpression(constructorExpr) || ts.isClassDeclaration(constructorExpr)) {
 			const classParams = this.extractClassConstructorParams(constructorExpr);
 			for (const param of classParams) {
 				params.push(param);

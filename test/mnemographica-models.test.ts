@@ -51,7 +51,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		const typesContent = generateAndWrite(graph);
 		
 		// Verify ProtoFlat is imported
-		expect(typesContent).to.include('import type { ProtoFlat } from \'mnemonica\'');
+		expect(typesContent).to.include('import type { ProtoFlat, LookedUpConstructor } from \'mnemonica\'');
 		
 		// Definition (root type) should have Link constructor property
 		expect(typesContent).to.include('export type Definition = {');
@@ -60,7 +60,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		
 		// Definition_Link (nested type) should have Link: undefined
 		expect(typesContent).to.include('export type Definition_Link = ProtoFlat<Definition, {');
-		expect(typesContent).to.include('Link: undefined;');
+		expect(typesContent).to.include('Link?: undefined;');
 	});
 
 	it('should generate correct types for Scene2D/Camera2D/GraphNode2D pattern', () => {
@@ -76,19 +76,19 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		
 		// Scene2D_Camera2D (nested) should have Camera2D: undefined
 		expect(typesContent).to.include('export type Scene2D_Camera2D = ProtoFlat<Scene2D, {');
-		expect(typesContent).to.include('Camera2D: undefined;');
+		expect(typesContent).to.include('Camera2D?: undefined;');
 		
 		// Scene2D_GraphNode2D (nested) should have GraphNode2D: undefined
 		// Note: Nested type instances don't get children constructors, only root types do
 		expect(typesContent).to.include('export type Scene2D_GraphNode2D = ProtoFlat<Scene2D, {');
-		expect(typesContent).to.include('GraphNode2D: undefined;');
+		expect(typesContent).to.include('GraphNode2D?: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined and proper ProtoFlat chain
 		expect(typesContent).to.include('export type Scene2D_GraphNode2D_Link2D = ProtoFlat<Scene2D_GraphNode2D, {');
-		expect(typesContent).to.include('Link2D: undefined;');
+		expect(typesContent).to.include('Link2D?: undefined;');
 		
 		expect(typesContent).to.include('export type Scene2D_GraphNode2D_Tooltip2D = ProtoFlat<Scene2D_GraphNode2D, {');
-		expect(typesContent).to.include('Tooltip2D: undefined;');
+		expect(typesContent).to.include('Tooltip2D?: undefined;');
 	});
 
 	it('should extract class methods from Usages class (has, set, values, size getter)', () => {
@@ -118,7 +118,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		
 		// Usages_UsageEntry should have UsageEntry: undefined
 		expect(typesContent).to.include('export type Usages_UsageEntry = ProtoFlat<Usages, {');
-		expect(typesContent).to.include('UsageEntry: undefined;');
+		expect(typesContent).to.include('UsageEntry?: undefined;');
 	});
 
 	it('should generate correct types for Scene3D pattern', () => {
@@ -134,16 +134,16 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		
 		// Scene3D_Camera3D should have Camera3D: undefined
 		expect(typesContent).to.include('export type Scene3D_Camera3D = ProtoFlat<Scene3D, {');
-		expect(typesContent).to.include('Camera3D: undefined;');
+		expect(typesContent).to.include('Camera3D?: undefined;');
 		
 		// Scene3D_GraphNode3D should have GraphNode3D: undefined
-		expect(typesContent).to.include('GraphNode3D: undefined;');
+		expect(typesContent).to.include('GraphNode3D?: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined
 		expect(typesContent).to.include('export type Scene3D_GraphNode3D_Link3D = ProtoFlat<Scene3D_GraphNode3D, {');
-		expect(typesContent).to.include('Link3D: undefined;');
+		expect(typesContent).to.include('Link3D?: undefined;');
 		expect(typesContent).to.include('export type Scene3D_GraphNode3D_Tooltip3D = ProtoFlat<Scene3D_GraphNode3D, {');
-		expect(typesContent).to.include('Tooltip3D: undefined;');
+		expect(typesContent).to.include('Tooltip3D?: undefined;');
 	});
 
 	it('should generate correct types for Trie pattern', () => {
@@ -155,13 +155,13 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('Trie_GraphNodeTrie');
 		
 		expect(typesContent).to.include('export type Trie_GraphNodeTrie = ProtoFlat<Trie, {');
-		expect(typesContent).to.include('GraphNodeTrie: undefined;');
+		expect(typesContent).to.include('GraphNodeTrie?: undefined;');
 		
 		// Deeply nested types should also have Subtype: undefined
 		expect(typesContent).to.include('export type Trie_GraphNodeTrie_LinkTrie = ProtoFlat<Trie_GraphNodeTrie, {');
-		expect(typesContent).to.include('LinkTrie: undefined;');
+		expect(typesContent).to.include('LinkTrie?: undefined;');
 		expect(typesContent).to.include('export type Trie_GraphNodeTrie_ContextMenu = ProtoFlat<Trie_GraphNodeTrie, {');
-		expect(typesContent).to.include('ContextMenu: undefined;');
+		expect(typesContent).to.include('ContextMenu?: undefined;');
 	});
 
 	it('should generate correct types for Types pattern', () => {
@@ -173,7 +173,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('Types_TypeEntry');
 		
 		expect(typesContent).to.include('export type Types_TypeEntry = ProtoFlat<Types, {');
-		expect(typesContent).to.include('TypeEntry: undefined;');
+		expect(typesContent).to.include('TypeEntry?: undefined;');
 	});
 
 	it('should generate correct types for Registry pattern', () => {
@@ -185,7 +185,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('Registry_DefinitionEntry');
 		
 		expect(typesContent).to.include('export type Registry_DefinitionEntry = ProtoFlat<Registry, {');
-		expect(typesContent).to.include('DefinitionEntry: undefined;');
+		expect(typesContent).to.include('DefinitionEntry?: undefined;');
 	});
 
 	it('should generate correct types for LoggerTab pattern', () => {
@@ -197,7 +197,7 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('LoggerTab_LogEntry');
 		
 		expect(typesContent).to.include('export type LoggerTab_LogEntry = ProtoFlat<LoggerTab, {');
-		expect(typesContent).to.include('LogEntry: undefined;');
+		expect(typesContent).to.include('LogEntry?: undefined;');
 	});
 
 	it('should generate correct types for Main/Adapter pattern', () => {
@@ -209,6 +209,6 @@ describe('Mnemographica Models - Real Filesystem Test', () => {
 		expect(typesContent).to.include('Main_Adapter');
 		
 		expect(typesContent).to.include('export type Main_Adapter = ProtoFlat<Main, {');
-		expect(typesContent).to.include('Adapter: undefined;');
+		expect(typesContent).to.include('Adapter?: undefined;');
 	});
 });

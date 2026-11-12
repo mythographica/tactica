@@ -1,12 +1,9 @@
 'use strict';
 
 import { expect } from 'chai';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as ts from 'typescript';
 import { TypeGraphImpl } from '../src/graph';
 import { TypesGenerator } from '../src/generator';
+import { MnemonicaAnalyzer } from '../src/analyzer';
 
 describe('TypesGenerator', () => {
 	let graph: TypeGraphImpl;
@@ -45,93 +42,6 @@ describe('TypesGenerator', () => {
 		});
 	});
 
-	describe('generateGlobalAugmentation', () => {
-		it('should generate global declaration', () => {
-			const node = TypeGraphImpl.createNode('FirstType', undefined, 'test.ts', 1, 1);
-			graph.addRoot(node);
-
-			const result = generator.generateGlobalAugmentation();
-
-			expect(result.content).to.include('declare global');
-			expect(result.content).to.include('FirstType');
-		});
-
-		it('should generate instance type alias', () => {
-			const node = TypeGraphImpl.createNode('FirstType', undefined, 'test.ts', 1, 1);
-			graph.addRoot(node);
-
-			const result = generator.generateGlobalAugmentation();
-
-			// root types are declared as interfaces (declaration merging with
-			// @decorate classes); a same-named `type` alias would be TS2300
-			expect(result.content).to.include('interface FirstType');
-			expect(result.content).to.not.include('type FirstType =');
-		});
-
-		it('should generate nested constructor properties with dual signatures', () => {
-			const parent = TypeGraphImpl.createNode('Holder', undefined, 'test.ts', 1, 1);
-			const child = TypeGraphImpl.createNode('Entry', parent, 'test.ts', 5, 1);
-
-			graph.addRoot(parent);
-			graph.addChild(parent, child);
-
-			const result = generator.generateGlobalAugmentation();
-
-			expect(result.content).to.include('Holder');
-			// dual signatures: construct + the chain-tip call form
-			expect(result.content).to.include('Entry: {');
-			expect(result.content).to.include('new (): Holder_Entry;');
-			expect(result.content).to.include('(): Holder_Entry;');
-		});
-
-		it('should include parent in intersection type', () => {
-			const parent = TypeGraphImpl.createNode('Parent', undefined, 'test.ts', 1, 1);
-			const child = TypeGraphImpl.createNode('Child', parent, 'test.ts', 5, 1);
-
-			graph.addRoot(parent);
-			graph.addChild(parent, child);
-
-			const result = generator.generateGlobalAugmentation();
-
-			expect(result.content).to.include('Child = ProtoFlat<Parent,');
-		});
-
-		it('should emit a global file that compiles without TS2300', () => {
-			const root = TypeGraphImpl.createNode('UserType', undefined, 'repro.ts', 1, 1);
-			root.properties.set('name', { name : 'name', type : 'string', optional : false });
-			graph.addRoot(root);
-			const child = TypeGraphImpl.createNode('AdminType', root, 'repro.ts', 5, 1);
-			child.properties.set('role', { name : 'role', type : 'string', optional : false });
-			graph.addChild(root, child);
-
-			const { content } = generator.generateGlobalAugmentation();
-
-			// compile the generated file for real — string-inclusion tests
-			// missed the root alias vs class interface collision (TS2300)
-			const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-global-'));
-			const filePath = path.join(tmpDir, 'index.d.ts');
-			fs.writeFileSync(filePath, content);
-
-			const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
-			const program = ts.createProgram([ filePath ], {
-				strict             : true,
-				noEmit             : true,
-				target             : ts.ScriptTarget.ES2020,
-				module             : ts.ModuleKind.ES2020,
-				moduleResolution   : ts.ModuleResolutionKind.Bundler,
-				baseUrl            : tmpDir,
-				paths              : { mnemonica : [ mnemonicaTypes ] },
-				ignoreDeprecations : '6.0',
-			});
-			const diagnostics = ts.getPreEmitDiagnostics(program);
-			const errors = diagnostics
-				.filter(d => d.category === ts.DiagnosticCategory.Error)
-				.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
-
-			expect(errors).to.deep.equal([]);
-		});
-	});
-
 	describe('generateTypeRegistry', () => {
 		it('should generate module augmentation for mnemonica TypeRegistry', () => {
 			const node = TypeGraphImpl.createNode('UserType', undefined, 'test.ts', 1, 1);
@@ -161,7 +71,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include('import type { TypeRegistry } from \'mnemonica\'');
+			expect(result.content).to.include('import type { RegistryEntry, TypeRegistry } from \'mnemonica\'');
 			expect(result.content).to.include('export type { TypeRegistry }');
 		});
 
@@ -210,7 +120,7 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypeRegistry();
 
-			expect(result.content).to.include('\'Order\': new (data: { orderId: string; total: number }) => Order');
+			expect(result.content).to.include('\'Order\': RegistryEntry<Order, \'Order\', object, [data: { orderId: string; total: number }]>;');
 		});
 
 		it('should use constructorParams in types.ts for a nested class-like node, dual signatures', () => {
@@ -224,9 +134,8 @@ describe('TypesGenerator', () => {
 
 			const result = generator.generateTypesFile();
 
-			expect(result.content).to.include('Entry: {');
-			expect(result.content).to.include('new (data: { tag: string; weight: number }): Holder_Entry;');
-			expect(result.content).to.include('(data: { tag: string; weight: number }): Holder_Entry;');
+			expect(result.content).to.include('Entry: LookedUpConstructor<TypeRegistry, \'Holder.Entry\', true>;');
+			expect(result.content).to.include('Entry?: undefined;');
 		});
 	});
 
@@ -249,6 +158,39 @@ describe('TypesGenerator', () => {
 
 			expect(result.content).to.include('from \'./types\'');
 			expect(result.content).to.not.include('from \'./types.js\'');
+		});
+	});
+
+	describe('derived builder aliases', () => {
+		it('should read derived instances through LookedUpInstance and keep extracted aliases', () => {
+			const source = `
+				import { define, mnemonica } from 'mnemonica';
+				export const App = mnemonica
+					.define('User', function (this: { name: string }, data: { name: string }) {
+						this.name = data.name;
+					})
+					.define('Admin', function (this: { role: string }, data: { role: string }) {
+						this.role = data.role;
+					});
+				export const Widget = define('Widget', function (this: { w: number }, data: { w: number }) {
+					this.w = data.w;
+				});
+				define('Inline', function (this: { g: string }, g: string) {
+					this.g = g;
+				});
+			`;
+
+			const analyzer = new MnemonicaAnalyzer();
+			analyzer.analyzeSource(source, 'src/app.ts');
+			const derivedGenerator = new TypesGenerator(analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues());
+			const result = derivedGenerator.generateTypesFile().content;
+			const registry = derivedGenerator.generateTypeRegistry().content;
+
+			expect(registry).to.include('import type { RegistryEntry, RegistryOf, TypeRegistry } from \'mnemonica\';');
+			expect(result).to.include('export type User = LookedUpInstance<TypeRegistry, \'User\'>;');
+			expect(result).to.include('export type User_Admin = LookedUpInstance<TypeRegistry, \'User.Admin\'>;');
+			expect(result).to.include('export type Widget = LookedUpInstance<TypeRegistry, \'Widget\'>;');
+			expect(result).to.include('export type Inline = {');
 		});
 	});
 });

@@ -1,4 +1,8 @@
 import { expect } from 'chai';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
+import * as ts from 'typescript';
 import { MnemonicaAnalyzer } from '../src/analyzer';
 import { TypesGenerator } from '../src/generator';
 
@@ -43,11 +47,11 @@ describe('MnemonicaAnalyzer', () => {
 			// This tests the fix for: const User = define('UserEntity', ...)
 			// User.define('UserResponse', ...) should create UserEntity.UserResponse
 			const source = `
-				const User = define('UserEntity', function (this: any, data: { id: string }) {
+				const User = define('UserEntity', function (data: { id: string }) {
 					this.id = data.id;
 				});
 				
-				const UserResponse = User.define('UserResponse', function (this: any, data: { id: string; type: string }) {
+				const UserResponse = User.define('UserResponse', function (data: { id: string; type: string }) {
 					this.id = data.id;
 					this.type = data.type;
 				});
@@ -71,7 +75,7 @@ describe('MnemonicaAnalyzer', () => {
 		it('should extract properties from constructor', () => {
 			// Test that types are created for define calls with properties
 			const source = `
-				const UserType = define('UserType', function (this: any, data: any) {
+				const UserType = define('UserType', function (data: any) {
 					Object.assign(this, data);
 				});
 			`;
@@ -85,7 +89,7 @@ describe('MnemonicaAnalyzer', () => {
 
 		it('should detect Object.assign pattern', () => {
 			const source = `
-				const UserType = define('UserType', function (this: any, data: any) {
+				const UserType = define('UserType', function (data: any) {
 					Object.assign(this, data);
 				});
 			`;
@@ -99,7 +103,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('object field type extraction', () => {
 			it('should extract property types from inline object type in data parameter', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, data: { id: string; email: string; age: number }) {
+					const UserType = define('UserType', function (data: { id: string; email: string; age: number }) {
 						this.id = data.id;
 						this.email = data.email;
 						this.age = data.age;
@@ -117,7 +121,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should extract array types from inline object type', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, data: { permissions: string[] }) {
+					const UserType = define('UserType', function (data: { permissions: string[] }) {
 						this.permissions = data.permissions;
 					});
 				`;
@@ -131,7 +135,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should fallback to initializer inference when data property type not found', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, data: { id: string }) {
+					const UserType = define('UserType', function (data: { id: string }) {
 						this.id = data.id;
 						this.name = 'default';
 					});
@@ -166,7 +170,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('multiple parameters with different names', () => {
 			it('should handle renamed data parameter', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, dataRenamed: { id: string; email: string }) {
+					const UserType = define('UserType', function (dataRenamed: { id: string; email: string }) {
 						this.id = dataRenamed.id;
 						this.email = dataRenamed.email;
 					});
@@ -182,7 +186,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should handle 2 parameters with different names', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, first: { id: string }, second: { email: string }) {
+					const UserType = define('UserType', function (first: { id: string }, second: { email: string }) {
 						this.id = first.id;
 						this.email = second.email;
 					});
@@ -198,7 +202,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should handle 3 parameters with different names', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, a: { id: string }, b: { name: string }, c: { age: number }) {
+					const UserType = define('UserType', function (a: { id: string }, b: { name: string }, c: { age: number }) {
 						this.id = a.id;
 						this.name = b.name;
 						this.age = c.age;
@@ -216,7 +220,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should handle parameters with underscore prefix', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, _data: { id: string; _private: boolean }) {
+					const UserType = define('UserType', function (_data: { id: string; _private: boolean }) {
 						this.id = _data.id;
 						this._private = _data._private;
 					});
@@ -232,7 +236,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should handle fallback pattern (data.prop || [])', () => {
 				const source = `
-					const UserType = define('UserType', function (this: any, data: { permissions: string[] }) {
+					const UserType = define('UserType', function (data: { permissions: string[] }) {
 						this.permissions = data.permissions || [];
 					});
 				`;
@@ -266,7 +270,7 @@ describe('MnemonicaAnalyzer', () => {
 
 		it('should reject the unnamed root lazy() form with an analyzer error', () => {
 			const source = `
-				const MyType = lazy(() => function MyType(this: any, data: { id: string }) {
+				const MyType = lazy(() => function MyType(data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -450,6 +454,116 @@ describe('MnemonicaAnalyzer', () => {
 		});
 	});
 
+	describe('computed define names over const object keys', () => {
+		it('should expand a keyof helper parameter without binding or emitting the phases', () => {
+			const source = `
+				const Data = {
+					Prepare: { step: 1 },
+					Produce: { step: 2 },
+				};
+				type PhaseName = keyof typeof Data;
+				const holder = <D extends object>() => function (this: D, data: D) {
+					Object.assign(this, data);
+				};
+				const Run = mnemonica.define('Run', holder<{ id: string }>());
+				const definePhase = (name: PhaseName) => {
+					const result = Run.define(name, holder<typeof Data[typeof name]>());
+					const After = result.define('After', function () {});
+					return result;
+				};
+				for (const key of Object.keys(Data)) {
+					definePhase(key);
+				}
+			`;
+
+			const result = analyzer.analyzeSource(source);
+			expect(result.errors).to.have.length(0);
+			const graph = analyzer.getGraph();
+			const run = graph.findType('Run');
+			expect(run).to.exist;
+			expect(Array.from(run!.children.keys())).to.deep.equal([ 'Prepare', 'Produce' ]);
+			expect(graph.findType('Run.Prepare')?.parent).to.equal(run);
+			expect(graph.findType('Run.Produce')?.parent).to.equal(run);
+			expect(analyzer.getDefinitions().get('Run.Prepare')?.parent).to.equal('Run');
+			expect(analyzer.getDefinitions().get('Run.Produce')?.parent).to.equal('Run');
+
+			// The local result is not the last expanded key.
+			expect(graph.findType('After')?.parent).to.equal(undefined);
+			expect(graph.findType('Run.Produce.After')).to.equal(undefined);
+
+			// Looped names are metadata-only in every collection.
+			const generator = new TypesGenerator(graph);
+			const registry = generator.generateTypeRegistry().content;
+			const types = generator.generateTypesFile().content;
+			expect(registry).to.not.include('Run.Prepare');
+			expect(registry).to.not.include('Run.Produce');
+			expect(types).to.not.include('Run_Prepare');
+			expect(types).to.not.include('Run_Produce');
+			expect(types).to.not.include('Prepare:');
+			expect(types).to.not.include('Produce:');
+		});
+
+		it('should expand a direct guarded Object.keys loop in declaration order', () => {
+			const source = `
+				const Data = {
+					Prepare: { step: 1 },
+					Produce: { step: 2 },
+				};
+				type PhaseName = keyof typeof Data;
+				const Run = mnemonica.define('Run', function () {});
+				const isPhaseName = (key: string): key is PhaseName => {
+					return Object.prototype.hasOwnProperty.call(Data, key);
+				};
+				for (const key of Object.keys(Data)) {
+					if (isPhaseName(key)) {
+						Run.define(key, function () {});
+					}
+				}
+			`;
+
+			const result = analyzer.analyzeSource(source);
+			expect(result.errors).to.have.length(0);
+			const run = analyzer.getGraph().findType('Run');
+			expect(run).to.exist;
+			expect(Array.from(run!.children.keys())).to.deep.equal([ 'Prepare', 'Produce' ]);
+		});
+
+		it('should accept inline keyof and keep the per-key duplicate law', () => {
+			const source = `
+				const Data = {
+					Prepare: { step: 1 },
+					Produce: { step: 2 },
+				};
+				const Run = mnemonica.define('Run', function () {});
+				Run.define('Prepare', function () {});
+				const definePhase = (name: keyof typeof Data) => {
+					Run.define(name, function () {});
+				};
+				for (const key of Object.keys(Data)) {
+					definePhase(key);
+				}
+			`;
+
+			analyzer.analyzeSource(source);
+			const errors = analyzer.getResolutionErrors();
+			expect(errors).to.have.length(1);
+			expect(errors[ 0 ].message).to.include('Duplicate definition of \'Run.Prepare\'');
+		});
+
+		it('should keep warning and skipping a broad computed name', () => {
+			const source = `
+				const Run = mnemonica.define('Run', function () {});
+				const name: string = 'Prepare';
+				Run.define(name, function () {});
+			`;
+
+			const result = analyzer.analyzeSource(source);
+			expect(result.errors).to.have.length(1);
+			expect(result.errors[ 0 ].message).to.include('Could not extract type name');
+			expect(analyzer.getGraph().findType('Run.Prepare')).to.equal(undefined);
+		});
+	});
+
 	describe('graph structure', () => {
 		it('should build correct type hierarchy', () => {
 			const source = `
@@ -476,7 +590,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('BinaryExpression arithmetic operations', () => {
 			it('should infer number type from addition', () => {
 				const source = `
-						const CalcType = define('CalcType', function (this: any, data: { a: number; b: number }) {
+						const CalcType = define('CalcType', function (data: { a: number; b: number }) {
 							this.sum = data.a + data.b;
 						});
 					`;
@@ -490,7 +604,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from subtraction', () => {
 				const source = `
-						const CalcType = define('CalcType', function (this: any, data: { a: number; b: number }) {
+						const CalcType = define('CalcType', function (data: { a: number; b: number }) {
 							this.diff = data.a - data.b;
 						});
 					`;
@@ -504,7 +618,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from multiplication', () => {
 				const source = `
-						const CalcType = define('CalcType', function (this: any, data: { a: number; b: number }) {
+						const CalcType = define('CalcType', function (data: { a: number; b: number }) {
 							this.product = data.a * data.b;
 						});
 					`;
@@ -518,7 +632,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from division', () => {
 				const source = `
-						const CalcType = define('CalcType', function (this: any, data: { a: number; b: number }) {
+						const CalcType = define('CalcType', function (data: { a: number; b: number }) {
 							this.quotient = data.a / data.b;
 						});
 					`;
@@ -532,7 +646,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from mixed arithmetic', () => {
 				const source = `
-						const CalcType = define('CalcType', function (this: any, data: { x: number; y: number; z: number }) {
+						const CalcType = define('CalcType', function (data: { x: number; y: number; z: number }) {
 							this.result = (data.x + data.y) * data.z;
 						});
 					`;
@@ -548,7 +662,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('PropertyAccessExpression from typed parameters', () => {
 			it('should infer type from data parameter property access', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { id: string; count: number; active: boolean }) {
+						const UserType = define('UserType', function (data: { id: string; count: number; active: boolean }) {
 							this.userId = data.id;
 							this.counter = data.count;
 							this.isActive = data.active;
@@ -566,7 +680,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer array type from data parameter property access', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { tags: string[] }) {
+						const UserType = define('UserType', function (data: { tags: string[] }) {
 							this.tags = data.tags;
 						});
 					`;
@@ -580,7 +694,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer nested property access types', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, userData: { profile: { name: string } }) {
+						const UserType = define('UserType', function (userData: { profile: { name: string } }) {
 							this.name = userData.profile.name;
 						});
 					`;
@@ -597,7 +711,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('Identifier direct parameter lookup', () => {
 			it('should infer type from direct parameter assignment', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, name: string) {
+						const UserType = define('UserType', function (name: string) {
 							this.name = name;
 						});
 					`;
@@ -611,7 +725,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from direct parameter assignment', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, age: number) {
+						const UserType = define('UserType', function (age: number) {
 							this.age = age;
 						});
 					`;
@@ -625,7 +739,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer boolean type from direct parameter assignment', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, active: boolean) {
+						const UserType = define('UserType', function (active: boolean) {
 							this.active = active;
 						});
 					`;
@@ -641,7 +755,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('CallExpression return type inference', () => {
 			it('should infer number type from Date.now()', () => {
 				const source = `
-						const TimestampType = define('TimestampType', function (this: any) {
+						const TimestampType = define('TimestampType', function () {
 							this.createdAt = Date.now();
 						});
 					`;
@@ -655,7 +769,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from parseInt()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { id: string }) {
+						const UserType = define('UserType', function (data: { id: string }) {
 							this.id = parseInt(data.id);
 						});
 					`;
@@ -669,7 +783,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from parseFloat()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { value: string }) {
+						const UserType = define('UserType', function (data: { value: string }) {
 							this.value = parseFloat(data.value);
 						});
 					`;
@@ -683,7 +797,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer string type from String()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { id: number }) {
+						const UserType = define('UserType', function (data: { id: number }) {
 							this.id = String(data.id);
 						});
 					`;
@@ -697,7 +811,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from Number()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { value: string }) {
+						const UserType = define('UserType', function (data: { value: string }) {
 							this.value = Number(data.value);
 						});
 					`;
@@ -711,7 +825,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer boolean type from Boolean()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { value: string }) {
+						const UserType = define('UserType', function (data: { value: string }) {
 							this.value = Boolean(data.value);
 						});
 					`;
@@ -725,7 +839,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer string type from toString() call', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { id: number }) {
+						const UserType = define('UserType', function (data: { id: number }) {
 							this.idStr = data.id.toString();
 						});
 					`;
@@ -739,7 +853,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should handle unknown functions gracefully', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { value: string }) {
+						const UserType = define('UserType', function (data: { value: string }) {
 							this.result = someUnknownFunction(data.value);
 						});
 					`;
@@ -755,7 +869,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('TemplateLiteral type inference', () => {
 			it('should infer string type from template literal', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { first: string; last: string }) {
+						const UserType = define('UserType', function (data: { first: string; last: string }) {
 							this.fullName = \`\${data.first} \${data.last}\`;
 						});
 					`;
@@ -769,7 +883,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer string type from simple template literal', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { id: number }) {
+						const UserType = define('UserType', function (data: { id: number }) {
 							this.idStr = \`ID: \${data.id}\`;
 						});
 					`;
@@ -785,7 +899,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('LiteralType inference', () => {
 			it('should infer string type from string literal initializer', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.role = 'user';
 						});
 					`;
@@ -800,7 +914,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer number type from numeric literal initializer', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.status = 200;
 						});
 					`;
@@ -815,7 +929,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer boolean type from boolean literal initializer', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.active = true;
 						});
 					`;
@@ -830,7 +944,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer union literal type from data parameter', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any, data: { role: 'admin' | 'user' | 'guest' }) {
+						const UserType = define('UserType', function (data: { role: 'admin' | 'user' | 'guest' }) {
 							this.role = data.role;
 						});
 					`;
@@ -847,7 +961,7 @@ describe('MnemonicaAnalyzer', () => {
 		describe('NewExpression type inference', () => {
 			it('should infer Date type from new Date()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.createdAt = new Date();
 						});
 					`;
@@ -861,7 +975,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer Array type from new Array()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.items = new Array<string>();
 						});
 					`;
@@ -876,7 +990,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 			it('should infer Map type from new Map()', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.cache = new Map<string, number>();
 						});
 					`;
@@ -891,7 +1005,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should default new Map() without type arguments to Map<unknown, unknown>', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.cache = new Map();
 						});
 					`;
@@ -906,7 +1020,7 @@ describe('MnemonicaAnalyzer', () => {
 
 			it('should default new Set() without type arguments to Set<unknown>', () => {
 				const source = `
-						const UserType = define('UserType', function (this: any) {
+						const UserType = define('UserType', function () {
 							this.seen = new Set();
 						});
 					`;
@@ -923,7 +1037,7 @@ describe('MnemonicaAnalyzer', () => {
 	describe('async constructor patterns', () => {
 		it('should detect async define() call', () => {
 			const source = `
-					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+					const AsyncType = define('AsyncType', async function (data: { value: number }) {
 						this.value = data.value;
 						this.computed = data.value * 2;
 					});
@@ -941,10 +1055,10 @@ describe('MnemonicaAnalyzer', () => {
 	
 		it('should detect nested async types', () => {
 			const source = `
-					const RootAsync = define('RootAsync', async function (this: any, data: { id: string }) {
+					const RootAsync = define('RootAsync', async function (data: { id: string }) {
 						this.id = data.id;
 					});
-					const SubAsync = RootAsync.define('SubAsync', async function (this: any, data: { name: string }) {
+					const SubAsync = RootAsync.define('SubAsync', async function (data: { name: string }) {
 						this.name = data.name;
 					});
 				`;
@@ -959,7 +1073,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 		it('should handle async with Date.now()', () => {
 			const source = `
-					const AsyncType = define('AsyncType', async function (this: any) {
+					const AsyncType = define('AsyncType', async function () {
 						this.timestamp = Date.now();
 					});
 				`;
@@ -973,7 +1087,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 		it('should handle async with template literals', () => {
 			const source = `
-					const AsyncType = define('AsyncType', async function (this: any, data: { prefix: string; id: string }) {
+					const AsyncType = define('AsyncType', async function (data: { prefix: string; id: string }) {
 						this.key = \`\${data.prefix}:\${data.id}\`;
 					});
 				`;
@@ -987,7 +1101,7 @@ describe('MnemonicaAnalyzer', () => {
 
 		it('should record `await new` as an instantiation usage (await is transparent)', () => {
 			const source = `
-					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+					const AsyncType = define('AsyncType', async function (data: { value: number }) {
 						this.value = data.value;
 					});
 
@@ -1008,7 +1122,7 @@ describe('MnemonicaAnalyzer', () => {
 
 		it('should emit a Promise constructor signature for async types', () => {
 			const source = `
-					const AsyncType = define('AsyncType', async function (this: any, data: { value: number }) {
+					const AsyncType = define('AsyncType', async function (data: { value: number }) {
 						this.value = data.value;
 					});
 				`;
@@ -1018,17 +1132,19 @@ describe('MnemonicaAnalyzer', () => {
 			const registry = generator.generateTypeRegistry().content;
 
 			// async handler => `new` resolves to a Promise at runtime, so the
-			// registry constructor must emit Promise<InstanceType>; `await new`
-			// then yields the instance type itself
-			expect(registry).to.include('\'AsyncType\': new (data: { value: number }) => Promise<AsyncType>;');
+			// registry entry constructs Promise<AsyncType> while its instance and
+			// hooks keep using AsyncType itself
+			expect(registry).to.include('\'AsyncType\': AsyncRegistryEntry<AsyncType, \'AsyncType\', object, [data: { value: number }]>;');
+			expect(registry).to.include('import type { AsyncRegistryEntry, TypeRegistry } from \'mnemonica\';');
+			expect(registry).to.not.include('import type { RegistryEntry,');
 		});
 
 		it('should wrap both subtype-property twins in Promise for an async child', () => {
 			const source = `
-					const RootAsync = define('RootAsync', function (this: any, data: { id: string }) {
+					const RootAsync = define('RootAsync', function (data: { id: string }) {
 						this.id = data.id;
 					});
-					const SubAsync = RootAsync.define('SubAsync', async function (this: any, data: { name: string }) {
+					const SubAsync = RootAsync.define('SubAsync', async function (data: { name: string }) {
 						this.name = data.name;
 					});
 				`;
@@ -1036,17 +1152,18 @@ describe('MnemonicaAnalyzer', () => {
 			analyzer.analyzeSource(source);
 			const generator = new TypesGenerator(analyzer.getGraph());
 			const types = generator.generateTypesFile().content;
+			const registry = generator.generateTypeRegistry().content;
 
-			expect(types).to.include('new (data: { name: string }): Promise<RootAsync_SubAsync>;');
-			expect(types).to.include('(data: { name: string }): Promise<RootAsync_SubAsync>;');
+			expect(types).to.include('SubAsync: LookedUpConstructor<TypeRegistry, \'RootAsync.SubAsync\', true>;');
+			expect(registry).to.include('AsyncRegistryEntry<RootAsync_SubAsync, \'RootAsync.SubAsync\', RootAsync, [data: { name: string }]>');
 		});
 
 		it('should keep the sync subtype of an async parent Promise-free (isAsync is per-node)', () => {
 			const source = `
-					const RootAsync = define('RootAsync', async function (this: any, data: { id: string }) {
+					const RootAsync = define('RootAsync', async function (data: { id: string }) {
 						this.id = data.id;
 					});
-					const SubSync = RootAsync.define('SubSync', function (this: any, data: { name: string }) {
+					const SubSync = RootAsync.define('SubSync', function (data: { name: string }) {
 						this.name = data.name;
 					});
 				`;
@@ -1055,13 +1172,13 @@ describe('MnemonicaAnalyzer', () => {
 			const generator = new TypesGenerator(analyzer.getGraph());
 			const types = generator.generateTypesFile().content;
 
-			expect(types).to.include('new (data: { name: string }): RootAsync_SubSync;');
+			expect(types).to.include('SubSync: LookedUpConstructor<TypeRegistry, \'RootAsync.SubSync\', true>;');
 			expect(types).to.not.include('Promise<RootAsync_SubSync>');
 		});
 
 		it('should emit Promise for a lazy getter returning an async function', () => {
 			const source = `
-					const LazyAsync = lazy('LazyAsync', () => async function (this: any, data: { value: number }) {
+					const LazyAsync = lazy('LazyAsync', () => async function (data: { value: number }) {
 						this.value = data.value;
 					});
 				`;
@@ -1070,7 +1187,7 @@ describe('MnemonicaAnalyzer', () => {
 			const generator = new TypesGenerator(analyzer.getGraph());
 			const registry = generator.generateTypeRegistry().content;
 
-			expect(registry).to.include('\'LazyAsync\': new (data: { value: number }) => Promise<LazyAsync>;');
+			expect(registry).to.include('\'LazyAsync\': AsyncRegistryEntry<LazyAsync, \'LazyAsync\', object, [data: { value: number }]>;');
 		});
 
 		it('should NOT emit Promise for a class whose constructor returns new Promise (user-typed)', () => {
@@ -1093,7 +1210,7 @@ describe('MnemonicaAnalyzer', () => {
 			// async CLASSES are typed by the user in userland — the syntactic
 			// shape gives no reliable signal without a type checker, so the
 			// emitted constructor stays the plain instance type
-			expect(registry).to.include('\'AsyncClass\': new () => AsyncClass;');
+			expect(registry).to.include('\'AsyncClass\': RegistryEntry<AsyncClass, \'AsyncClass\', object, []>;');
 			expect(registry).to.not.include('Promise<AsyncClass>');
 		});
 	});
@@ -1101,7 +1218,7 @@ describe('MnemonicaAnalyzer', () => {
 	describe('complex real-world patterns', () => {
 		it('should handle user entity pattern', () => {
 			const source = `
-					const UserEntity = define('UserEntity', function (this: any, data: { id: string; email: string; name: string }) {
+					const UserEntity = define('UserEntity', function (data: { id: string; email: string; name: string }) {
 						this.id = data.id;
 						this.email = data.email;
 						this.name = data.name;
@@ -1126,7 +1243,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 		it('should handle mixed parameter patterns', () => {
 			const source = `
-					const ComplexType = define('ComplexType', function (this: any, data: { id: string }, meta: { count: number }, status: boolean) {
+					const ComplexType = define('ComplexType', function (data: { id: string }, meta: { count: number }, status: boolean) {
 						this.id = data.id;
 						this.count = meta.count;
 						this.active = status;
@@ -1146,7 +1263,7 @@ describe('MnemonicaAnalyzer', () => {
 	
 		it('should handle all arithmetic in one type', () => {
 			const source = `
-					const Calculator = define('Calculator', function (this: any, data: { x: number; y: number }) {
+					const Calculator = define('Calculator', function (data: { x: number; y: number }) {
 						this.sum = data.x + data.y;
 						this.diff = data.x - data.y;
 						this.product = data.x * data.y;
@@ -1338,7 +1455,6 @@ describe('MnemonicaAnalyzer', () => {
 					import { define } from 'mnemonica';
 
 					const UserType = define('UserType', function (
-						this: any,
 						items: Array<string>,
 						mapping: Map<string, number>
 					) {
@@ -1355,6 +1471,263 @@ describe('MnemonicaAnalyzer', () => {
 			expect(params).to.be.an('array');
 			const itemsParam = params!.find(p => p.name === 'items');
 			expect(itemsParam?.type).to.equal('Array<string>');
+		});
+
+		it('should preserve rest parameters in constructor signatures and Args tuples', () => {
+			const source = `
+					import { define } from 'mnemonica';
+
+					const WithRest = define('WithRest', function (
+						this: { name: string; values: number[] },
+						data: { name: string },
+						...values: number[]
+					) {
+						this.name = data.name;
+						this.values = values;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const graph = analyzer.getGraph();
+			const withRest = graph.findType('WithRest');
+			expect(withRest).to.exist;
+			const restParam = withRest!.constructorParams!.find(p => p.name === 'values');
+			expect(restParam?.kind).to.equal('rest');
+			expect(restParam?.optional).to.be.false;
+
+			const generator = new TypesGenerator(graph);
+			const registry = generator.generateTypeRegistry().content;
+			expect(registry).to.include('[data: { name: string }, ...values: number[]]');
+		});
+
+		it('should respect this: any as the instance type without extracting assignments', () => {
+			const source = `
+					import { define } from 'mnemonica';
+
+					const AnyHandler = define('AnyHandler', function (this: any, data: { value: string }) {
+						this.value = data.value;
+					});
+				`;
+
+			analyzer.analyzeSource(source);
+			const graph = analyzer.getGraph();
+			const anyHandler = graph.findType('AnyHandler');
+			expect(anyHandler).to.exist;
+			expect(anyHandler!.properties.size).to.equal(0);
+
+			const generator = new TypesGenerator(graph);
+			const types = generator.generateTypesFile().content;
+			const registry = generator.generateTypeRegistry().content;
+			expect(types).to.include('export type AnyHandler = any;');
+			expect(registry).to.include('RegistryEntry<AnyHandler, \'AnyHandler\', object, [data: { value: string }]>');
+
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-any-this-'));
+			try {
+				const typesPath = path.join(outputDir, 'types.ts');
+				const assertionsPath = path.join(outputDir, 'assertions.ts');
+				fs.writeFileSync(typesPath, types);
+				fs.writeFileSync(assertionsPath, [
+					'import type { AnyHandler } from \'./types\';',
+					'type IsAny<T> = T extends 0 ? (1 extends T ? true : false) : false;',
+					'const isAny: IsAny<AnyHandler> = true;',
+					'void isAny;',
+				].join('\n'));
+				const program = ts.createProgram([ typesPath, assertionsPath ], {
+					strict             : true,
+					noEmit             : true,
+					target             : ts.ScriptTarget.ES2020,
+					module             : ts.ModuleKind.ES2020,
+					moduleResolution   : ts.ModuleResolutionKind.Bundler,
+					baseUrl            : outputDir,
+					ignoreDeprecations : '6.0',
+				});
+				const diagnostics = ts.getPreEmitDiagnostics(program);
+				const errors = diagnostics
+					.filter(d => d.category === ts.DiagnosticCategory.Error)
+					.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+				expect(errors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		});
+	});
+
+	describe('held constructor handlers', () => {
+		const analyzeHeld = (source: string) => {
+			analyzer.analyzeSource(source);
+			const result = analyzer.getGraph().findType('Held');
+			return result;
+		};
+
+		const analyzeImportedHeld = (declaration: string, importedName = 'handler') => {
+			const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-held-handler-'));
+			try {
+				const handlersPath = path.join(fixtureDir, 'handlers.ts');
+				const consumerPath = path.join(fixtureDir, 'consumer.ts');
+				fs.writeFileSync(handlersPath, declaration);
+				fs.writeFileSync(consumerPath, [
+					`import { ${importedName} } from './handlers';`,
+					'import { define } from \'mnemonica\';',
+					`define('Held', ${importedName});`,
+				].join('\n'));
+				analyzer.analyzeSource(fs.readFileSync(handlersPath, 'utf8'), handlersPath);
+				analyzer.analyzeSource(fs.readFileSync(consumerPath, 'utf8'), consumerPath);
+				const result = analyzer.getGraph().findType('Held');
+				return result;
+			} finally {
+				fs.rmSync(fixtureDir, { recursive : true, force : true });
+			}
+		};
+
+		it('follows a const function expression and preserves its annotated this', () => {
+			const held = analyzeHeld(`
+				const handler = function (this: { field: number }, data: { extra: string }) {
+					this.field = 1;
+					this.extra = data.extra;
+				};
+				define('Held', handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('field')?.type).to.equal('number');
+			expect(held!.properties.has('extra')).to.be.false;
+			expect(held!.constructorParams?.[ 0 ]).to.deep.include({
+				name : 'data',
+				type : '{ extra: string }',
+			});
+		});
+
+		it('follows a function declaration', () => {
+			const held = analyzeHeld(`
+				function handler (data: { id: string }) {
+					this.id = data.id;
+				}
+				define('Held', handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('id')?.type).to.equal('string');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('{ id: string }');
+		});
+
+		it('follows a const class expression', () => {
+			const held = analyzeHeld(`
+				const handler = class {
+					value: number = 1;
+					constructor(data: { name: string }) {}
+				};
+				define('Held', handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('value')?.type).to.equal('number');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('{ name: string }');
+		});
+
+		it('follows a class declaration', () => {
+			const held = analyzeHeld(`
+				class Handler {
+					label: string = '';
+					constructor(count: number) {}
+				}
+				define('Held', Handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('label')?.type).to.equal('string');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('number');
+		});
+
+		it('follows held handlers through lazy, Type.define, and chained define', () => {
+			analyzer.analyzeSource(`
+				const handler = function (this: { value: number }) {};
+				const Parent = define('Parent', function () {});
+				Parent.define('Child', handler);
+				define('Root', handler).define('Chained', handler);
+				lazy('Lazy', () => handler);
+			`);
+
+			for (const typePath of [ 'Parent.Child', 'Root', 'Root.Chained', 'Lazy' ]) {
+				const type = analyzer.getGraph().findType(typePath);
+				expect(type, typePath).to.exist;
+				expect(type!.properties.get('value')?.type, typePath).to.equal('number');
+			}
+		});
+
+		it('follows the function inside a TypeConstructor cast, not the cast type', () => {
+			const held = analyzeHeld(`
+				import type { TypeConstructor } from 'mnemonica';
+				const handler = function () {
+					this.field = 123;
+				} as TypeConstructor<{ wrong: string }>;
+				define('Held', handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('field')?.type).to.equal('number');
+			expect(held!.properties.has('wrong')).to.be.false;
+		});
+
+		it('keeps the existing empty extraction for an unresolvable identifier', () => {
+			const held = analyzeHeld(`
+				import type { TypeConstructor } from 'mnemonica';
+				declare const handler: TypeConstructor<{ field: number }>;
+				define('Held', handler);
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.size).to.equal(0);
+			expect(held!.constructorParams).to.deep.equal([]);
+		});
+
+		it('follows an imported const function expression', () => {
+			const held = analyzeImportedHeld(`
+				export const handler = function (data: { id: string }) {
+					this.id = data.id;
+				};
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('id')?.type).to.equal('string');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('{ id: string }');
+		});
+
+		it('follows an imported function declaration', () => {
+			const held = analyzeImportedHeld(`
+				export function handler (data: { id: string }) {
+					this.id = data.id;
+				}
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('id')?.type).to.equal('string');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('{ id: string }');
+		});
+
+		it('follows an imported const class expression', () => {
+			const held = analyzeImportedHeld(`
+				export const handler = class {
+					value: number = 1;
+					constructor(data: { name: string }) {}
+				};
+			`);
+
+			expect(held).to.exist;
+			expect(held!.properties.get('value')?.type).to.equal('number');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('{ name: string }');
+		});
+
+		it('follows an imported class declaration', () => {
+			const held = analyzeImportedHeld(`
+				export class Handler {
+					label: string = '';
+					constructor(count: number) {}
+				}
+			`, 'Handler');
+
+			expect(held).to.exist;
+			expect(held!.properties.get('label')?.type).to.equal('string');
+			expect(held!.constructorParams?.[ 0 ]?.type).to.equal('number');
 		});
 	});
 
@@ -1385,7 +1758,7 @@ describe('MnemonicaAnalyzer', () => {
 			const mistake = add('KeyStroke.Mistake', stroke, 'models/KeyStroke/Mistake/index.ts');
 			add('KeyStroke.Correct.StatUpdate', correct, 'models/KeyStroke/Correct/StatUpdate/index.ts');
 			add('KeyStroke.Mistake.StatUpdate', mistake, 'models/KeyStroke/Mistake/StatUpdate/index.ts');
-			const ctor = 'module.exports = function (this: any) { this.statUpdate = new this.StatUpdate(); };';
+			const ctor = 'module.exports = function () { this.statUpdate = new this.StatUpdate(); };';
 			analyzer.analyzeSource(ctor, 'models/KeyStroke/Correct/index.ts');
 			analyzer.analyzeSource(ctor, 'models/KeyStroke/Mistake/index.ts');
 

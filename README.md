@@ -88,9 +88,6 @@ const writer    = new TypesWriter('.tactica');
 // Default mode — exportable type aliases in types.ts + a TypeRegistry augmentation in registry.ts.
 writer.writeTypesFile(generator.generateTypesFile());
 writer.writeTo('registry.ts', generator.generateTypeRegistry().content);
-
-// Legacy mode — single global augmentation file index.d.ts.
-// writer.writeGlobalAugmentation(generator.generateGlobalAugmentation());
 ```
 
 ### Project setup
@@ -122,7 +119,6 @@ You should commit `.tactica/` if you want type information to flow through CI wi
 | `--include <patterns>` | `-i` | Comma-separated include patterns |
 | `--exclude <patterns>` | `-e` | Comma-separated exclude patterns |
 | `--topologica <dirs>` | `-t` | Comma-separated Topologica directories to scan |
-| `--module-augmentation` | `-m` | Legacy mode — emit a single global-augmentation `index.d.ts` instead of `types.ts` + `registry.ts` |
 | `--esm` |  | Append `.js` extensions to relative imports in generated files (for ESM / NodeNext module resolution) |
 | `--eds` |  | Force-enable EDS (Execution Data Storage) tracking |
 | `--no-eds` |  | Force-disable EDS tracking |
@@ -142,7 +138,6 @@ Tactica writes everything under the `--output` directory (default `.tactica/`). 
 | `types.ts` | default mode | Exportable type aliases — one per discovered type. Uses `ProtoFlat<Parent, Self>` for nested types. |
 | `registry.ts` | default mode | `declare module 'mnemonica' { interface TypeRegistry { … } }` augmentation — powers `lookup<K>()`. |
 | `index.ts` | default mode | Re-exports everything from `types.ts` and `registry.ts`. |
-| `index.d.ts` | with `--module-augmentation` | Single global-augmentation file (legacy mode). |
 | `definitions.json` | always | One entry per discovered type: `{ name, location, kind: 'define'\|'decorate', parent, strictChain, blockErrors }`, plus `fields` (the type's own fields in declaration order, `{ name, type, optional }`) and `args` (the constructor's parameters in declaration order, `{ name, type, optional?, kind? }` — a rest parameter carries `kind: 'rest'` and no `optional`). Consumed by `mnemographica`'s Go to Definition. |
 | `usages.json` | always | One entry per type, value is an array of `{ location, kind, code, holderScopeId?, constructorText? }` records — where each type is instantiated, referenced, accessed, or looked up. `holderScopeId` points into `scopes.json` (the innermost scope holding the usage); `constructorText` (instantiations only) is the constructor expression text actually used. Consumed by `mnemographica`'s Find References. |
 | `flow.json` | always | Native instance-flow patterns (property reads/writes, method calls, destructuring, returns, spreads, etc.) per type. |
@@ -155,32 +150,49 @@ Tactica writes everything under the `--output` directory (default `.tactica/`). 
 ### Default mode (types.ts + registry.ts)
 
 ```ts
-// .tactica/types.ts
-export type UserType = {
-    name: string;
-    email: string;
-    AdminType: new (data: { role: string }) => UserType_AdminType;
-};
+// .tactica/registry.ts
+import type { App } from '../src/app';
+type FromBuilder = RegistryOf<typeof App>;
 
-export type UserType_AdminType = ProtoFlat<UserType, {
-    role: string;
-    AdminType: undefined;
-}>;
+import type { Gadget, Gadget_Part } from './types';
+
+declare module 'mnemonica' {
+    interface TypeRegistry extends FromBuilder {
+        'Gadget': RegistryEntry<Gadget, 'Gadget', object, [g: string]>;
+        'Gadget.Part': RegistryEntry<Gadget_Part, 'Gadget.Part', Gadget, [data: { size: number }]>;
+    }
+}
+
+import type { RegistryEntry, RegistryOf, TypeRegistry } from 'mnemonica';
+export type { TypeRegistry };
 ```
 
 ```ts
-// .tactica/registry.ts
-declare module 'mnemonica' {
-    interface TypeRegistry {
-        'UserType': new (data: { name: string; email: string }) => UserType;
-        'UserType.AdminType': new (data: { role: string }) => UserType_AdminType;
-    }
-}
+// .tactica/types.ts
+import type { ProtoFlat, LookedUpConstructor, LookedUpInstance } from 'mnemonica';
+import type { TypeRegistry } from './registry';
+
+export type User = LookedUpInstance<TypeRegistry, 'User'>;          // derived from App
+export type User_Admin = LookedUpInstance<TypeRegistry, 'User.Admin'>;
+
+export type Gadget = {                                              // extracted
+    g: string;
+    Part: LookedUpConstructor<TypeRegistry, 'Gadget.Part', true>;
+};
+
+export type Gadget_Part = ProtoFlat<Gadget, {
+    size: number;
+    Part?: undefined;
+}>;
 ```
+
+Types held by an exported builder value (`App` above) are **derived**: the registry extends the value's own `RegistryOf<…>` and the aliases read the instances back, so tactica's type and the builder's type are the same type. Everything else is **extracted** from source, written in core's own vocabulary (`RegistryEntry`, `LookedUpConstructor`), so extracted and derived instances and constructors are assignable to each other in both directions. See [Derived and extracted types](#derived-and-extracted-types).
+
+A child's own name and its siblings' names are emitted as optional `undefined` (`Part?: undefined`) on the child's instance type: at runtime `part.Part` is `undefined` and `new part.Part()` throws, and the marker keeps the parent's constructor field from being inherited through `ProtoFlat`.
 
 **Recommended for new projects.** Explicit imports, better tree-shaking, no global namespace pollution.
 
-**Async constructors.** When the construct handler is an `async function` (or async arrow), `new` resolves to a Promise at runtime, so the emitted constructor shapes resolve to `Promise<InstanceType>`: the subtype property on the parent emits `{ new (…): Promise<X>; (…): Promise<X> }` (both twins) and the registry entry emits `new (…) => Promise<X>`. The instance type `X` itself is unchanged, so `await new` yields `X`. Async CLASSES (a class constructor returning a Promise) are not detected — the syntactic shape carries no reliable signal without a type checker — and stay typed as the plain instance type; type them yourself in userland if you need `Promise<X>` there.
+**Async constructors.** When the construct handler is an `async function` (or async arrow), `new` resolves to a Promise at runtime. An extracted async type's registry entry is `AsyncRegistryEntry<X, 'Path', Parent, [args]>` (core's async counterpart of `RegistryEntry`), so `new` on it, and on the subtype field of its parent, is typed `Promise<X>`, and `await` yields `X`, with its own subtypes. Derived async types get the same typing from core's builder. A class constructor that returns a Promise cannot be written in typed code (TypeScript rejects it with TS2409), so async classes stay typed as the plain instance.
 
 **Avoid arrow handlers — use the ESLint plugin.** Construct handlers must be regular functions or classes so the instance can be substituted as `this`. Core rejects sync arrows at `define()` time, but async arrows cannot be detected at runtime and never receive the instance — the failure surfaces far from the cause. The early guard is [`eslint-plugin-no-arrow-this`](https://www.npmjs.com/package/eslint-plugin-no-arrow-this), which flags `this` inside arrow functions before the code runs:
 
@@ -198,16 +210,6 @@ Recommended in every mnemonica project.
 
 **Instance-type inheritance.** Nested instance types flatten the WHOLE ancestor chain: each nested type is `ProtoFlat<ParentInstance, Self>` (mnemonica's `ProtoFlat` keeps every parent key except the ones `Self` overrides), and the parent instance type is itself a `ProtoFlat` over its own parent — so the ROOT's own constructor-arg fields (`serial` in `WidgetRoot`) are directly present on every descendant instance type, at any depth, alongside intermediate ancestors' fields. If a root field appears missing on a nested type, the usual cause is a stale `.tactica` — regenerate; the composition itself is transitive by construction.
 
-### Legacy global-augmentation mode (`--module-augmentation`)
-
-Emits one `.tactica/index.d.ts` whose contents live inside `declare global { … }`. Reference it from your code with:
-
-```ts
-/// <reference types="./.tactica/index" />
-```
-
-or by adding `./.tactica` to `compilerOptions.typeRoots`. Kept for backwards compatibility with older tactica integrations.
-
 ## Type-Safe Lookup with `lookup()`
 
 Mnemonica core exposes `lookup<K>()` against an empty `TypeRegistry` interface. Tactica's `registry.ts` augments that interface with all of your discovered types:
@@ -216,8 +218,8 @@ Mnemonica core exposes `lookup<K>()` against an empty `TypeRegistry` interface. 
 // .tactica/registry.ts  (generated)
 declare module 'mnemonica' {
     interface TypeRegistry {
-        'UserType': new (data: { name: string; email: string }) => UserType;
-        'UserType.AdminType': new (data: { role: string }) => UserType_AdminType;
+        'UserType': RegistryEntry<UserType, 'UserType', object, [data: { name: string; email: string }]>;
+        'UserType.AdminType': RegistryEntry<UserType_AdminType, 'UserType.AdminType', UserType, [data: { role: string }]>;
     }
 }
 ```
@@ -236,6 +238,35 @@ const admin = new user.AdminType({ role: 'admin' });
 ```
 
 No `as unknown as` casts required. See [`docs/lookup-pattern.md`](docs/lookup-pattern.md) for the consumer-side guide.
+
+## Derived and extracted types
+
+A project may use both of mnemonica's typing paths: builder values and tactica. For the same runtime type both give TypeScript the same type, on TypeScript 6 and 7. Tactica takes every type a builder value already carries and extracts only what the builder cannot type.
+
+**Derived** (the type comes from the value itself):
+
+- builder chains held in an exported value on the default collection: `export const App = mnemonica.define(…).define(…)`, and `export const Sessions = App.lookup('User').define('Session', …)`. Every exported value is included, so a subtype defined in a later statement is in the registry; `registry.ts` extends the intersection of their `RegistryOf<typeof X>`;
+- exported free `define` results: `export const Widget = define('Widget', …)` enters as `typeof Widget`.
+
+Aliases in `types.ts` read derived instances back with `LookedUpInstance<TypeRegistry, 'Path'>`.
+
+**Extracted** (tactica reads the source):
+
+- inline or unexported `define`, `@decorate` (and typeomatica's `@Strict` beside it), topologica directory types, Option B collections;
+- a handler that uses a type from the generated `.tactica` anywhere in its signature (`this`, a parameter, the return type), and every exported value whose chain passes through such a handler. Deriving those would be circular: the value's type would depend on the registry it is part of.
+
+```ts
+// extracted: the handler takes a generated type, so typeof Notes depends on TypeRegistry
+export const Notes = Sessions.lookup('User').define('Note', function (this: { text: string }, author: User) {
+	this.text = author.name;
+});
+```
+
+Here tactica extracts `User.Note`, while code holding `Notes` keeps the builder's own type for it; the two cross both ways.
+
+Custom collections without Option B are never in the global `TypeRegistry`: the free `lookup()` resolves only the default collection at runtime.
+
+Hierarchy, definitions, usages and the creation graph come from tactica for every type, derived or extracted.
 
 ## What Gets Analyzed
 
@@ -312,6 +343,25 @@ const AdminType = define(UserType, 'AdminType', function (this: { role: string }
 
 const AdminCtor = lookup(App, 'UserType.AdminType');
 ```
+
+### Looped defines with computed names
+
+A define whose name ranges over a const object's keys is recognized when the set of names is closed: a helper parameter typed `keyof typeof Data` (directly or through a local alias), or a `for…of Object.keys(Data)` variable used as the name.
+
+```ts
+const Data = { Prepare: { step: 1 }, Produce: { step: 2 } };
+type PhaseName = keyof typeof Data;
+
+const definePhase = (name: PhaseName) => {
+	const result = Run.define(name, holder<typeof Data[typeof name]>());
+	return result;
+};
+for (const key of Object.keys(Data)) {
+	if (isPhaseName(key)) Phase.set(key, definePhase(key));
+}
+```
+
+`Run.Prepare` and `Run.Produce` enter `hierarchy.json` and `definitions.json` under `Run`, in declaration order, sharing the define site's location. They get no `registry.ts` or `types.ts` entries in any collection: their TypeScript types are the builder value's (`Phase.get(…)`). A name that is not a closed const-object key set (a plain `string`, a computed key, an unresolved alias) is still reported with "Could not extract type name" and skipped.
 
 ### Custom collections via `createTypesCollection()`
 
@@ -426,10 +476,13 @@ const sub   = new gadget.EnhancedGadget();
 ### `Object.assign(this, data)` pattern
 
 ```ts
-const UserType = define('UserType', function (this: any, data: { name: string }) {
-    Object.assign(this, data); // properties inferred from `data` type
+// a handler without a `this` annotation
+const UserType = define('UserType', function (data: { name: string }) {
+    Object.assign(this, data); // properties inferred from `data`'s type
 });
 ```
+
+In a handler with a `this` annotation the annotation is the type (see [Property Type Inference](#property-type-inference)); `Object.assign` then adds nothing beyond it.
 
 ### `TypeConstructor` casting (from mnemonica)
 
@@ -437,12 +490,14 @@ const UserType = define('UserType', function (this: any, data: { name: string })
 import { define } from 'mnemonica';
 import type { TypeConstructor } from 'mnemonica';
 
-const MyFn = function (this: any) {
+const MyFn = function (this: { field: number }) {
     this.field = 123;
 } as TypeConstructor<{ field: number }>;
 
-const MyFnType = define('MyFnType', MyFn);
+const MyFnType = define('MyFnType', MyFn);   // MyFnType: { field: number }
 ```
+
+The analyzer follows `MyFn` to its function expression and extracts it exactly like an inline handler. The `TypeConstructor` type argument is not used as a substitute for the function body; the annotated-`this` rule applies, so `this: { field: number }` gives `{ field: number }` (and `this: any` would give `any`). Const-held function and class expressions, function and class declarations, and imported handlers are followed through their identifiers, including through `lazy()`, `Type.define()`, and chained `define()` calls. An identifier whose declaration cannot be resolved keeps the previous empty extraction.
 
 (In older mnemonica documentation this helper was called `ConstructorFunction`; the analyzer still recognizes that name in source code for back-compat.)
 
@@ -490,7 +545,21 @@ npx tactica --topologica ./src/ai-types,./custom/topologica
 
 ## Property Type Inference
 
-The analyzer infers property types from constructor bodies and class members. Supported expression patterns:
+**An annotated `this` is the type.** A handler is used as a constructor, so its `this` annotation states the instance, the way a class is typed by its declared fields. Assignments beyond the annotation add nothing:
+
+```ts
+interface PackData { data?: Record<string, unknown> }
+
+define('Pack', function (this: PackData, files: PackFiles, meta: PackMeta) {
+	this.header = files.header;   // not in PackData: not typed
+	this.data = files.extra;
+});
+// Pack is PackData: { data?: Record<string, unknown> }
+```
+
+Declare the fields in the annotation to have them typed. `this: any` is respected the same way: the instance type is `any`. Two cases keep reading the body: a handler without a `this` annotation, and a handler whose `this` is a type from the generated `.tactica` (the [call-site ergonomics](#define-calls) pattern), since that annotation is tactica's own output.
+
+For handlers without a `this` annotation, the analyzer infers property types from constructor bodies and class members. Supported expression patterns:
 
 | Pattern | Inferred type |
 |---|---|
@@ -709,7 +778,6 @@ class TypesGenerator {
 
     generateTypesFile():           GeneratedTypes; // default mode → types.ts
     generateTypeRegistry():        GeneratedTypes; // default mode → registry.ts
-    generateGlobalAugmentation():  GeneratedTypes; // legacy mode  → index.d.ts
     generateSingleType(node: TypeNode): string;
 }
 ```
@@ -776,7 +844,6 @@ class TypesWriter {
     constructor(outputDir?: string);
 
     writeTypesFile(generated: GeneratedTypes): string;          // → outputDir/types.ts
-    writeGlobalAugmentation(generated: GeneratedTypes): string; // → outputDir/index.d.ts
     writeTo(filename: string, content: string): string;         // → outputDir/<filename>
 
     writeDefinitionsFile(map: Map<string, DefinitionInfo>, graph?: TypeGraph): string; // → outputDir/definitions.json (graph adds fields/args)
@@ -936,7 +1003,7 @@ Deliberate approximations (name-based, no type checker): namespace imports count
 1. **Parse** — load `tsconfig.json`, build a `ts.Program`, walk each source file's AST.
 2. **Detect** — find `define()` and `@decorate()` calls, plus `lookup` lookups, `new` expressions, and EDS / flow patterns.
 3. **Graph** — build a Trie of types in `TypeGraphImpl`, with parent links via the chain of `.define()` calls and `@decorate(Parent)` references.
-4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts` (default mode) or `index.d.ts` (legacy mode), plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, `collections.json`, and optionally `eds.json`.
+4. **Generate** — emit `types.ts`, `registry.ts`, `index.ts`, plus `definitions.json`, `usages.json` (with `holderScopeId`), `flow.json`, `instrumentation.json`, `control.json`, `modules.json`, `scopes.json`, `hierarchy.json`/`hierarchy.txt`, `collections.json`, and optionally `eds.json`.
 5. **Write** — files land in the output directory (default `.tactica/`).
 
 ```
@@ -976,7 +1043,7 @@ Multi-level property access in constructors falls back to `unknown`:
 
 ```ts
 // ⚠️ this.name's inferred type is unknown
-const UserType = define('UserType', function (this: any, data: { profile: { name: string } }) {
+const UserType = define('UserType', function (data: { profile: { name: string } }) {
     this.name = data.profile.name;
 });
 ```
@@ -1011,7 +1078,7 @@ Custom collection types are isolated in the analyzer by their collection identit
 
 ## Troubleshooting
 
-**Generated types are missing properties** — make sure the constructor function has either an explicit `this:` type annotation, or that the data parameter has an inline / aliased type (`{ id: string }` or `Foo` where `type Foo = { id: string }`). Property inference walks one level of indirection.
+**Generated types are missing properties** — with a `this:` annotation, the annotation is the type: declare the missing fields there. Without one, make sure the data parameter has an inline / aliased type (`{ id: string }` or `Foo` where `type Foo = { id: string }`); property inference walks one level of indirection. For a derived type (an exported builder value), the fields are whatever the builder's own type carries.
 
 **`new user.AdminType()` shows red squiggles** — confirm `.tactica/types.ts` is in your `tsconfig.json` `include`. If you use `lookup`, also import `.tactica/registry.ts` somewhere.
 

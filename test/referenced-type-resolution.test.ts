@@ -437,6 +437,35 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 		return analyzer;
 	};
 
+	const analyzeExtractionFixture = (): MnemonicaAnalyzer => {
+		const analyzer = new MnemonicaAnalyzer();
+		analyzer.analyzeSource(fs.readFileSync(modelsFile, 'utf8'), modelsFile);
+		analyzer.analyzeSource(`
+import { define } from 'mnemonica';
+import { PackFiles, PackMeta } from './models';
+
+interface PackData {
+	data?: Record<string, unknown>;
+}
+
+const Pack = define('Pack', function (this: PackData, pageFiles: PackFiles, meta: PackMeta) {
+	this.header = pageFiles.header;
+	this.info = pageFiles.info;
+	this.note = meta.note;
+	this.weight = meta.weight;
+	this.data = pageFiles.missing;
+});
+const Inferred = define('Inferred', function (pageFiles: PackFiles, meta: PackMeta) {
+	this.inferredHeader = pageFiles.header;
+	this.inferredInfo = pageFiles.info;
+	this.inferredNote = meta.note;
+	this.inferredWeight = meta.weight;
+});
+void [ Pack, Inferred ];
+`, consumerFile);
+		return analyzer;
+	};
+
 	const generateContent = (analyzer: MnemonicaAnalyzer): string => {
 		const generator = new TypesGenerator(analyzer.getGraph());
 		const generated = generator.generateTypesFile();
@@ -444,27 +473,68 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 	};
 
 	it('resolves this.x = param.y per-property types through named alias/interface params', () => {
-		const analyzer = analyzeFixture();
+		const analyzer = analyzeExtractionFixture();
 		const content = generateContent(analyzer);
 
-		// interface param: named members resolve through the import-aware
-		// machinery — no `unknown`, no bare names
-		expect(content).to.include('header: { title: string } | null');
-		expect(content).to.include('info: Record<string, unknown>');
-		expect(content).to.not.include('header: unknown');
-		expect(content).to.not.include('info: unknown');
-		// alias param decomposes the same way
-		expect(content).to.include('note: string');
-		expect(content).to.include('weight: number');
-		// bare names never leak into the generated file
+		// Without a this annotation, assignments still supply fields through
+		// the import-aware named alias/interface machinery.
+		expect(content).to.include('inferredHeader: { title: string } | null');
+		expect(content).to.include('inferredInfo: Record<string, unknown>');
+		expect(content).to.include('inferredNote: string');
+		expect(content).to.include('inferredWeight: number');
+		expect(content).to.not.include('inferredHeader: unknown');
+		expect(content).to.not.include('inferredInfo: unknown');
 		expect(content).to.not.include('pageFiles');
 		expect(content).to.not.include('PackHeader');
 		expect(content).to.not.include('PackFiles');
 		expect(content).to.not.include('PackMeta');
 	});
 
+	it('uses only the annotated this fields for unexported defines', () => {
+		const analyzer = analyzeExtractionFixture();
+		const content = generateContent(analyzer);
+		expect(content).to.include('export type Pack = {');
+		expect(content).to.include('data?: Record<string, unknown>');
+		expect(content).to.not.include('header: { title: string } | null');
+		expect(content).to.not.include('info: Record<string, unknown>');
+		expect(content).to.not.include('note: string');
+		expect(content).to.not.include('weight: number');
+
+		const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-f14-annotated-this-'));
+		try {
+			const typesPath = path.join(outputDir, 'types.ts');
+			const assertionsPath = path.join(outputDir, 'assertions.ts');
+			fs.writeFileSync(typesPath, content);
+			fs.writeFileSync(assertionsPath, [
+				'import type { Pack } from \'./types\';',
+				'type Extras = Extract<\'header\' | \'info\' | \'note\' | \'weight\', keyof Pack>;',
+				'type ExtrasAreNever = [ Extras ] extends [ never ] ? true : false;',
+				'const extrasAreNever: ExtrasAreNever = true;',
+				'declare const pack: Pack;',
+				'const data: Record<string, unknown> | undefined = pack.data;',
+				'void [ extrasAreNever, data ];',
+			].join('\n'));
+			const program = ts.createProgram([ typesPath, assertionsPath ], {
+				strict             : true,
+				noEmit             : true,
+				target             : ts.ScriptTarget.ES2020,
+				module             : ts.ModuleKind.ES2020,
+				moduleResolution   : ts.ModuleResolutionKind.Bundler,
+				baseUrl            : outputDir,
+				ignoreDeprecations : '6.0',
+			});
+			const diagnostics = ts.getPreEmitDiagnostics(program);
+			const errors = diagnostics
+				.filter(d => d.category === ts.DiagnosticCategory.Error)
+				.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
+			expect(errors).to.deep.equal([]);
+		} finally {
+			fs.rmSync(outputDir, { recursive : true, force : true });
+		}
+	});
+
 	it('keeps the annotated Record<string, unknown> field and its optionality', () => {
-		const analyzer = analyzeFixture();
+		const analyzer = analyzeExtractionFixture();
 		const content = generateContent(analyzer);
 
 		// unknown-bearing inference must not clobber the good annotation,
@@ -472,6 +542,18 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 		expect(content).to.include('data?: Record<string, unknown>');
 		expect(content).to.not.include('data: unknown');
 		expect(analyzer.getResolutionErrors()).to.deep.equal([]);
+	});
+
+	it('uses the annotated this type for exported free define results', () => {
+		const analyzer = analyzeFixture();
+		const generator = new TypesGenerator(
+			analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues()
+		);
+		const { content } = generator.generateTypesFile();
+
+		expect(content).to.include('export type Pack = LookedUpInstance<TypeRegistry, \'Pack\'>;');
+		expect(content).to.not.include('header: { title: string }');
+		expect(content).to.not.include('note: string');
 	});
 
 	describe('CLI end-to-end (resolved types + optionality in generated output)', () => {
@@ -504,15 +586,28 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 
 				const typesPath = path.join(outputDir, 'types.ts');
 				const content = fs.readFileSync(typesPath, 'utf8');
-				expect(content).to.include('header: { title: string } | null');
-				expect(content).to.include('info: Record<string, unknown>');
-				expect(content).to.include('data?: Record<string, unknown>');
+				expect(content).to.include('export type Pack = LookedUpInstance<TypeRegistry, \'Pack\'>;');
 				expect(content).to.not.include('unknown;');
 
-				// compile the generated file for real — the field regression
-				// was downstream consumer TS errors
+				// The exported value derives from its annotated this type. Fields
+				// assigned beyond PackData are deliberately absent at type level.
+				const assertionsPath = path.join(outputDir, 'field-assertions.ts');
+				fs.writeFileSync(assertionsPath, [
+					'import type { Pack } from \'./types\';',
+					'',
+					'declare const pack: Pack;',
+					'type ExtraFields = Extract<\'header\' | \'info\' | \'note\' | \'weight\', keyof Pack>;',
+					'type ExtraFieldsAreNever = [ ExtraFields ] extends [ never ] ? true : false;',
+					'const extraFieldsAreNever: ExtraFieldsAreNever = true;',
+					'const data: Record<string, unknown> | undefined = pack.data;',
+					'void [ extraFieldsAreNever, data ];',
+					'',
+				].join('\n'));
 				const mnemonicaTypes = path.join(__dirname, '..', 'node_modules', 'mnemonica', 'build', 'index.d.ts');
-				const program = ts.createProgram([ typesPath ], {
+				const registryPath = path.join(outputDir, 'registry.ts');
+				const programFiles = [ typesPath, registryPath, assertionsPath ];
+				const generatedFiles = new Set(programFiles.map(file => path.resolve(file)));
+				const program = ts.createProgram(programFiles, {
 					strict             : true,
 					noEmit             : true,
 					target             : ts.ScriptTarget.ES2020,
@@ -525,6 +620,7 @@ export const Vault = define('Vault', function (this: Vault, args: { code: string
 				const diagnostics = ts.getPreEmitDiagnostics(program);
 				const compileErrors = diagnostics
 					.filter(d => d.category === ts.DiagnosticCategory.Error)
+					.filter(d => !d.file || generatedFiles.has(path.resolve(d.file.fileName)))
 					.map(d => `TS${d.code}: ${ts.flattenDiagnosticMessageText(d.messageText, ' ')}`);
 
 				expect(compileErrors).to.deep.equal([]);

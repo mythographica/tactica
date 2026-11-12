@@ -15,10 +15,10 @@ describe('Builder pattern and custom collections', () => {
 				import { mnemonica } from 'mnemonica';
 
 				const App = mnemonica
-					.define('User', function (this: any, data: { name: string }) {
+					.define('User', function (data: { name: string }) {
 						this.name = data.name;
 					})
-					.define('Admin', function (this: any, data: { role: string }) {
+					.define('Admin', function (data: { role: string }) {
 						this.role = data.role;
 					});
 			`;
@@ -39,7 +39,7 @@ describe('Builder pattern and custom collections', () => {
 			const source = `
 				import { mnemonica as m } from 'mnemonica';
 
-				m.define('User', function (this: any, data: { name: string }) {
+				m.define('User', function (data: { name: string }) {
 					this.name = data.name;
 				});
 			`;
@@ -56,7 +56,7 @@ describe('Builder pattern and custom collections', () => {
 			const source = `
 				import * as mnemonica from 'mnemonica';
 
-				mnemonica.define('User', function (this: any, data: { name: string }) {
+				mnemonica.define('User', function (data: { name: string }) {
 					this.name = data.name;
 				});
 			`;
@@ -73,10 +73,10 @@ describe('Builder pattern and custom collections', () => {
 				import { mnemonica } from 'mnemonica';
 
 				const App = mnemonica;
-				App.define('User', function (this: any, data: { name: string }) {
+				App.define('User', function (data: { name: string }) {
 					this.name = data.name;
 				});
-				App.lookup('User').define('Admin', function (this: any, data: { role: string }) {
+				App.lookup('User').define('Admin', function (data: { role: string }) {
 					this.role = data.role;
 				});
 			`;
@@ -96,7 +96,7 @@ describe('Builder pattern and custom collections', () => {
 				import { createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -114,10 +114,10 @@ describe('Builder pattern and custom collections', () => {
 				import { createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				const User = MyCollection.define('User', function (this: any, data: { id: string }) {
+				const User = MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
-				User.define('Admin', function (this: any, data: { role: string }) {
+				User.define('Admin', function (data: { role: string }) {
 					this.role = data.role;
 				});
 			`;
@@ -138,7 +138,7 @@ describe('Builder pattern and custom collections', () => {
 
 				const CollA = createTypesCollection();
 				const CollB = CollA;
-				CollB.define('User', function (this: any, data: { id: string }) {
+				CollB.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -155,7 +155,7 @@ describe('Builder pattern and custom collections', () => {
 				import { mnemonica } from 'mnemonica';
 
 				const MyCollection = mnemonica.createTypesCollection();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -173,7 +173,7 @@ describe('Builder pattern and custom collections', () => {
 				import * as mnemonica from 'mnemonica';
 
 				const MyCollection = mnemonica.createTypesCollection();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -191,7 +191,7 @@ describe('Builder pattern and custom collections', () => {
 				import { createTypesCollection as ctc } from 'mnemonica';
 
 				const MyCollection = ctc();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -210,10 +210,10 @@ describe('Builder pattern and custom collections', () => {
 
 				const CollA = createTypesCollection();
 				const CollB = createTypesCollection();
-				CollA.define('User', function (this: any, data: { a: string }) {
+				CollA.define('User', function (data: { a: string }) {
 					this.a = data.a;
 				});
-				CollB.define('User', function (this: any, data: { b: string }) {
+				CollB.define('User', function (data: { b: string }) {
 					this.b = data.b;
 				});
 			`;
@@ -236,13 +236,13 @@ describe('Builder pattern and custom collections', () => {
 
 				const CollA = createTypesCollection();
 				const CollB = createTypesCollection();
-				CollA.define('User', function (this: any, data: { a: string }) {
+				CollA.define('User', function (data: { a: string }) {
 					this.a = data.a;
 				});
-				CollB.define('User', function (this: any, data: { b: string }) {
+				CollB.define('User', function (data: { b: string }) {
 					this.b = data.b;
 				});
-				CollB.define('Group', function (this: any, data: { g: string }) {
+				CollB.define('Group', function (data: { g: string }) {
 					this.g = data.g;
 				});
 			`;
@@ -268,10 +268,10 @@ describe('Builder pattern and custom collections', () => {
 
 				const CollA = createTypesCollection<RegistryA>();
 				const CollB = createTypesCollection<RegistryB>();
-				CollA.define('User', function (this: any, data: { a: string }) {
+				CollA.define('User', function (data: { a: string }) {
 					this.a = data.a;
 				});
-				CollB.define('User', function (this: any, data: { b: string }) {
+				CollB.define('User', function (data: { b: string }) {
 					this.b = data.b;
 				});
 			`;
@@ -291,7 +291,7 @@ describe('Builder pattern and custom collections', () => {
 				import { define, createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				define(MyCollection, 'User', function (this: any, data: { id: string }) {
+				define(MyCollection, 'User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -309,10 +309,10 @@ describe('Builder pattern and custom collections', () => {
 				import { define, createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				const User = MyCollection.define('User', function (this: any, data: { id: string }) {
+				const User = MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
-				define(User, 'Admin', function (this: any, data: { role: string }) {
+				define(User, 'Admin', function (data: { role: string }) {
 					this.role = data.role;
 				});
 			`;
@@ -331,10 +331,10 @@ describe('Builder pattern and custom collections', () => {
 				import { mnemonica } from 'mnemonica';
 
 				mnemonica
-					.define('User', function (this: any, data: { name: string }) {
+					.define('User', function (data: { name: string }) {
 						this.name = data.name;
 					})
-					.define('Admin', function (this: any, data: { role: string }) {
+					.define('Admin', function (data: { role: string }) {
 						this.role = data.role;
 					});
 			`;
@@ -352,7 +352,7 @@ describe('Builder pattern and custom collections', () => {
 				import { createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -368,12 +368,12 @@ describe('Builder pattern and custom collections', () => {
 			const source = `
 				import { mnemonica, createTypesCollection } from 'mnemonica';
 
-				mnemonica.define('DefaultUser', function (this: any, data: { name: string }) {
+				mnemonica.define('DefaultUser', function (data: { name: string }) {
 					this.name = data.name;
 				});
 
 				const MyCollection = createTypesCollection();
-				MyCollection.define('CollectionUser', function (this: any, data: { id: string }) {
+				MyCollection.define('CollectionUser', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -391,7 +391,7 @@ describe('Builder pattern and custom collections', () => {
 				import { createTypesCollection } from 'mnemonica';
 
 				const MyCollection = createTypesCollection();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -411,7 +411,7 @@ describe('Builder pattern and custom collections', () => {
 				export interface MyCollectionRegistry {}
 
 				const MyCollection = createTypesCollection<MyCollectionRegistry>();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -430,7 +430,7 @@ describe('Builder pattern and custom collections', () => {
 				export interface MyCollectionRegistry {}
 
 				const MyCollection = createTypesCollection<MyCollectionRegistry>();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -450,7 +450,7 @@ describe('Builder pattern and custom collections', () => {
 				export interface MyCollectionRegistry {}
 
 				const MyCollection = createTypesCollection<MyCollectionRegistry>();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -472,7 +472,7 @@ describe('Builder pattern and custom collections', () => {
 				export interface MyCollectionRegistry {}
 
 				const MyCollection = createTypesCollection<MyCollectionRegistry>();
-				MyCollection.define('User', function (this: any, data: { id: string }) {
+				MyCollection.define('User', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -582,10 +582,10 @@ describe('Builder pattern and custom collections', () => {
 			export interface ShopRegistry {}
 
 			const Shop = createTypesCollection<ShopRegistry>();
-			const Product = Shop.define('Product', function (this: any, data: { productId: string }) {
+			const Product = Shop.define('Product', function (data: { productId: string }) {
 				this.productId = data.productId;
 			});
-			Product.define('Category', function (this: any, data: { categoryId: string }) {
+			Product.define('Category', function (data: { categoryId: string }) {
 				this.categoryId = data.categoryId;
 			});
 		`;
@@ -627,7 +627,7 @@ describe('Builder pattern and custom collections', () => {
 				const Definitions = Backend.define('Definitions', class {
 					private map: Map<string, object> = new Map();
 				});
-				const DefinitionEntry = Definitions.define('DefinitionEntry', function (this: any, data: { name: string }) {
+				const DefinitionEntry = Definitions.define('DefinitionEntry', function (data: { name: string }) {
 					this.name = data.name;
 				});
 			`;
@@ -661,7 +661,7 @@ describe('Builder pattern and custom collections', () => {
 						return undefined;
 					}
 				});
-				const Category = Product.define('Category', function (this: any, data: { id: string }) {
+				const Category = Product.define('Category', function (data: { id: string }) {
 					this.id = data.id;
 				});
 			`;
@@ -691,10 +691,10 @@ describe('Builder pattern and custom collections', () => {
 			`;
 			const modelFile = `
 				import { Shop } from './collections';
-				export const Product = Shop.define('Product', function (this: any, data: { id: string }) {
+				export const Product = Shop.define('Product', function (data: { id: string }) {
 					this.id = data.id;
 				});
-				export const Category = Product.define('Category', function (this: any, data: { name: string }) {
+				export const Category = Product.define('Category', function (data: { name: string }) {
 					this.name = data.name;
 				});
 			`;
@@ -717,13 +717,13 @@ describe('Builder pattern and custom collections', () => {
 
 				export interface ShopRegistry {}
 
-				const Legacy = define('Legacy', function (this: any) {});
+				const Legacy = define('Legacy', function () {});
 				const Shop = createTypesCollection<ShopRegistry>();
-				Shop.define('Product', function (this: any, data: { id: string }) {
+				Shop.define('Product', function (data: { id: string }) {
 					this.id = data.id;
 				});
 				const Plain = createTypesCollection();
-				Plain.define('Loose', function (this: any) {});
+				Plain.define('Loose', function () {});
 			`;
 
 			analyzer.analyzeSource(source, 'src/app.ts');
@@ -754,7 +754,7 @@ describe('Builder pattern and custom collections', () => {
 			const source = `
 				import { createTypesCollection } from 'mnemonica';
 				const Shop = createTypesCollection();
-				Shop.define('Product', function (this: any) {});
+				Shop.define('Product', function () {});
 			`;
 
 			analyzer.analyzeSource(source, 'src/app.ts');
@@ -767,7 +767,7 @@ describe('Builder pattern and custom collections', () => {
 		it('should emit only the default entry for a default-only project', () => {
 			const source = `
 				import { define } from 'mnemonica';
-				define('Legacy', function (this: any) {});
+				define('Legacy', function () {});
 			`;
 
 			analyzer.analyzeSource(source, 'src/app.ts');
@@ -806,7 +806,7 @@ describe('Builder pattern and custom collections', () => {
 
 		it('should fall back to the collection root from a type-bound receiver', () => {
 			const source = `${collectionSource}
-				Shop.define('Util', function (this: any, data: { u: string }) {
+				Shop.define('Util', function (data: { u: string }) {
 					this.u = data.u;
 				});
 				const ProductCtor = Shop.lookup('Product');
@@ -837,5 +837,119 @@ describe('Builder pattern and custom collections', () => {
 			expect(errors).to.have.length(1);
 			expect(errors[ 0 ].message).to.include('Nope');
 		});
+	});
+});
+
+
+describe('derived default registry', () => {
+	let analyzer: MnemonicaAnalyzer;
+
+	beforeEach(() => {
+		analyzer = new MnemonicaAnalyzer();
+	});
+
+	it('should derive exported builder values and keep inline defines extracted', () => {
+		const source = `
+			import { define, mnemonica } from 'mnemonica';
+
+			export const App = mnemonica
+				.define('User', function (this: { name: string; tags: string[] }, data: { name: string }, ...tags: string[]) {
+					this.name = data.name;
+					this.tags = tags;
+				})
+				.define('Admin', function (this: { role: string }, data: { role: string }) {
+					this.role = data.role;
+				});
+
+			export const Sessions = App.lookup('User').define('Session', async function (this: { token: string }, token: string) {
+				this.token = token;
+				return this;
+			});
+
+			export const Widget = define('Widget', function (this: { w: number }, data: { w: number }) {
+				this.w = data.w;
+			});
+
+			define('Inline', function (this: { g: string }, g: string) {
+				this.g = g;
+			});
+		`;
+
+		analyzer.analyzeSource(source, 'src/app.ts');
+		const generator = new TypesGenerator(analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues());
+		const registry = generator.generateTypeRegistry().content;
+
+		expect(registry).to.include('type FromBuilder = RegistryOf<typeof App> & RegistryOf<typeof Sessions>');
+		expect(registry).to.include('\'Widget\': typeof WidgetCtor;');
+		expect(registry).to.include('\'Inline\': RegistryEntry<Inline, \'Inline\', object, [g: string]>;');
+		expect(registry).not.to.include('\'User\': new');
+		expect(registry).not.to.include('\'User.Session\': new');
+	});
+
+	it('should resolve aliased, later, and default exports', () => {
+		const appSource = `
+			import { mnemonica } from 'mnemonica';
+			const App = mnemonica.define('User', function () {});
+			export { App };
+		`;
+		const aliasSource = 'export { App as Root } from \'./app\';';
+		const defaultSource = `
+			import { mnemonica } from 'mnemonica';
+			const Klass = mnemonica.define('Klass', class {});
+			export default Klass;
+		`;
+
+		analyzer.analyzeSource(appSource, 'src/app.ts');
+		analyzer.analyzeSource(aliasSource, 'src/alias.ts');
+		analyzer.analyzeSource(defaultSource, 'src/default.ts');
+		const generator = new TypesGenerator(analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues());
+		const registry = generator.generateTypeRegistry().content;
+
+		expect(registry).to.include('RegistryOf<typeof Root>');
+		expect(registry).to.include('RegistryOf<typeof KlassCtor>');
+		expect(registry).to.include('from \'../src/alias\'');
+		expect(registry).to.include('import type Klass as KlassCtor from \'../src/default\';');
+	});
+
+	it('should keep self-referencing values and their chains extracted', () => {
+		const source = `
+			import { mnemonica } from 'mnemonica';
+			import type { User as GeneratedUser } from '../.tactica/types';
+
+			export const App = mnemonica.define('User', function (this: GeneratedUser, data: { name: string }) {
+				this.name = data.name;
+			});
+			export const Sessions = App.lookup('User').define('Session', function (this: { token: string }, token: string) {
+				this.token = token;
+			});
+		`;
+
+		analyzer.analyzeSource(source, 'src/selfref.ts');
+		const generator = new TypesGenerator(analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues());
+		const registry = generator.generateTypeRegistry().content;
+		const types = generator.generateTypesFile().content;
+
+		expect(registry).not.to.include('RegistryOf<typeof App>');
+		expect(registry).not.to.include('RegistryOf<typeof Sessions>');
+		expect(registry).to.include('\'User\': RegistryEntry<User, \'User\', object, [data: { name: string }]>;');
+		expect(registry).to.include('\'User.Session\': RegistryEntry<User_Session, \'User.Session\', User, [token: string]>;');
+		expect(types).to.include('export type User = {');
+		expect(types).to.include('Session: LookedUpConstructor<TypeRegistry, \'User.Session\', true>;');
+		expect(types).to.include('export type User_Session = ProtoFlat<User, {');
+		expect(types).to.include('Session?: undefined;');
+	});
+
+	it('should not derive custom collections into FromBuilder', () => {
+		const source = `
+			import { createTypesCollection } from 'mnemonica';
+			export const collection = createTypesCollection();
+			collection.define('User', function () {});
+		`;
+
+		analyzer.analyzeSource(source, 'src/collection.ts');
+		const generator = new TypesGenerator(analyzer.getGraph(), false, '.tactica', undefined, analyzer.getBuilderValues());
+		const registry = generator.generateTypeRegistry().content;
+
+		expect(registry).not.to.include('RegistryOf<typeof collection>');
 	});
 });
