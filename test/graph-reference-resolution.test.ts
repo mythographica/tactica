@@ -746,11 +746,19 @@ new ByReceiver({ mark: 'y' });
 
 				const registryPath = path.join(outputDir, 'registry.ts');
 				const registry = fs.readFileSync(registryPath, 'utf8');
-				// a free chain carries the global TypeRegistry: deriving it is
-				// circular as a RegistryOf base (TS2456/TS2310) and, as
-				// `typeof` entries, grows faster than the type count
-				expect(registry).to.not.include('FromBuilder');
-				expect(registry).to.not.include('typeof');
+				// a free chain carries the global TypeRegistry: deriving it
+				// makes TypeRegistry its own base (TS2456/TS2310). The only
+				// builder value is the builder object reached through the
+				// namespace import; its `define`, and a default import's, are
+				// the free define
+				expect(registry).to.include('type FromBuilder = RegistryOf<typeof BeltCtor>;');
+				for (const name of [ 'Widget', 'Part', 'Bolt', 'Right', 'Panel', 'Gear', 'Cog', 'Lever', 'Arm' ]) {
+					expect(registry).to.not.match(new RegExp(`typeof ${name}(Ctor)?\\b`));
+				}
+				expect(registry).to.include('\'Gear\': RegistryEntry<Gear, \'Gear\', object, []>;');
+				expect(registry).to.include('\'Gear.Cog\': RegistryEntry<Gear_Cog,');
+				expect(registry).to.include('\'Lever\': RegistryEntry<Lever, \'Lever\', object, []>;');
+				expect(registry).to.include('\'Lever.Arm\': RegistryEntry<Lever_Arm,');
 				expect(registry).to.include('\'Widget\': RegistryEntry<Widget, \'Widget\', object, []>;');
 				expect(registry).to.include('\'Widget.Part\': RegistryEntry<Widget_Part, \'Widget.Part\', Widget,');
 				expect(registry).to.include('\'Widget.Part.Bolt\': RegistryEntry<Widget_Part_Bolt,');
@@ -772,7 +780,13 @@ new ByReceiver({ mark: 'y' });
 					'const right: number = new new LeftCtor().Right().r;',
 					'const FrameCtor = lookup(\'Frame\');',
 					'const panel: number = new new FrameCtor().Panel().p;',
-					'void [ size, label, torque, right, panel ];',
+					'const GearCtor = lookup(\'Gear\');',
+					'const pitch: number = new new GearCtor().Cog().pitch;',
+					'const LeverCtor = lookup(\'Lever\');',
+					'const span: number = new new LeverCtor().Arm().span;',
+					'const BeltCtor = lookup(\'Belt\');',
+					'const length: number = new BeltCtor().length;',
+					'void [ size, label, torque, right, panel, pitch, span, length ];',
 					'',
 				].join('\n'));
 

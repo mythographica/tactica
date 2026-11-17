@@ -254,7 +254,7 @@ Aliases in `types.ts` read derived instances back with `LookedUpInstance<TypeReg
 
 **Extracted** (tactica reads the source):
 
-- every `define` on a free chain, exported or not: the free `define('Widget', …)`, a subtype defined on it (`Widget.define('Part', …)`), and chains starting at the free `define` or `lookup` (`define('A').define('B')`, `lookup('A').define('B')`). Such a value carries the global `TypeRegistry` itself; deriving it would make the registry its own base;
+- every `define` on a free chain, exported or not: the free `define('Widget', …)`, a subtype defined on it (`Widget.define('Part', …)`), and chains starting at the free `define` or `lookup` (`define('A').define('B')`, `lookup('A').define('B')`). A namespace or default import of `'mnemonica'` (`import * as ns`, `import mn`) is the module, so `ns.define(…)` is the free `define` too; only its `ns.mnemonica` member is the builder. Such a value carries the global `TypeRegistry` itself; deriving it would make the registry its own base;
 - `@decorate` (and typeomatica's `@Strict` beside it), topologica directory types, Option B collections;
 - a handler that uses a type from the generated `.tactica` anywhere in its signature (`this`, a parameter, the return type), and every exported value whose chain passes through such a handler. Deriving those would be circular: the value's type would depend on the registry it is part of. The generated type counts however it is reached: imported by a relative path, a tsconfig `paths` alias or from a custom `--output` directory, named directly or through your own type aliases and interfaces (followed across files and `extends` clauses).
 

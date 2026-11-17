@@ -29,6 +29,7 @@ export declare class MnemonicaAnalyzer {
     private generatedOutputDirs;
     private generatedSpecifierCache;
     private moduleObjectVariables;
+    private moduleNamespaceVariables;
     private mnemonicaNamedImports;
     private createTypesCollectionVariables;
     private collectionVariables;
@@ -557,7 +558,9 @@ export declare class MnemonicaAnalyzer {
      * `define(source, 'X', …)` only when its source is free); its parent
      * type was defined on a free chain; or its receiver chain starts at the
      * imported free `define`/`lookup` (`define('A').define('B')`,
-     * `lookup('A').define('B')`). A free hop's path is recorded, so the
+     * `lookup('A').define('B')`), or at a namespace/default import other
+     * than through its `.mnemonica` builder object (`ns.define('A')`,
+     * `ns.lookup('A').define('B')`). A free hop's path is recorded, so the
      * next hop on the chain sees its parent as free.
      */
     private isFreeChainHop;

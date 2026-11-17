@@ -208,6 +208,11 @@ export class MnemonicaAnalyzer {
 	private generatedSpecifierCache = new Map<string, boolean>();
 	// Track mnemonica module-object variables (e.g., import { mnemonica } from 'mnemonica'; const m = mnemonica)
 	private moduleObjectVariables = new Set<string>();
+	// The namespace and default imports among them (`import * as ns`,
+	// `import mn` — mnemonica has no default export, so both are the
+	// module): their `.define`/`.lookup` are the FREE functions; only
+	// their `.mnemonica` member is the builder object
+	private moduleNamespaceVariables = new Set<string>();
 	// file -> (local name -> imported name) for named imports from
 	// 'mnemonica' — import-awareness for the construction-function
 	// recognition (call/apply/bind) and the utils forms (merge/fork):
@@ -785,11 +790,13 @@ export class MnemonicaAnalyzer {
 		// import * as mnemonica from 'mnemonica'
 		if (clause.namedBindings && ts.isNamespaceImport(clause.namedBindings)) {
 			this.moduleObjectVariables.add(clause.namedBindings.name.text);
+			this.moduleNamespaceVariables.add(clause.namedBindings.name.text);
 		}
 
 		// import mnemonica from 'mnemonica' (default import) — treat as module object too
 		if (clause.name) {
 			this.moduleObjectVariables.add(clause.name.text);
+			this.moduleNamespaceVariables.add(clause.name.text);
 		}
 	}
 
@@ -3094,24 +3101,35 @@ export class MnemonicaAnalyzer {
 	 * `define(source, 'X', …)` only when its source is free); its parent
 	 * type was defined on a free chain; or its receiver chain starts at the
 	 * imported free `define`/`lookup` (`define('A').define('B')`,
-	 * `lookup('A').define('B')`). A free hop's path is recorded, so the
+	 * `lookup('A').define('B')`), or at a namespace/default import other
+	 * than through its `.mnemonica` builder object (`ns.define('A')`,
+	 * `ns.lookup('A').define('B')`). A free hop's path is recorded, so the
 	 * next hop on the chain sees its parent as free.
 	 */
 	private isFreeChainHop (call: ts.CallExpression, parentNode: TypeNode | undefined, fullPath: string): boolean {
 		const callee = call.expression;
 		const [ firstArg ] = call.arguments;
 		const freeRoot = ts.isIdentifier(callee) && firstArg !== undefined && ts.isStringLiteralLike(firstArg);
+		// walk to the chain's start, keeping the member read right off it
 		let base: ts.Expression | undefined = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
+		let firstMember = ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
 		while (base && (ts.isPropertyAccessExpression(base) || ts.isCallExpression(base))) {
+			if (ts.isPropertyAccessExpression(base)) {
+				firstMember = base.name.text;
+			}
 			base = base.expression;
 		}
 		const importedAs = base && ts.isIdentifier(base)
 			? this.mnemonicaNamedImports.get(this.currentReferencedTypeFile)?.get(base.text)
 			: undefined;
+		const viaNamespace = base !== undefined && ts.isIdentifier(base) &&
+			this.moduleNamespaceVariables.has(base.text) &&
+			firstMember !== 'mnemonica';
 		const free = freeRoot ||
 			(parentNode !== undefined && this.freeChainTypePaths.has(parentNode.fullPath)) ||
 			importedAs === 'define' ||
-			importedAs === 'lookup';
+			importedAs === 'lookup' ||
+			viaNamespace;
 		if (free) {
 			this.freeChainTypePaths.add(fullPath);
 		}
