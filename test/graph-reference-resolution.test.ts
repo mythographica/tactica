@@ -600,9 +600,9 @@ new ByReceiver({ mark: 'y' });
 				const typesPath = path.join(outputDir, 'types.ts');
 				const content = fs.readFileSync(typesPath, 'utf8');
 
-				// (b) no circularity: the emitted type uses the derived registry
-				// view and never repeats the stand-in alias
-				expect(content).to.include('export type Widget = LookedUpInstance<TypeRegistry, \'Widget\'>;');
+				// (b) no circularity: the free root is extracted and never
+				// repeats the stand-in alias
+				expect(content).to.include('export type Widget = {');
 				expect(content).to.not.include('TWidgetInstance');
 
 				// (c) call-site assignability: the typed lookup constructor
@@ -648,7 +648,7 @@ new ByReceiver({ mark: 'y' });
 				// Object.assign(this, args) identifier form — the
 				// intersection this-alias is ergonomic-only and its members
 				// are never expanded
-				expect(content).to.include('export type VaultRoot = LookedUpInstance<TypeRegistry, \'VaultRoot\'>;');
+				expect(content).to.include('export type VaultRoot = {');
 				expect(content).to.include('export type VaultRoot_FailedUnlock = ProtoFlat<VaultRoot, {');
 				expect(content).to.not.include('TVaultInstance');
 				expect(content).to.not.include('TEntryArgs');
@@ -700,8 +700,11 @@ new ByReceiver({ mark: 'y' });
 				expect(registry).to.not.include('typeof CourierCtor');
 				expect(registry).to.not.include('typeof LedgerCtor');
 				expect(registry).to.not.include('typeof ShelfCtor');
-				// no generated type in the signature: still derived
-				expect(registry).to.include('\'Plain\': typeof PlainCtor;');
+				// no generated type in the signature: the builder value is
+				// derived (free define results are always extracted, so the
+				// rows above are builder values: only there does
+				// self-reference detection decide)
+				expect(registry).to.include('RegistryOf<typeof PlainCtor>');
 
 				const usagePath = path.join(outputDir, 'usage.ts');
 				fs.writeFileSync(usagePath, [
@@ -717,6 +720,59 @@ new ByReceiver({ mark: 'y' });
 					'const ShelfCtor = lookup(\'Shelf\');',
 					'const label: string = new ShelfCtor({ label: \'x\' }).label;',
 					'void [ maxAttempts, reason, amount, label ];',
+					'',
+				].join('\n'));
+
+				const compileErrors = compileGeneratedTypes(
+					[ path.join(outputDir, 'types.ts'), registryPath, usagePath ],
+					outputDir
+				);
+				expect(compileErrors).to.deep.equal([]);
+			} finally {
+				fs.rmSync(outputDir, { recursive : true, force : true });
+			}
+		}).timeout(20000);
+
+		it('keeps exported free-define chain values extracted', () => {
+			const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tactica-free-define-chain-'));
+			try {
+				const { code, errors } = runCapturingErrors({
+					project : path.join(fixtureRoot, 'free-define-chain', 'tsconfig.json'),
+					outputDir,
+				});
+
+				expect(code).to.equal(0);
+				expect(errors).to.equal('');
+
+				const registryPath = path.join(outputDir, 'registry.ts');
+				const registry = fs.readFileSync(registryPath, 'utf8');
+				// a free chain carries the global TypeRegistry: deriving it is
+				// circular as a RegistryOf base (TS2456/TS2310) and, as
+				// `typeof` entries, grows faster than the type count
+				expect(registry).to.not.include('FromBuilder');
+				expect(registry).to.not.include('typeof');
+				expect(registry).to.include('\'Widget\': RegistryEntry<Widget, \'Widget\', object, []>;');
+				expect(registry).to.include('\'Widget.Part\': RegistryEntry<Widget_Part, \'Widget.Part\', Widget,');
+				expect(registry).to.include('\'Widget.Part.Bolt\': RegistryEntry<Widget_Part_Bolt,');
+				expect(registry).to.include('\'Left.Right\': RegistryEntry<Left_Right,');
+				expect(registry).to.include('\'Frame.Panel\': RegistryEntry<Frame_Panel,');
+
+				const usagePath = path.join(outputDir, 'usage.ts');
+				fs.writeFileSync(usagePath, [
+					'import { lookup } from \'mnemonica\';',
+					'import \'./registry\';',
+					'',
+					'const WidgetCtor = lookup(\'Widget\');',
+					'const widget = new WidgetCtor();',
+					'const size: number = widget.size;',
+					'const part = new widget.Part({ label: \'x\' });',
+					'const label: string = part.label;',
+					'const torque: number = new part.Bolt().torque;',
+					'const LeftCtor = lookup(\'Left\');',
+					'const right: number = new new LeftCtor().Right().r;',
+					'const FrameCtor = lookup(\'Frame\');',
+					'const panel: number = new new FrameCtor().Panel().p;',
+					'void [ size, label, torque, right, panel ];',
 					'',
 				].join('\n'));
 

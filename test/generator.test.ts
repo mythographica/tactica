@@ -189,7 +189,8 @@ describe('TypesGenerator', () => {
 			expect(registry).to.include('import type { RegistryEntry, RegistryOf, TypeRegistry } from \'mnemonica\';');
 			expect(result).to.include('export type User = LookedUpInstance<TypeRegistry, \'User\'>;');
 			expect(result).to.include('export type User_Admin = LookedUpInstance<TypeRegistry, \'User.Admin\'>;');
-			expect(result).to.include('export type Widget = LookedUpInstance<TypeRegistry, \'Widget\'>;');
+			// an exported free define result is extracted, like an inline one
+			expect(result).to.include('export type Widget = {');
 			expect(result).to.include('export type Inline = {');
 		});
 	});

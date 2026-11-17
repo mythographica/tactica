@@ -248,13 +248,14 @@ A project may use both of mnemonica's typing paths: builder values and tactica. 
 **Derived** (the type comes from the value itself):
 
 - builder chains held in an exported value on the default collection: `export const App = mnemonica.define(…).define(…)`, and `export const Sessions = App.lookup('User').define('Session', …)`. Every exported value is included, so a subtype defined in a later statement is in the registry; `registry.ts` extends the intersection of their `RegistryOf<typeof X>`;
-- exported free `define` results: `export const Widget = define('Widget', …)` enters as `typeof Widget`.
+- an explicit-source `define(App, 'Name', …)` on such a builder value enters as `typeof X`.
 
 Aliases in `types.ts` read derived instances back with `LookedUpInstance<TypeRegistry, 'Path'>`.
 
 **Extracted** (tactica reads the source):
 
-- inline or unexported `define`, `@decorate` (and typeomatica's `@Strict` beside it), topologica directory types, Option B collections;
+- every `define` on a free chain, exported or not: the free `define('Widget', …)`, a subtype defined on it (`Widget.define('Part', …)`), and chains starting at the free `define` or `lookup` (`define('A').define('B')`, `lookup('A').define('B')`). Such a value carries the global `TypeRegistry` itself; deriving it would make the registry its own base;
+- `@decorate` (and typeomatica's `@Strict` beside it), topologica directory types, Option B collections;
 - a handler that uses a type from the generated `.tactica` anywhere in its signature (`this`, a parameter, the return type), and every exported value whose chain passes through such a handler. Deriving those would be circular: the value's type would depend on the registry it is part of. The generated type counts however it is reached: imported by a relative path, a tsconfig `paths` alias or from a custom `--output` directory, named directly or through your own type aliases and interfaces (followed across files and `extends` clauses).
 
 ```ts

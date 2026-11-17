@@ -848,7 +848,7 @@ describe('derived default registry', () => {
 		analyzer = new MnemonicaAnalyzer();
 	});
 
-	it('should derive exported builder values and keep inline defines extracted', () => {
+	it('should derive exported builder values and keep free define results extracted', () => {
 		const source = `
 			import { define, mnemonica } from 'mnemonica';
 
@@ -880,7 +880,10 @@ describe('derived default registry', () => {
 		const registry = generator.generateTypeRegistry().content;
 
 		expect(registry).to.include('type FromBuilder = RegistryOf<typeof App> & RegistryOf<typeof Sessions>');
-		expect(registry).to.include('\'Widget\': typeof WidgetCtor;');
+		// an exported free define result carries the global TypeRegistry:
+		// extracted like an inline one, never derived
+		expect(registry).to.include('\'Widget\': RegistryEntry<Widget, \'Widget\', object, [data: { w: number }]>;');
+		expect(registry).not.to.include('typeof Widget');
 		expect(registry).to.include('\'Inline\': RegistryEntry<Inline, \'Inline\', object, [g: string]>;');
 		expect(registry).not.to.include('\'User\': new');
 		expect(registry).not.to.include('\'User.Session\': new');

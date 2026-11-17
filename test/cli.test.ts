@@ -377,7 +377,10 @@ describe('run() analyzer error warnings', () => {
 			}
 
 			expect(registryTs).to.include('type FromBuilder = RegistryOf<typeof App> & RegistryOf<typeof Sessions> & RegistryOf<typeof KlassCtor>');
-			expect(registryTs).to.include('\'Widget\': typeof WidgetCtor;');
+			// the exported free define result is extracted, not derived
+			expect(registryTs).to.include('\'Widget\': RegistryEntry<Widget, \'Widget\', object,');
+			expect(registryTs).to.not.include('typeof WidgetCtor');
+			expect(typesTs).to.include('export type Widget = {');
 			expect(registryTs).to.include('\'Gadget\': RegistryEntry<Gadget, \'Gadget\', object, [g: string]>;');
 			expect(registryTs).to.include('\'Mirror\': RegistryEntry<Mirror, \'Mirror\', object, [data: { m: number }]>;');
 			expect(typesTs).to.include('export type User = LookedUpInstance<TypeRegistry, \'User\'>;');

@@ -1,11 +1,11 @@
-import { define } from 'mnemonica';
+import { mnemonica } from 'mnemonica';
 // the generated type through a tsconfig `paths` alias; .tactica is not
 // written yet, as on a fresh clone
 import type { Courier as TGeneratedCourier } from '~tactica/types';
 
 type TCourierArgs = { maxAttempts: number; baseMs: number };
 
-export const Courier = define('Courier', function (
+export const Courier = mnemonica.define('Courier', function (
 	this: TGeneratedCourier & TCourierArgs,
 	data: TCourierArgs
 ) {

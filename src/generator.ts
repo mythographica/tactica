@@ -50,7 +50,14 @@ export class TypesGenerator {
 					if (node.collectionId || node.metadataOnly) {
 						continue;
 					}
-					if (node.fullPath === value.fullPath || value.fullPath.startsWith(`${node.fullPath}.`)) {
+					// RegistryOf carries the value's whole chain, ancestors
+					// included; a `typeof` entry types only its own path, so
+					// its ancestors stay extracted unless a value of their
+					// own derives them
+					const covered = value.kind === 'registryOf'
+						? node.fullPath === value.fullPath || value.fullPath.startsWith(`${node.fullPath}.`)
+						: node.fullPath === value.fullPath;
+					if (covered) {
 						result.add(node.fullPath);
 					}
 				}

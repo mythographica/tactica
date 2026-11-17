@@ -194,6 +194,12 @@ export class MnemonicaAnalyzer {
 	// Exported builder values and their transitive self-reference exclusions.
 	private builderCandidates: BuilderCandidate[] = [];
 	private excludedTypePaths = new Set<string>();
+	// Type paths defined on a chain that starts at the free define() or
+	// lookup(): such a chain carries the global TypeRegistry itself, so its
+	// exported values enter the registry as `typeof X`, never through
+	// RegistryOf (TypeRegistry would be its own base: TS2456/TS2310).
+	// Sticky across passes, like excludedTypePaths
+	private freeChainTypePaths = new Set<string>();
 	private generatedTypeImports = new Map<string, Set<string>>();
 	// Absolute directories holding the generated output; an import resolving
 	// into one of them (relative or through tsconfig `paths`) is generated
@@ -1343,6 +1349,37 @@ export class MnemonicaAnalyzer {
 		return properties;
 	}
 
+	/**
+	 * Fields of one member of an intersection alias: an inline literal, or
+	 * a named type resolved import-aware from the file declaring the alias.
+	 * A member that does not resolve (a generated type not written yet, an
+	 * external type) adds nothing.
+	 */
+	private intersectionMemberProperties (
+		member: ts.TypeNode,
+		fromFile: string,
+		visited: Set<string>,
+		depth: number
+	): Map<string, PropertyInfo> {
+		const properties = new Map<string, PropertyInfo>();
+		if (ts.isParenthesizedTypeNode(member)) {
+			const inner = this.intersectionMemberProperties(member.type, fromFile, visited, depth);
+			return inner;
+		}
+		if (ts.isTypeLiteralNode(member)) {
+			this.collectTypeElementProperties([ ...member.members ], properties);
+			return properties;
+		}
+		if (ts.isTypeReferenceNode(member) && ts.isIdentifier(member.typeName)) {
+			const memberDecl = this.resolveReferencedTypeDeclaration(member.typeName.text, fromFile);
+			if (memberDecl) {
+				const resolved = this.referencedDeclarationPropertiesInner(memberDecl, visited, depth);
+				return resolved;
+			}
+		}
+		return properties;
+	}
+
 	private referencedDeclarationPropertiesInner (
 		decl: ReferencedTypeDeclaration,
 		visited: Set<string>,
@@ -1369,6 +1406,15 @@ export class MnemonicaAnalyzer {
 			const aliasType = (decl.node as ts.TypeAliasDeclaration).type;
 			if (ts.isTypeLiteralNode(aliasType)) {
 				this.collectTypeElementProperties([ ...aliasType.members ], ownProperties);
+			} else if (ts.isIntersectionTypeNode(aliasType)) {
+				// an intersection alias carries every member's fields; a later
+				// member overrides an earlier one on name clash
+				for (const member of aliasType.types) {
+					const memberProps = this.intersectionMemberProperties(member, decl.file, visited, depth + 1);
+					for (const [ name, info ] of memberProps) {
+						ownProperties.set(name, info);
+					}
+				}
 			} else {
 				return ownProperties;
 			}
@@ -3040,6 +3086,38 @@ export class MnemonicaAnalyzer {
 		return false;
 	}
 
+	/**
+	 * True when a define hop sits on a chain that starts at the free
+	 * define() or lookup() — the value then carries the global
+	 * TypeRegistry, not a registry of its own. Free when: the call is the
+	 * free `define('X', …)` / `lazy('X', …)` root (an explicit-source
+	 * `define(source, 'X', …)` only when its source is free); its parent
+	 * type was defined on a free chain; or its receiver chain starts at the
+	 * imported free `define`/`lookup` (`define('A').define('B')`,
+	 * `lookup('A').define('B')`). A free hop's path is recorded, so the
+	 * next hop on the chain sees its parent as free.
+	 */
+	private isFreeChainHop (call: ts.CallExpression, parentNode: TypeNode | undefined, fullPath: string): boolean {
+		const callee = call.expression;
+		const [ firstArg ] = call.arguments;
+		const freeRoot = ts.isIdentifier(callee) && firstArg !== undefined && ts.isStringLiteralLike(firstArg);
+		let base: ts.Expression | undefined = ts.isPropertyAccessExpression(callee) ? callee.expression : undefined;
+		while (base && (ts.isPropertyAccessExpression(base) || ts.isCallExpression(base))) {
+			base = base.expression;
+		}
+		const importedAs = base && ts.isIdentifier(base)
+			? this.mnemonicaNamedImports.get(this.currentReferencedTypeFile)?.get(base.text)
+			: undefined;
+		const free = freeRoot ||
+			(parentNode !== undefined && this.freeChainTypePaths.has(parentNode.fullPath)) ||
+			importedAs === 'define' ||
+			importedAs === 'lookup';
+		if (free) {
+			this.freeChainTypePaths.add(fullPath);
+		}
+		return free;
+	}
+
 	private recordBuilderCandidate (
 		name: string,
 		fullPath: string,
@@ -3170,8 +3248,15 @@ export class MnemonicaAnalyzer {
 						if (excluded) {
 							this.excludedTypePaths.add(fullPath);
 						}
-						const kind = ts.isIdentifier(call.expression) ? 'typeof' : 'registryOf';
-						this.recordBuilderCandidate(varName, fullPath, kind, sourceFile, current, excluded);
+						// A free-chain value stays extracted: it carries the
+						// global TypeRegistry, so deriving it is circular
+						// (RegistryOf) or grows faster than the type count
+						// (typeof). Only builder values with a registry of
+						// their own are derived
+						if (!this.isFreeChainHop(call, parentNode, fullPath)) {
+							const kind = ts.isIdentifier(call.expression) ? 'typeof' : 'registryOf';
+							this.recordBuilderCandidate(varName, fullPath, kind, sourceFile, current, excluded);
+						}
 					}
 					this.variableToTypeMap.set(varName, fullPath);
 					this.trackFileGraphBinding(varName, fullPath);

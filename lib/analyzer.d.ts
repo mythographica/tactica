@@ -24,6 +24,7 @@ export declare class MnemonicaAnalyzer {
     private variableToTypeMap;
     private builderCandidates;
     private excludedTypePaths;
+    private freeChainTypePaths;
     private generatedTypeImports;
     private generatedOutputDirs;
     private generatedSpecifierCache;
@@ -257,6 +258,13 @@ export declare class MnemonicaAnalyzer {
      * declaration's own fields overriding on name clash.
      */
     private referencedDeclarationProperties;
+    /**
+     * Fields of one member of an intersection alias: an inline literal, or
+     * a named type resolved import-aware from the file declaring the alias.
+     * A member that does not resolve (a generated type not written yet, an
+     * external type) adds nothing.
+     */
+    private intersectionMemberProperties;
     private referencedDeclarationPropertiesInner;
     /**
      * Property signatures of interface/alias type-literal members, into
@@ -541,6 +549,18 @@ export declare class MnemonicaAnalyzer {
     private hasGeneratedTypeReference;
     private referencesGeneratedType;
     private hasSelfTypeAnnotation;
+    /**
+     * True when a define hop sits on a chain that starts at the free
+     * define() or lookup() — the value then carries the global
+     * TypeRegistry, not a registry of its own. Free when: the call is the
+     * free `define('X', …)` / `lazy('X', …)` root (an explicit-source
+     * `define(source, 'X', …)` only when its source is free); its parent
+     * type was defined on a free chain; or its receiver chain starts at the
+     * imported free `define`/`lookup` (`define('A').define('B')`,
+     * `lookup('A').define('B')`). A free hop's path is recorded, so the
+     * next hop on the chain sees its parent as free.
+     */
+    private isFreeChainHop;
     private recordBuilderCandidate;
     private markBuilderExport;
     private trackBuilderExportAssignment;

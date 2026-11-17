@@ -1800,4 +1800,24 @@ describe('MnemonicaAnalyzer', () => {
 			expect(linesOf('Run.Lesson.Native')).to.deep.equal([ '11' ]);
 		});
 	});
+
+	describe('this annotated with an intersection alias', () => {
+		it('carries the fields of every member: literal, named, parenthesized; unresolved adds nothing', () => {
+			const source = `
+				import { define } from 'mnemonica';
+				type Named = { label: string };
+				type Nested = { depth: number };
+				type Whole = Named & { size: number } & (Nested) & NotWrittenYet;
+				define('Crate', function (this: Whole, data: Whole) {
+					Object.assign(this, data);
+				});
+			`;
+			analyzer.analyzeSource(source);
+			const generator = new TypesGenerator(analyzer.getGraph());
+			const { content } = generator.generateTypesFile();
+			expect(content).to.include('label: string;');
+			expect(content).to.include('size: number;');
+			expect(content).to.include('depth: number;');
+		});
+	});
 });

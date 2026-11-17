@@ -1,6 +1,6 @@
-import { define } from 'mnemonica';
+import { mnemonica } from 'mnemonica';
 import type { TShelfArgs, TShelfInstance } from './shelf.types';
 
-export const Shelf = define('Shelf', function (this: TShelfInstance, data: TShelfArgs) {
+export const Shelf = mnemonica.define('Shelf', function (this: TShelfInstance, data: TShelfArgs) {
 	this.label = data.label;
 });

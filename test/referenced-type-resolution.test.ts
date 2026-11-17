@@ -551,7 +551,8 @@ void [ Pack, Inferred ];
 		);
 		const { content } = generator.generateTypesFile();
 
-		expect(content).to.include('export type Pack = LookedUpInstance<TypeRegistry, \'Pack\'>;');
+		// extracted (a free define result), typed by its this annotation only
+		expect(content).to.include('export type Pack = {');
 		expect(content).to.not.include('header: { title: string }');
 		expect(content).to.not.include('note: string');
 	});
@@ -586,10 +587,10 @@ void [ Pack, Inferred ];
 
 				const typesPath = path.join(outputDir, 'types.ts');
 				const content = fs.readFileSync(typesPath, 'utf8');
-				expect(content).to.include('export type Pack = LookedUpInstance<TypeRegistry, \'Pack\'>;');
+				expect(content).to.include('export type Pack = {');
 				expect(content).to.not.include('unknown;');
 
-				// The exported value derives from its annotated this type. Fields
+				// The exported value is typed by its annotated this type. Fields
 				// assigned beyond PackData are deliberately absent at type level.
 				const assertionsPath = path.join(outputDir, 'field-assertions.ts');
 				fs.writeFileSync(assertionsPath, [
