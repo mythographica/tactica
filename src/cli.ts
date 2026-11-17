@@ -490,16 +490,11 @@ function run (options: CLIOptions): number {
 	// Create analyzer
 	const analyzer = new MnemonicaAnalyzer(program, plugins);
 
-	// Determine output directory for exclusion
-	const outputDir = options.outputDir || '.tactica';
-	const outputDirPath = path.resolve(process.cwd(), outputDir);
-	// The project-conventional .tactica dir (next to tsconfig) is ALWAYS
-	// excluded, even when --output points elsewhere: generated files are
-	// never project source. resolve() both sides — tsconfigPath may be
-	// relative ('./tsconfig.json') while sourceFile.fileName is absolute
-	const conventionalOutputDir = path.resolve(process.cwd(), path.dirname(tsconfigPath), '.tactica');
+	// Determine output directories for exclusion
+	const outputDirs = generatedOutputDirs(options, tsconfigPath);
+	const [ outputDirPath, conventionalOutputDir ] = outputDirs;
 	// a handler importing from either dir names its own generated type
-	analyzer.setGeneratedOutputDirs([ outputDirPath, conventionalOutputDir ]);
+	analyzer.setGeneratedOutputDirs(outputDirs);
 
 	// Collect source files to analyze
 	const sourceFiles: ts.SourceFile[] = [];
@@ -898,6 +893,51 @@ export * from './registry${options.esm ? '.js' : ''}';
 }
 
 /**
+ * The directories tactica writes, as absolute paths: the --output dir and
+ * the project-conventional .tactica dir (next to tsconfig). The conventional
+ * one is ALWAYS excluded, even when --output points elsewhere: generated
+ * files are never project source. resolve() both sides — tsconfigPath may
+ * be relative ('./tsconfig.json') while file names are absolute
+ */
+function generatedOutputDirs (options: CLIOptions, tsconfigPath: string): [ string, string ] {
+	const outputDirPath = path.resolve(process.cwd(), options.outputDir || '.tactica');
+	const conventionalOutputDir = path.resolve(process.cwd(), path.dirname(tsconfigPath), '.tactica');
+	const result: [ string, string ] = [ outputDirPath, conventionalOutputDir ];
+	return result;
+}
+
+/**
+ * chokidar options for watch mode. The initial run has already happened,
+ * so existing files are not reported as added (ignoreInitial: one full
+ * run per existing file otherwise). The directories tactica writes are
+ * always ignored, whatever the include/exclude globs say: a written file
+ * would trigger another run.
+ */
+function watchOptions (options: CLIOptions, tsconfigPath: string): {
+	cwd           : string;
+	ignored       : (string | ((filePath: string) => boolean))[];
+	ignoreInitial : boolean;
+	persistent    : boolean;
+} {
+	const projectDir = path.dirname(tsconfigPath);
+	const outputDirs = generatedOutputDirs(options, tsconfigPath);
+	const ignorePaths = options.exclude || [ '**/*.d.ts', 'node_modules/**', '.tactica/**' ];
+	// chokidar passes paths joined with cwd; resolve() covers relative ones
+	const isGenerated = (filePath: string): boolean => {
+		const absolute = path.resolve(projectDir, filePath);
+		const inside = outputDirs.some(dir => absolute === dir || absolute.startsWith(dir + path.sep));
+		return inside;
+	};
+	const result = {
+		cwd           : projectDir,
+		ignored       : [ ...ignorePaths, isGenerated ],
+		ignoreInitial : true,
+		persistent    : true,
+	};
+	return result;
+}
+
+/**
  * Watch mode
  */
 function watch (options: CLIOptions): void {
@@ -915,15 +955,8 @@ function watch (options: CLIOptions): void {
 		process.exit(1);
 	}
 
-	const projectDir = path.dirname(tsconfigPath);
 	const watchPaths = options.include || [ '**/*.ts' ];
-	const ignorePaths = options.exclude || [ '**/*.d.ts', 'node_modules/**', '.tactica/**' ];
-
-	const watcher = chokidar.watch(watchPaths, {
-		cwd        : projectDir,
-		ignored    : ignorePaths,
-		persistent : true,
-	});
+	const watcher = chokidar.watch(watchPaths, watchOptions(options, tsconfigPath));
 
 	watcher.on('change', (filePath: string) => {
 		if (options.verbose) {
@@ -975,5 +1008,5 @@ if (require.main === module) {
 }
 
 export {
-	main, run, watch, parseArgs 
+	main, run, watch, parseArgs, watchOptions
 };

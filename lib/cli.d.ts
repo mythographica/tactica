@@ -29,6 +29,19 @@ declare function parseArgs(args: string[]): CLIOptions;
  */
 declare function run(options: CLIOptions): number;
 /**
+ * chokidar options for watch mode. The initial run has already happened,
+ * so existing files are not reported as added (ignoreInitial: one full
+ * run per existing file otherwise). The directories tactica writes are
+ * always ignored, whatever the include/exclude globs say: a written file
+ * would trigger another run.
+ */
+declare function watchOptions(options: CLIOptions, tsconfigPath: string): {
+    cwd: string;
+    ignored: (string | ((filePath: string) => boolean))[];
+    ignoreInitial: boolean;
+    persistent: boolean;
+};
+/**
  * Watch mode
  */
 declare function watch(options: CLIOptions): void;
@@ -36,4 +49,4 @@ declare function watch(options: CLIOptions): void;
  * Main entry point
  */
 declare function main(): void;
-export { main, run, watch, parseArgs };
+export { main, run, watch, parseArgs, watchOptions };

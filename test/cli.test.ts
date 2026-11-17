@@ -5,7 +5,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { parseArgs, run } from '../src/cli';
+import { parseArgs, run, watchOptions } from '../src/cli';
 
 describe('parseArgs()', () => {
 	it('should return empty options for empty args', () => {
@@ -407,5 +407,40 @@ describe('run() analyzer error warnings', () => {
 			expect(typesTs).to.not.include('Run_Prepare');
 			expect(typesTs).to.not.include('Run_Produce');
 		});
+	});
+});
+
+describe('watchOptions()', () => {
+	const projectDir = path.resolve('/project');
+	const tsconfigPath = path.join(projectDir, 'tsconfig.json');
+	const isIgnored = (ignored: ReturnType<typeof watchOptions>[ 'ignored' ], filePath: string): boolean => {
+		const matchers = ignored.filter((entry): entry is (p: string) => boolean => typeof entry === 'function');
+		const result = matchers.some(matcher => matcher(filePath));
+		return result;
+	};
+
+	it('should not report existing files as added (the initial run is done)', () => {
+		const opts = watchOptions({}, tsconfigPath);
+		expect(opts.ignoreInitial).to.be.true;
+		expect(opts.cwd).to.equal(projectDir);
+	});
+
+	it('should ignore a custom --output dir, relative or absolute paths', () => {
+		const output = path.join(projectDir, 'generated', 'types');
+		const opts = watchOptions({ outputDir : output }, tsconfigPath);
+		expect(isIgnored(opts.ignored, path.join(output, 'types.ts'))).to.be.true;
+		expect(isIgnored(opts.ignored, 'generated/types/registry.ts')).to.be.true;
+		expect(isIgnored(opts.ignored, path.join(projectDir, 'src', 'model.ts'))).to.be.false;
+		// a sibling whose name only starts with the output dir's name
+		expect(isIgnored(opts.ignored, path.join(projectDir, 'generated', 'types-extra', 'a.ts'))).to.be.false;
+	});
+
+	it('should ignore the output dirs even when --exclude replaces the default globs', () => {
+		const output = path.join(projectDir, 'out');
+		const opts = watchOptions({ outputDir : output, exclude : [ 'legacy/**' ] }, tsconfigPath);
+		expect(opts.ignored).to.include('legacy/**');
+		expect(opts.ignored).to.not.include('.tactica/**');
+		expect(isIgnored(opts.ignored, path.join(output, 'types.ts'))).to.be.true;
+		expect(isIgnored(opts.ignored, path.join(projectDir, '.tactica', 'types.ts'))).to.be.true;
 	});
 });

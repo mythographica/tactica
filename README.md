@@ -45,7 +45,7 @@ Tactica parses your source, builds the type hierarchy, and emits `.tactica/types
 npm install --save-dev @mnemonica/tactica
 ```
 
-`mnemonica` is a peer dependency (>= 1.0.1).
+`mnemonica` is a peer dependency (`^1.4.8`): the generated types use its `LookedUpConstructor` and `RegistryEntry` vocabulary, and 1.4.8 keeps TypeScript's check of looked-up constructors cheap on large registries.
 
 Tactica bundles its own TypeScript compiler (6.x) as a regular dependency, so it installs and runs regardless of the TypeScript version your project uses — including TypeScript 7, whose npm package no longer exposes the classic compiler API. Your `tsconfig.json` is only ever *parsed* (never emitted), so TS5-era options like `baseUrl` keep working even though TS6 marks them deprecated.
 
@@ -113,7 +113,7 @@ You should commit `.tactica/` if you want type information to flow through CI wi
 
 | Option | Short | Description |
 |---|---|---|
-| `--watch` | `-w` | Watch mode — regenerate on file changes |
+| `--watch` | `-w` | Watch mode — one run at start, then one per changed or added source file; the output directory is never watched |
 | `--project <path>` | `-p` | Path to `tsconfig.json` (default: nearest ancestor) |
 | `--output <dir>` | `-o` | Output directory (default: `.tactica`) |
 | `--include <patterns>` | `-i` | Comma-separated include patterns |
@@ -1078,6 +1078,10 @@ export interface SharedShape { b: number; }
 ```
 
 **Workaround:** declare the merged shape once, or split the interfaces under distinct names and import the one you mean.
+
+### Subtypes assigned on a constructor are not typed
+
+At runtime, assigning a function to a constructor's property declares a subtype: `Root.Sub = function () {…}` is `Root.define('Sub', function () {…})`. Tactica does not detect the assignment form. In TypeScript it does not compile anyway — `define()`'s result has no `Sub` property (TS2339) — so it occurs only in JavaScript model files. Use `Root.define('Sub', …)` there for a typed subtype.
 
 ### Custom collection name conflicts
 
