@@ -140,6 +140,20 @@ const MAX_REEXPORT_CHASE_DEPTH = 5;
 // Bound for walking class/interface extends chains during referenced-type
 // expansion (inherited members merge into the expanded fields)
 const MAX_HERITAGE_DEPTH = 8;
+// Bound for reading a receiver's declared type back to the generated types
+// it names (aliases, unions, intersections, interface extends)
+const MAX_ANNOTATION_OWNER_DEPTH = 8;
+
+/**
+ * Every type a `receiver.Sub` access can denote, and how it was found:
+ * `exact` (the dotted chain is a type path), `binding` (the receiver's
+ * value binding), `annotation` (the receiver's declared type), `name`
+ * (namesakes by the last segment — the receiver itself is unknown).
+ */
+interface UsageTypePaths {
+	paths: string[];
+	via: 'exact' | 'binding' | 'annotation' | 'name';
+}
 
 /**
  * AST Analyzer for finding Mnemonica define() and decorate() calls
@@ -5335,13 +5349,21 @@ export class MnemonicaAnalyzer {
 	private collectUsage (node: ts.Node, sourceFile: ts.SourceFile): void {
 		// Check for new Type() instantiation
 		if (ts.isNewExpression(node) && node.expression) {
-			let typeName: string | undefined;
+			// `new receiver.Sub()` may construct several types (a receiver
+			// typed as a union, or one tactica cannot bind): each gets the
+			// record; the result variable binds only to a single answer
+			let typeNames: string[] = [];
 			if (ts.isPropertyAccessExpression(node.expression)) {
-				typeName = this.resolveTypePath(node.expression);
+				typeNames = this.resolveUsageTypePaths(node.expression).paths;
 			} else {
-				typeName = this.getTypeNameFromExpression(node.expression);
+				const typeName = this.getTypeNameFromExpression(node.expression);
+				typeNames = typeName ? [ typeName ] : [];
 			}
-			if (typeName) {
+			if (typeNames.length === 1) {
+				// Track variable assignment from new Type() for flow analysis
+				this.trackNewAssignment(node, typeNames[ 0 ]);
+			}
+			for (const typeName of typeNames) {
 				const { line, character } = ts.getLineAndCharacterOfPosition(
 					sourceFile,
 					node.getStart(sourceFile)
@@ -5354,8 +5376,6 @@ export class MnemonicaAnalyzer {
 					// a lookup alias) — CreationAnchor.constructorText (Phase 3)
 					constructorText : node.expression.getText(sourceFile).slice(0, 100),
 				});
-				// Track variable assignment from new Type() for flow analysis
-				this.trackNewAssignment(node, typeName);
 				// Also record as flow event
 				this.addFlow(typeName, {
 					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
@@ -5405,13 +5425,21 @@ export class MnemonicaAnalyzer {
 				// cannot resolve that callee — this access stays the site's
 				// only record.)
 				const isNewCallee = ts.isNewExpression(node.parent) && node.parent.expression === node;
+				// x.Sub(…) as a chain tip or a bare subtype call: the
+				// CallExpression branch records the site as an
+				// instantiation — the same one-record law
+				const isConstructionCallee = ts.isCallExpression(node.parent) &&
+					node.parent.expression === node &&
+					(this.resolveChainTipTypePath(node.parent) !== undefined ||
+						this.resolveBareSubtypeCall(node.parent).length > 0);
 				const { line, character } = ts.getLineAndCharacterOfPosition(
 					sourceFile,
 					node.getStart(sourceFile)
 				);
-					// Try to resolve full path
-				const fullPath = this.resolveTypePath(node);
-				if (fullPath && !isNewCallee) {
+				const accessed = isNewCallee || isConstructionCallee
+					? []
+					: this.resolveUsageTypePaths(node).paths;
+				for (const fullPath of accessed) {
 					this.addUsage(fullPath, {
 						location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
 						kind     : 'propertyAccess',
@@ -5464,6 +5492,27 @@ export class MnemonicaAnalyzer {
 					code     : node.getText(sourceFile).slice(0, 100),
 					context  : 'chained construction',
 				});
+			}
+
+			// Bare subtype call on a known receiver: `instance.Sub(…)`
+			// constructs without `new`, as the chain tip does. The
+			// variable it initializes binds to a single answer
+			const bareCallPaths = chainTip ? [] : this.resolveBareSubtypeCall(node);
+			for (const barePath of bareCallPaths) {
+				this.recordConstructionUsage(node, barePath, sourceFile);
+				const { line, character } = ts.getLineAndCharacterOfPosition(
+					sourceFile,
+					node.getStart(sourceFile)
+				);
+				this.addFlow(barePath, {
+					location : `${sourceFile.fileName}:${line + 1}:${character + 1}`,
+					kind     : 'instantiation',
+					code     : node.getText(sourceFile).slice(0, 100),
+					context  : 'bare subtype call',
+				});
+			}
+			if (bareCallPaths.length === 1) {
+				this.bindDirectResult(node, bareCallPaths[ 0 ]);
 			}
 
 			// mnemonica call/apply(entity, Ctor, ...) / bind(entity, Ctor) —
@@ -6681,6 +6730,218 @@ export class MnemonicaAnalyzer {
 		}
 
 		return fullPath;
+	}
+
+	/**
+	 * Every type a `receiver.Sub` access can denote, for usage
+	 * attribution: the exact path, the receiver's value binding, the
+	 * receiver's declared type (one or several generated types), or —
+	 * when none applies — every namesake. A construction through a
+	 * receiver tactica cannot bind is never given to one namesake only:
+	 * a type left without usages reads as never constructed. The
+	 * same-file preference (subtypeOwnedByFile) still picks one namesake.
+	 */
+	private resolveUsageTypePaths (expr: ts.PropertyAccessExpression): UsageTypePaths {
+		const chain = this.getPropertyChain(expr);
+		const fullPath = chain.join('.');
+		if (chain.length > 0 && this.definitions.has(fullPath)) {
+			const exact: UsageTypePaths = { paths : [ fullPath ], via : 'exact' };
+			return exact;
+		}
+		if (chain.length > 1) {
+			const rest = chain.slice(1).join('.');
+			const receiverType = this.variableToTypeMap.get(chain[ 0 ]);
+			const viaReceiver = receiverType ? `${receiverType}.${rest}` : undefined;
+			if (viaReceiver && this.definitions.has(viaReceiver)) {
+				const bound: UsageTypePaths = { paths : [ viaReceiver ], via : 'binding' };
+				return bound;
+			}
+			const annotated = this.resolveReceiverAnnotationOwners(expr, chain[ 0 ])
+				.map(owner => `${owner}.${rest}`)
+				.filter(path => this.definitions.has(path));
+			if (annotated.length > 0) {
+				const viaAnnotation: UsageTypePaths = { paths : annotated, via : 'annotation' };
+				return viaAnnotation;
+			}
+		}
+		const propName = expr.name.text;
+		const candidates: string[] = [];
+		for (const [ path ] of this.definitions) {
+			if (path.endsWith(`.${propName}`) || path === propName) {
+				candidates.push(path);
+			}
+		}
+		const owned = candidates.length > 1
+			? this.subtypeOwnedByFile(candidates, expr.getSourceFile().fileName)
+			: undefined;
+		const byName: UsageTypePaths = { paths : owned ? [ owned ] : candidates, via : 'name' };
+		return byName;
+	}
+
+	/**
+	 * The fullPaths of the generated types a receiver's declared type
+	 * names: `gadget: Alpha_Gadget | Beta_Gadget` → Alpha.Gadget and
+	 * Beta.Gadget. Read from the annotation, not from a TypeChecker (the
+	 * analyzer runs without one).
+	 */
+	private resolveReceiverAnnotationOwners (from: ts.Node, name: string): string[] {
+		const typeNode = this.findDeclaredTypeOf(from, name);
+		const owners = typeNode
+			? this.collectAnnotationOwners(typeNode, this.currentReferencedTypeFile, new Set<string>(), 0)
+			: [];
+		const unique = Array.from(new Set(owners));
+		return unique;
+	}
+
+	/**
+	 * The type annotation of the nearest declaration of `name` visible
+	 * from `from`: a parameter of an enclosing function, or a
+	 * `const/let/var` in an enclosing block or the file. The first
+	 * declaration found wins (shadowing), annotated or not.
+	 */
+	private findDeclaredTypeOf (from: ts.Node, name: string): ts.TypeNode | undefined {
+		let current: ts.Node | undefined = from.parent;
+		while (current) {
+			if (ts.isFunctionLike(current)) {
+				const param = current.parameters.find(p => ts.isIdentifier(p.name) && p.name.text === name);
+				if (param) {
+					const paramType = param.type;
+					return paramType;
+				}
+			}
+			if (ts.isBlock(current) || ts.isSourceFile(current) || ts.isModuleBlock(current)) {
+				for (const statement of current.statements) {
+					if (!ts.isVariableStatement(statement)) {
+						continue;
+					}
+					const decl = statement.declarationList.declarations
+						.find(d => ts.isIdentifier(d.name) && d.name.text === name);
+					if (decl) {
+						const declType = decl.type;
+						return declType;
+					}
+				}
+			}
+			current = current.parent;
+		}
+		return undefined;
+	}
+
+	private collectAnnotationOwners (
+		typeNode: ts.TypeNode,
+		fromFile: string,
+		visited: Set<string>,
+		depth: number
+	): string[] {
+		const owners: string[] = [];
+		if (depth > MAX_ANNOTATION_OWNER_DEPTH) {
+			return owners;
+		}
+		if (ts.isParenthesizedTypeNode(typeNode)) {
+			owners.push(...this.collectAnnotationOwners(typeNode.type, fromFile, visited, depth + 1));
+		} else if (ts.isUnionTypeNode(typeNode) || ts.isIntersectionTypeNode(typeNode)) {
+			for (const member of typeNode.types) {
+				owners.push(...this.collectAnnotationOwners(member, fromFile, visited, depth + 1));
+			}
+		} else if (ts.isTypeReferenceNode(typeNode) && ts.isIdentifier(typeNode.typeName)) {
+			owners.push(...this.ownersOfTypeName(typeNode.typeName.text, fromFile, visited, depth + 1));
+		}
+		return owners;
+	}
+
+	/**
+	 * A type name → the generated types it stands for: a generated
+	 * instance alias itself (an import rename is read back to the original
+	 * name), or a type alias / interface `extends` leading to them,
+	 * followed across files like referenced types are.
+	 */
+	private ownersOfTypeName (
+		name: string,
+		fromFile: string,
+		visited: Set<string>,
+		depth: number
+	): string[] {
+		const owners: string[] = [];
+		const imported = this.referencedTypeImports.get(fromFile)?.get(name);
+		const originalName = imported && !imported.isNamespace ? imported.originalName : name;
+		const generated = this.findPathByEmittedName(originalName);
+		if (generated) {
+			owners.push(generated);
+			return owners;
+		}
+		const visitKey = `${fromFile}#${name}`;
+		if (depth > MAX_ANNOTATION_OWNER_DEPTH || visited.has(visitKey)) {
+			return owners;
+		}
+		visited.add(visitKey);
+		const decl = this.resolveReferencedTypeDeclaration(name, fromFile);
+		if (!decl) {
+			return owners;
+		}
+		if (ts.isTypeAliasDeclaration(decl.node)) {
+			owners.push(...this.collectAnnotationOwners(decl.node.type, decl.file, visited, depth + 1));
+		} else if (ts.isInterfaceDeclaration(decl.node)) {
+			for (const clause of decl.node.heritageClauses ?? []) {
+				for (const heritage of clause.types) {
+					if (ts.isIdentifier(heritage.expression)) {
+						owners.push(...this.ownersOfTypeName(heritage.expression.text, decl.file, visited, depth + 1));
+					}
+				}
+			}
+		}
+		return owners;
+	}
+
+	/**
+	 * The fullPath whose emitted instance alias is `emittedName`
+	 * (`Alpha_Gadget` → `Alpha.Gadget`), from the current graph
+	 */
+	private findPathByEmittedName (emittedName: string): string | undefined {
+		for (const node of this.graph.bfs()) {
+			if (this.getEmittedInstanceTypeName(node) === emittedName) {
+				const found = node.fullPath;
+				return found;
+			}
+		}
+		return undefined;
+	}
+
+	/**
+	 * A bare subtype call — `instance.Sub(…)` without `new` — constructs,
+	 * as the chain tip `new R().Sub()` does. Counted only when the
+	 * receiver is known as a value binding or by its declared type: a
+	 * receiver tactica cannot see may be anything, and an uppercase
+	 * method name alone is not a construction.
+	 */
+	private resolveBareSubtypeCall (call: ts.CallExpression): string[] {
+		const callee = call.expression;
+		if (!ts.isPropertyAccessExpression(callee) ||
+			!ts.isIdentifier(callee.expression) ||
+			!this.isLikelyTypeName(callee.name.text)) {
+			const none: string[] = [];
+			return none;
+		}
+		const resolved = this.resolveUsageTypePaths(callee);
+		const paths = resolved.via === 'binding' || resolved.via === 'annotation'
+			? resolved.paths
+			: [];
+		return paths;
+	}
+
+	/**
+	 * The `const x = <call>` (await and parentheses transparent) the call
+	 * initializes directly — not a call nested inside the initializer
+	 */
+	private bindDirectResult (call: ts.CallExpression, typePath: string): void {
+		let current: ts.Node = call;
+		while (ts.isAwaitExpression(current.parent) || ts.isParenthesizedExpression(current.parent)) {
+			current = current.parent;
+		}
+		const holder = current.parent;
+		if (ts.isVariableDeclaration(holder) && holder.initializer === current && ts.isIdentifier(holder.name)) {
+			this.variableToTypeMap.set(holder.name.text, typePath);
+			this.trackFileGraphBinding(holder.name.text, typePath);
+		}
 	}
 	
 	/**

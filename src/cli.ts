@@ -683,6 +683,9 @@ function run (options: CLIOptions): number {
 	// resolve() both sides — tsconfigPath itself may be relative.
 	const projectRoot = path.resolve(process.cwd(), path.dirname(tsconfigPath));
 	const writer = new TypesWriter(options.outputDir, projectRoot);
+	// One run: the files below are written together at commit(), or not
+	// at all when only their generatedAt stamps would change
+	writer.begin();
 
 	const outputPath = writer.writeTypesFile(generatedTypes);
 	const registryPath = writer.writeTo('registry.ts', registryTypes.content);
@@ -878,13 +881,17 @@ export * from './registry${options.esm ? '.js' : ''}';
 		console.log(`Generated collections.json at: ${collectionsPath}`);
 	}
 
+	const written = writer.commit();
+	const unchangedNote = written ? '' : ' (unchanged, nothing written)';
+
 	if (options.verbose) {
-		console.log(`Generated types at: ${outputPath}`);
+		console.log(`Generated types at: ${outputPath}${unchangedNote}`);
 		console.log('Mode: types file (default)');
 		console.log(`Found ${generatedTypes.types.length} types:`);
 		printTypeHierarchy(graph);
 	} else {
-		console.log(`Generated ${generatedTypes.types.length} types at ${options.outputDir || '.tactica'}`);
+		const shownDir = options.outputDir || '.tactica';
+		console.log(`Generated ${generatedTypes.types.length} types at ${shownDir}${unchangedNote}`);
 	}
 
 	return 0;

@@ -9,11 +9,29 @@ import {
 } from './types';
 
 /**
+ * A file's content without its top-level `generatedAt` stamp — the only
+ * part of a run's output that changes when the project does not
+ */
+const withoutStamp = function (content: string): string {
+	const stripped = content.replace(/^ {2}"generatedAt": "[^"]*",?$/m, '');
+	return stripped;
+};
+
+interface PendingFile {
+	filePath: string;
+	content: string;
+}
+
+/**
  * Writes generated types to file system
  */
 export class TypesWriter {
 	private outputDir: string;
 	private projectRoot?: string;
+	// The files of an open run (begin() … commit()): held, then written
+	// all together — or not at all when they match the files on disk
+	// except for the generatedAt stamps
+	private pending: PendingFile[] | undefined;
 
 	constructor (outputDir = '.tactica', projectRoot?: string) {
 		this.outputDir = outputDir;
@@ -63,6 +81,54 @@ export class TypesWriter {
 	}
 
 	/**
+	 * Open a run: the write methods hold their files until commit()
+	 */
+	begin (): void {
+		this.pending = [];
+	}
+
+	/**
+	 * Close the run. When every held file exists on disk with the same
+	 * content except its generatedAt stamp, nothing is written — no new
+	 * stamps, no file events for watchers. Otherwise every held file is
+	 * written: the stamps stay one run's set (consumers compare stamps
+	 * across files, e.g. an eds.json older than definitions.json reads
+	 * as stale). Returns whether anything was written.
+	 */
+	commit (): boolean {
+		const files = this.pending || [];
+		this.pending = undefined;
+		const unchanged = files.every(file => this.matchesDisk(file));
+		if (!unchanged) {
+			for (const file of files) {
+				fs.writeFileSync(file.filePath, file.content, 'utf-8');
+			}
+		}
+		const written = !unchanged;
+		return written;
+	}
+
+	private matchesDisk (file: PendingFile): boolean {
+		if (!fs.existsSync(file.filePath)) {
+			return false;
+		}
+		const onDisk = fs.readFileSync(file.filePath, 'utf-8');
+		const same = withoutStamp(onDisk) === withoutStamp(file.content);
+		return same;
+	}
+
+	/**
+	 * Write a file now, or hold it for commit() while a run is open
+	 */
+	private emit (filePath: string, content: string): void {
+		if (this.pending) {
+			this.pending.push({ filePath, content });
+			return;
+		}
+		fs.writeFileSync(filePath, content, 'utf-8');
+	}
+
+	/**
 	 * Legacy write method - delegates to writeTypesFile
 	 */
 	write (generated: GeneratedTypes): string {
@@ -75,7 +141,7 @@ export class TypesWriter {
 	writeTypesFile (generated: GeneratedTypes): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, 'types.ts');
-		fs.writeFileSync(filePath, generated.content, 'utf-8');
+		this.emit(filePath, generated.content);
 		return filePath;
 	}
 
@@ -85,7 +151,7 @@ export class TypesWriter {
 	writeTo (filename: string, content: string): string {
 		this.ensureDirectory();
 		const filePath = path.join(this.outputDir, filename);
-		fs.writeFileSync(filePath, content, 'utf-8');
+		this.emit(filePath, content);
 		return filePath;
 	}
 
@@ -182,7 +248,7 @@ export class TypesWriter {
 			definitions : definitionsObj,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -205,7 +271,7 @@ export class TypesWriter {
 			usages      : usagesObj,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -228,7 +294,7 @@ export class TypesWriter {
 			eds         : edsObj,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -250,7 +316,7 @@ export class TypesWriter {
 		}
 
 		const relativized = this.relativize(json);
-		fs.writeFileSync(filePath, JSON.stringify(relativized, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(relativized, null, 2));
 		return filePath;
 	}
 
@@ -273,7 +339,7 @@ export class TypesWriter {
 		};
 
 		const relativized = this.relativize(json);
-		fs.writeFileSync(filePath, JSON.stringify(relativized, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(relativized, null, 2));
 		return filePath;
 	}
 
@@ -296,7 +362,7 @@ export class TypesWriter {
 			flow        : flowObj,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -321,7 +387,7 @@ export class TypesWriter {
 			cycles      : graph.cycles,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -346,7 +412,7 @@ export class TypesWriter {
 			variables,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -363,7 +429,7 @@ export class TypesWriter {
 			roots,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 
@@ -386,7 +452,7 @@ export class TypesWriter {
 			collections,
 		});
 
-		fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+		this.emit(filePath, JSON.stringify(json, null, 2));
 		return filePath;
 	}
 }

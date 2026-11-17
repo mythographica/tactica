@@ -5,6 +5,7 @@ import { GeneratedTypes, DefinitionInfo, UsageInfo, EDSInfo, FlowInfo, Hierarchy
 export declare class TypesWriter {
     private outputDir;
     private projectRoot?;
+    private pending;
     constructor(outputDir?: string, projectRoot?: string);
     /**
      * Rewrite every project-rooted absolute path in the payload to a
@@ -15,6 +16,24 @@ export declare class TypesWriter {
      * directory that holds .tactica.
      */
     private relativize;
+    /**
+     * Open a run: the write methods hold their files until commit()
+     */
+    begin(): void;
+    /**
+     * Close the run. When every held file exists on disk with the same
+     * content except its generatedAt stamp, nothing is written — no new
+     * stamps, no file events for watchers. Otherwise every held file is
+     * written: the stamps stay one run's set (consumers compare stamps
+     * across files, e.g. an eds.json older than definitions.json reads
+     * as stale). Returns whether anything was written.
+     */
+    commit(): boolean;
+    private matchesDisk;
+    /**
+     * Write a file now, or hold it for commit() while a run is open
+     */
+    private emit;
     /**
      * Legacy write method - delegates to writeTypesFile
      */

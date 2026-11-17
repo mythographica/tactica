@@ -1005,6 +1005,56 @@ export declare class MnemonicaAnalyzer {
             */
     private resolveTypePath;
     /**
+     * Every type a `receiver.Sub` access can denote, for usage
+     * attribution: the exact path, the receiver's value binding, the
+     * receiver's declared type (one or several generated types), or —
+     * when none applies — every namesake. A construction through a
+     * receiver tactica cannot bind is never given to one namesake only:
+     * a type left without usages reads as never constructed. The
+     * same-file preference (subtypeOwnedByFile) still picks one namesake.
+     */
+    private resolveUsageTypePaths;
+    /**
+     * The fullPaths of the generated types a receiver's declared type
+     * names: `gadget: Alpha_Gadget | Beta_Gadget` → Alpha.Gadget and
+     * Beta.Gadget. Read from the annotation, not from a TypeChecker (the
+     * analyzer runs without one).
+     */
+    private resolveReceiverAnnotationOwners;
+    /**
+     * The type annotation of the nearest declaration of `name` visible
+     * from `from`: a parameter of an enclosing function, or a
+     * `const/let/var` in an enclosing block or the file. The first
+     * declaration found wins (shadowing), annotated or not.
+     */
+    private findDeclaredTypeOf;
+    private collectAnnotationOwners;
+    /**
+     * A type name → the generated types it stands for: a generated
+     * instance alias itself (an import rename is read back to the original
+     * name), or a type alias / interface `extends` leading to them,
+     * followed across files like referenced types are.
+     */
+    private ownersOfTypeName;
+    /**
+     * The fullPath whose emitted instance alias is `emittedName`
+     * (`Alpha_Gadget` → `Alpha.Gadget`), from the current graph
+     */
+    private findPathByEmittedName;
+    /**
+     * A bare subtype call — `instance.Sub(…)` without `new` — constructs,
+     * as the chain tip `new R().Sub()` does. Counted only when the
+     * receiver is known as a value binding or by its declared type: a
+     * receiver tactica cannot see may be anything, and an uppercase
+     * method name alone is not a construction.
+     */
+    private resolveBareSubtypeCall;
+    /**
+     * The `const x = <call>` (await and parentheses transparent) the call
+     * initializes directly — not a call nested inside the initializer
+     */
+    private bindDirectResult;
+    /**
              * Check if a name looks like a type (starts with uppercase)
              */
     private isLikelyTypeName;
